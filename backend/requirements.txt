@@ -1,0 +1,35 @@
+# FastAPI 框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# 数据验证与配置
+pydantic>=2.7.0,<3.0.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+
+# HTTP 客户端
+httpx==0.25.2
+
+# 异步数据库与消息队列
+redis==5.0.1
+aiosqlite==0.19.0
+
+# 异步网络爬虫
+aiohttp==3.9.1
+
+# 邮件协议支持
+aioimaplib==1.1.0
+
+# RSS 解析
+feedparser==6.0.10
+
+# JWT 认证
+pyjwt==2.8.0
+
+# YAML 配置解析
+pyyaml==6.0.1
+
+sqlalchemy>=2.0.0,<3.0.0
+
+passlib[bcrypt]>=1.7.4
+

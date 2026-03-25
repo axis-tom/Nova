@@ -1,0 +1,32 @@
+name: "风险预警与跟进"
+description: "识别风险、生成预警、触发自动跟进"
+version: "1.0"
+
+steps:
+  - name: "风险检测"
+    type: "sequential"
+    agents:
+      - risk_agent
+    timeout: 20
+    retry: 1
+
+  - name: "优先级判断"
+    type: "sequential"
+    agents:
+      - priority_agent
+    timeout: 10
+    retry: 1
+
+  - name: "生成预警消息"
+    type: "sequential"
+    agents:
+      - outbound_agent        # 推送预警
+    timeout: 15
+    retry: 2
+
+  - name: "自动跟进"
+    type: "sequential"
+    agents:
+      - followup_agent
+    timeout: 20
+    retry: 2

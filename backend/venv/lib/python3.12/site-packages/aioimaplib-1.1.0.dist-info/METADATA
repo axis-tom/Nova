@@ -1,0 +1,18 @@
+Metadata-Version: 2.1
+Name: aioimaplib
+Version: 1.1.0
+Summary: Python asyncio IMAP4rev1 client library
+Home-page: https://github.com/bamthomas/aioimaplib
+Author: Bruno Thomas
+Author-email: bruno@barreverte.fr
+License: GPL-3.0
+Keywords: asyncio,mail,imap
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Topic :: Communications :: Email :: Post-Office :: IMAP
+Classifier: Topic :: Internet
+License-File: LICENSE.txt
+

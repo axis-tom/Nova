@@ -1,0 +1,15 @@
+/node_modules
+/vendor
+.env
+.env.*
+!.env.example
+/storage
+/public/storage
+Homestead.json
+Homestead.yaml
+*.log
+.DS_Store
+/.idea
+/.vscode
+*.sqlite
+/data
