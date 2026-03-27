@@ -29,6 +29,7 @@
 </template>
 
 <script setup>
+import { Cpu } from '@element-plus/icons-vue'
 import { ref, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import {
@@ -62,7 +63,8 @@ const props = defineProps({
       { path: '/logs', label: '审计日志', iconComponent: Tickets },
       { path: '/conversations', label: '对话', iconComponent: ChatLineRound },
       { path: '/settings', label: '设置', iconComponent: Setting },
-      { path: '/marketplace', label: '场景商店', iconComponent: ShoppingCart }
+      { path: '/marketplace', label: '场景商店', iconComponent: ShoppingCart },
+      { path: '/models', label: '模型管理', iconComponent: Cpu }
     ]
   },
   collapsed: {

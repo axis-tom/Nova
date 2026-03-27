@@ -10,6 +10,7 @@ class UserSettings(BaseModel):
     notification_enabled: bool = True
     briefing_time: str = "08:00"  # 每日简报生成时间
     risk_threshold: int = 70      # 风险预警阈值 0-100
+    MODEL_STORAGE_PATH: str = "./models"
 
 class UserSettingsUpdate(BaseModel):
     language: Optional[str] = None
@@ -17,6 +18,15 @@ class UserSettingsUpdate(BaseModel):
     notification_enabled: Optional[bool] = None
     briefing_time: Optional[str] = None
     risk_threshold: Optional[int] = None
+
+# class Settings(BaseSettings):
+#     language: Optional[str] = None
+#     theme: Optional[str] = None
+#     notification_enabled: Optional[bool] = None
+#     briefing_time: Optional[str] = None
+#     risk_threshold: Optional[int] = None
+    
+
 
 # 模拟存储
 fake_settings = {

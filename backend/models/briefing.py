@@ -38,3 +38,5 @@ class BriefingListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+    

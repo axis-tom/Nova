@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from backend.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market
+from backend.api.v1 import models, tree
 from backend.api.v1 import router as api_router
 from backend.core.config import settings
 from backend.core.message_bus import message_bus
@@ -91,6 +92,8 @@ app.include_router(conversation.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(settings.router, prefix=settings.API_V1_PREFIX)
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(market.router, prefix=settings.API_V1_PREFIX)
+# app.include_router(models.router, prefix=settings.API_V1_PREFIX)
+# app.include_router(tree.router, prefix=settings.API_V1_PREFIX)
 
 
 # # 创建数据库表（如果未创建）

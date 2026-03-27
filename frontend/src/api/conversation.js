@@ -1,46 +1,36 @@
 import client from './client';
 
-/**
- * 获取对话历史列表
- * @param {Object} params - { page, limit }
- * @returns {Promise} { conversations: [], total }
- */
-export function getConversations(params = {}) {
-  return client.get('/conversations', { params });
+// 获取项目-对话树形结构（供侧边栏使用）
+export function getConversationTree() {
+  return client.get('/conversation/tree');
 }
 
-/**
- * 获取单个对话的完整消息记录
- * @param {string|number} conversationId
- * @returns {Promise} { messages: [] }
- */
-export function getConversationMessages(conversationId) {
-  return client.get(`/conversations/${conversationId}/messages`);
+// 获取指定项目下的对话列表（备用）
+export function getConversationsByProject(projectId) {
+  return client.get('/conversation/conversations', { params: { project_id: projectId } });
 }
 
-/**
- * 发送消息（普通 HTTP 方式，若使用 WebSocket 则需单独处理）
- * @param {Object} data - { conversationId, content, attachments? }
- * @returns {Promise} { message }
- */
+// 创建对话
+export function createConversation(data) {
+  return client.post('/conversation/conversations', data);
+}
+
+// 更新对话
+export function updateConversation(id, data) {
+  return client.put(`/conversation/conversations/${id}`, data);
+}
+
+// 删除对话
+export function deleteConversation(id) {
+  return client.delete(`/conversation/conversations/${id}`);
+}
+
+// 获取对话历史消息
+export function getConversationHistory(conversationId) {
+  return client.get(`/conversation/history/${conversationId}`);
+}
+
+// 发送消息
 export function sendMessage(data) {
-  return client.post('/conversations/message', data);
+  return client.post('/conversation/send', data);
 }
-
-/**
- * 删除对话
- * @param {string|number} conversationId
- * @returns {Promise}
- */
-export function deleteConversation(conversationId) {
-  return client.delete(`/conversations/${conversationId}`);
-}
-
-/**
- * 清除所有对话（谨慎使用）
- * @returns {Promise}
- */
-export function clearAllConversations() {
-  return client.delete('/conversations/all');
-}
-

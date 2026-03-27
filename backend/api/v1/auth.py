@@ -13,7 +13,7 @@ fake_users_db = {}
 
 # 添加测试账号（在数据库初始化后立即添加）
 fake_users_db["test@example.com"] = {
-    "id": 999,
+    "id": 1,
     "email": "test@example.com",
     "password": "test123",
     "name": "Test User",

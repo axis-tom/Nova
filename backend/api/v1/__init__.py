@@ -8,6 +8,7 @@ from .logs import router as logs_router
 from .conversation import router as conversation_router
 from .settings import router as settings_router
 from .market import router as market_router
+from .models import router as models_router
 
 # 创建主路由
 router = APIRouter()
@@ -20,3 +21,4 @@ router.include_router(logs_router, prefix="/logs", tags=["审计日志"])
 router.include_router(conversation_router, prefix="/conversation", tags=["对话"])
 router.include_router(settings_router, prefix="/settings", tags=["设置"])
 router.include_router(market_router, prefix="/market", tags=["场景商店"])
+router.include_router(models_router, prefix="/AI model", tags=["AI模型"])

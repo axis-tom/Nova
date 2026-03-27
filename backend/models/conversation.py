@@ -45,3 +45,24 @@ class ConversationHistoryResponse(BaseModel):
     messages: List[MessageOut]
     conversation_id: str
     user_id: int
+
+class ConversationUpdate(BaseModel):
+    """更新会话的请求模型（例如修改标题）"""
+    title: Optional[str] = Field(None, description="会话标题")
+    # 可添加其他可更新字段
+
+class ConversationOut(BaseModel):
+    """会话的响应模型（用于列表或详情）"""
+    id: str  # 会话ID（字符串或整数）
+    type: str = "conversation"
+    user_id: int
+    title: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    # 可选：包含最后一条消息等
+
+class ConversationInDB(BaseModel):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime

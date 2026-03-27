@@ -1,72 +1,200 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 import json
+import uuid
+
+# 导入新增的依赖
+from backend.api.v1.auth import get_current_user
+from backend.models.conversation import (
+    ConversationCreate,
+    ConversationUpdate,
+    ConversationOut,
+    ConversationResponse,   # 新增导入
+    MessageInDB,
+    MessageOut
+)
+from backend.models.project import TreeNode
+from backend.repositories.nocodb.conversation_repo import ConversationRepository
+from backend.repositories.nocodb.message_repo import MessageRepository
+from backend.repositories.nocodb.project_repo import ProjectRepository
+from backend.core.orchestrator import orchestrator
 
 router = APIRouter(prefix="/conversation", tags=["对话"])
 
-class Message(BaseModel):
-    id: int
-    user_id: int
-    role: str          # user, assistant
+# ========== 树形结构接口 ==========
+@router.get("/tree", response_model=List[TreeNode])
+async def get_conversation_tree(
+    current_user = Depends(get_current_user),
+    project_repo: ProjectRepository = Depends(),
+    conv_repo: ConversationRepository = Depends(),
+):
+    """获取项目-对话树形结构（供前端侧边栏使用）"""
+    projects = await project_repo.get_by_user(current_user.id)
+    tree = []
+    for proj in projects:
+        convs = await conv_repo.get_by_project(proj.id)
+        children = [
+            TreeNode(
+                id=conv.id,
+                name=conv.name,
+                type="conversation",
+                children=[]
+            )
+            for conv in convs
+        ]
+        tree.append(TreeNode(
+            id=proj.id,
+            name=proj.name,
+            type="project",
+            children=children
+        ))
+    return tree
+
+# ========== 对话管理 ==========
+@router.get("/conversations", response_model=List[ConversationOut])
+async def get_conversations(
+    project_id: int,
+    current_user = Depends(get_current_user),
+    repo: ConversationRepository = Depends(),
+):
+    """获取指定项目下的对话列表"""
+    convs = await repo.get_by_project(project_id)
+    # 确保对话属于当前用户（repository层已过滤）
+    return convs
+
+@router.post("/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
+async def create_conversation(
+    data: ConversationCreate,
+    current_user = Depends(get_current_user),
+    repo: ConversationRepository = Depends(),
+    project_repo: ProjectRepository = Depends(),
+):
+    """在指定项目下创建新对话"""
+    # 验证项目存在且属于当前用户
+    project = await project_repo.get_by_id(data.project_id)
+    if not project or project.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return await repo.create(
+        user_id=current_user.id,
+        project_id=data.project_id,
+        name=data.name,
+        scene_id=data.scene_id,
+        model_id=data.model_id
+    )
+
+@router.put("/conversations/{conv_id}", response_model=ConversationOut)
+async def update_conversation(
+    conv_id: int,
+    data: ConversationUpdate,
+    current_user = Depends(get_current_user),
+    repo: ConversationRepository = Depends(),
+):
+    """更新对话（重命名或修改默认场景/模型）"""
+    conv = await repo.get_by_id(conv_id)
+    if not conv or conv.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    return await repo.update(conv_id, data.dict(exclude_unset=True))
+
+@router.delete("/conversations/{conv_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(
+    conv_id: int,
+    current_user = Depends(get_current_user),
+    repo: ConversationRepository = Depends(),
+    msg_repo: MessageRepository = Depends(),
+):
+    """删除对话（同时删除其下所有消息）"""
+    conv = await repo.get_by_id(conv_id)
+    if not conv or conv.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    await msg_repo.delete_by_conversation(conv_id)
+    await repo.delete(conv_id)
+
+# ========== 消息接口 ==========
+class SendMessageRequest(BaseModel):
+    conversation_id: int
     content: str
-    timestamp: datetime
-
-class ConversationCreate(BaseModel):
-    message: str
-
-class ConversationResponse(BaseModel):
-    reply: str
-    conversation_id: str
-
-# 模拟对话存储
-fake_messages = []
-next_msg_id = 1
+    scene_id: Optional[str] = None
+    function: Optional[str] = None
+    model_id: Optional[str] = None
 
 @router.post("/send", response_model=ConversationResponse)
-async def send_message(conv: ConversationCreate, user_id: int = 1):
-    """发送消息并获取回复（同步）"""
-    # 存储用户消息
-    global next_msg_id
-    now = datetime.utcnow()
-    user_msg = Message(
-        id=next_msg_id,
-        user_id=user_id,
+async def send_message(
+    req: SendMessageRequest,
+    current_user = Depends(get_current_user),
+    conv_repo: ConversationRepository = Depends(),
+    msg_repo: MessageRepository = Depends(),
+):
+    """发送消息并获取回复（保存消息元数据）"""
+    # 验证对话归属
+    conv = await conv_repo.get_by_id(req.conversation_id)
+    if not conv or conv.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    # 保存用户消息
+    user_msg = await msg_repo.create(
+        conversation_id=req.conversation_id,
+        user_id=current_user.id,
         role="user",
-        content=conv.message,
-        timestamp=now
+        content=req.content,
+        scene_id=req.scene_id,
+        function=req.function,
+        model_id=req.model_id
     )
-    fake_messages.append(user_msg)
-    next_msg_id += 1
 
-    # 模拟智能体回复（实际应调用对话经理）
-    reply_content = f"这是对「{conv.message}」的模拟回复。实际将由 AI 生成。"
-    assistant_msg = Message(
-        id=next_msg_id,
-        user_id=user_id,
+    # 调用智能体生成回复（使用 orchestrator）
+    context = {
+        "user_message": req.content,
+        "scene_id": req.scene_id,
+        "function": req.function,
+        "model_id": req.model_id,
+        "conversation_id": req.conversation_id
+    }
+    try:
+        result = await orchestrator.run_sop(
+            sop_name="conversation",
+            context=context,
+            user_id=current_user.id,
+            trace_id=str(uuid.uuid4())
+        )
+        reply = result.get("reply", "抱歉，我暂时无法回答。")
+    except Exception as e:
+        reply = f"处理出错：{str(e)}"
+
+    # 保存助手消息
+    assistant_msg = await msg_repo.create(
+        conversation_id=req.conversation_id,
+        user_id=current_user.id,
         role="assistant",
-        content=reply_content,
-        timestamp=datetime.utcnow()
+        content=reply,
+        scene_id=req.scene_id,
+        function=req.function,
+        model_id=req.model_id
     )
-    fake_messages.append(assistant_msg)
-    next_msg_id += 1
 
-    return ConversationResponse(reply=reply_content, conversation_id=f"conv_{user_id}")
+    return ConversationResponse(reply=reply, conversation_id=str(req.conversation_id))
 
-@router.get("/history", response_model=List[Message])
-async def get_history(user_id: int = 1, limit: int = 50):
-    user_msgs = [msg for msg in fake_messages if msg.user_id == user_id]
-    return user_msgs[-limit:]
+# ========== 历史消息 ==========
+@router.get("/history/{conversation_id}", response_model=List[MessageOut])
+async def get_history(
+    conversation_id: int,
+    current_user = Depends(get_current_user),
+    msg_repo: MessageRepository = Depends(),
+):
+    """获取指定对话的历史消息"""
+    msgs = await msg_repo.get_by_conversation(conversation_id)
+    # 确保消息属于当前用户（repository层已过滤）
+    return msgs
 
+# ========== WebSocket（保留原有，可增强） ==========
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
             data = await websocket.receive_text()
-            # 解析消息，调用对话经理，回复
-            # 这里简单 echo
+            # 这里可扩展为传递 scene_id/model_id 等
             await websocket.send_text(f"Echo: {data}")
     except WebSocketDisconnect:
         print("Client disconnected")

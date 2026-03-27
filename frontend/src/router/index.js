@@ -1,3 +1,4 @@
+import AIModelManager from '@/views/AIModelManager.vue';
 import { createRouter, createWebHistory } from 'vue-router';
 import { ElLoading } from 'element-plus';
 
@@ -5,18 +6,14 @@ import { ElLoading } from 'element-plus';
 const Login = () => import('@/views/Login.vue');
 const Dashboard = () => import('@/views/Dashboard.vue');
 const DataSources = () => import('@/views/DataSources.vue');
-// const BriefingHistory = () => import('@/views/BriefingHistory.vue');
 const Logs = () => import('@/views/Logs.vue');
-// const ConversationHistory = () => import('@/views/ConversationHistory.vue');
+const Conversation = () => import('@/views/conversations/Conversation.vue');
 const Settings = () => import('@/views/Settings.vue');
 const Marketplace = () => import('@/views/Marketplace.vue');
-const BriefingHistory = () => import('@/views/briefings/BriefingHistory.vue');
-const ConversationHistory = () => import('@/views/conversations/ConversationHistory.vue');
-
-// 动态路由（带参数）
-const BriefingDetail = () => import('@/views/briefings/BriefingDetail.vue');      // 假设有详情页
-const ConversationDetail = () => import('@/views/conversations/ConversationDetail.vue'); // 假设有对话详情页
-const PriorityDetail = () => import('@/views/priority/PriorityDetail.vue');       // 优先级详情
+const BriefingHistory = () => import('@/views/briefings/BriefingHistory.vue');  // 取消注释并确认路径
+const BriefingDetail = () => import('@/views/briefings/BriefingDetail.vue');
+const PriorityDetail = () => import('@/views/priority/PriorityDetail.vue');
+const NotFound = () => import('@/views/NotFound.vue');
 
 // 定义路由
 const routes = [
@@ -62,16 +59,11 @@ const routes = [
   },
   {
     path: '/conversations',
-    name: 'ConversationHistory',
-    component: ConversationHistory,
-    meta: { requiresAuth: true, title: '对话历史' }
-  },
-  {
-    path: '/conversations/:id',
-    name: 'ConversationDetail',
-    component: ConversationDetail,
+    name: 'Conversation',
+    component: Conversation,
     meta: { requiresAuth: true, title: '对话详情' }
   },
+  
   {
     path: '/priority/:id',
     name: 'PriorityDetail',
@@ -95,6 +87,12 @@ const routes = [
     name: 'NotFound',
     component: () => import('@/views/NotFound.vue'),
     meta: { requiresAuth: false, title: '页面不存在' }
+  },
+  {
+    path: '/models',
+    name: 'AIModelManager',
+    component: AIModelManager,
+    meta: { requiresAuth: true }
   }
 ];
 
@@ -112,39 +110,27 @@ const router = createRouter({
 
 // 全局前置守卫：认证检查 + 页面标题
 router.beforeEach(async (to, from, next) => {
-  // 显示加载效果（可选）
   const loading = ElLoading.service({
     fullscreen: true,
     text: '加载中...',
     background: 'rgba(0, 0, 0, 0.7)'
   });
 
-  // 设置页面标题
   document.title = to.meta.title ? `Nova - ${to.meta.title}` : 'Nova';
 
   console.log('🚦 路由守卫:', to.path, 'from:', from.path);
 
-  // 获取认证状态
+  // 直接导入 authStore（此时 pinia 已在 main.js 中初始化）
   const { useAuthStore } = await import('@/stores/auth');
   const authStore = useAuthStore();
 
-  console.log('🔐 isAuthenticated:', authStore.isAuthenticated, 'token:', authStore.token);
-
-  // 如果还没有初始化用户信息且 token 存在，尝试自动获取用户信息
-  // if (!authStore.user && authStore.token) {
-  //   await authStore.init();
-  // }
-  if (!authStore.user && authStore.token) {
-  try {
-    await authStore.init();
-  } catch (err) {
-    console.error('初始化用户信息失败（可能后端未实现 /me）', err);
-    // 可选：清除无效 token
-    // authStore.logout();
+  // 如果 token 存在但用户信息缺失，尝试重新初始化（防御性）
+  if (authStore.token && !authStore.user) {
+    await authStore.init().catch(err => console.error('初始化用户信息失败', err));
   }
-}
 
   const isAuthenticated = authStore.isAuthenticated;
+  console.log('🔐 isAuthenticated:', isAuthenticated, 'token:', authStore.token, 'user:', authStore.user);
 
   if (to.meta.requiresAuth && !isAuthenticated) {
     // 需要登录但未登录，跳转到登录页，并携带原路径
@@ -156,7 +142,6 @@ router.beforeEach(async (to, from, next) => {
     next();
   }
 
-  // 关闭加载效果（路由切换完成后）
   setTimeout(() => loading.close(), 100);
 });
 

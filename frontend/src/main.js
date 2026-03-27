@@ -8,6 +8,7 @@ import App from './App.vue';
 
 // 引入 Element Plus 图标（可选，按需注册）
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
+import { useAuthStore } from './stores/auth';
 
 const app = createApp(App);
 
@@ -19,5 +20,9 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 app.use(createPinia());    // Pinia 状态管理
 app.use(router);           // Vue Router
 app.use(ElementPlus);      // Element Plus UI 库
+
+// 应用挂载前，初始化认证状态（等待 init 完成）
+const authStore = useAuthStore();
+await authStore.init();  // 重要：确保用户信息加载完成再挂载
 
 app.mount('#app');
