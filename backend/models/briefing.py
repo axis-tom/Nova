@@ -23,14 +23,14 @@ class BriefingInDB(BriefingBase):
     id: int
     user_id: int
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None   # 改为可选，允许 None: datetime
 
 class BriefingOut(BriefingBase):
     """返回给前端的简报模型"""
     id: int
     user_id: int
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None   # 改为可选，允许 None: datetime
 
 class BriefingListResponse(BaseModel):
     """简报列表响应（分页）"""

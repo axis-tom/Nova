@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from backend.models.project import ProjectCreate, ProjectUpdate, ProjectOut, TreeNode
 from backend.models.conversation import ConversationOut
-from backend.core.auth import get_current_user
+from backend.api.v1.auth import get_current_user          # 统一使用backend.api.v1.auth中的依赖
+from backend.models.user import UserOut                  # 依赖返回 UserOut 对象
 from backend.repositories.nocodb.project_repo import ProjectRepository
 from backend.repositories.nocodb.conversation_repo import ConversationRepository
 

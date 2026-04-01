@@ -1,4 +1,5 @@
-
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 # from .database import SessionLocal, engine
@@ -19,15 +20,26 @@ from backend.core.audit import audit_logger
 from backend.cloud.crawler_pool import crawler_pool
 from backend.utils.logger import logger
 
+# 新增导入，用于建表
+from backend.core.database import engine, Base
+import backend.models.db  # 确保所有模型被加载
+
+print(f"[DEBUG] DATABASE_URL: {settings.DATABASE_URL}")
 # 生命周期管理
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     应用启动和关闭时的操作
     """
+    
     # 启动时
     logger.info("Starting Nova backend...")
     
+    # 创建数据库表（如果不存在）
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables created (if not exist)")
+
     # 初始化消息总线连接
     try:
         await message_bus.connect()
@@ -64,6 +76,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping audit logger: {e}")
 
+    
+    
+
 # 创建 FastAPI 应用
 app = FastAPI(
     title=settings.APP_NAME,
@@ -85,12 +100,14 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
+# print("Before data_sources router include")
 app.include_router(data_sources.router, prefix=settings.API_V1_PREFIX)
+# print("After data_sources router include")
 app.include_router(briefings.router, prefix=settings.API_V1_PREFIX)
 app.include_router(logs.router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversation.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(settings.router, prefix=settings.API_V1_PREFIX)
-app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+# app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(market.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(models.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(tree.router, prefix=settings.API_V1_PREFIX)

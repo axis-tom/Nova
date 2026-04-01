@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 from typing import Optional
 from pydantic import Field
@@ -10,12 +11,17 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # 安全
-    JWT_SECRET_KEY: str = Field(..., env="cvQLm1IE/CxFken7AgI8qTMpUBSgEaP2FFepJzRpK0U=")  # 必须
+    JWT_SECRET_KEY: str = "IfvAeR0DgGsG7a+x6auBKG4tnyg57PtmJ1KZkmTJ1wMkQtuYzzyf+BX+zyizdxX9"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # 数据库
-    DATABASE_URL: str = "http://localhost:8080"
+    # 数据库（硬编码，确保启动）
+    # DATABASE_URL: str = "postgresql+asyncpg://nova:Nova@2026@localhost:5432/nova_dev"
+    DATABASE_URL: str = "postgresql+asyncpg://nova:Nova@2026@172.25.48.1:5432/nova_dev"
+
+    # NocoDB（可保留）
+    NOCODB_URL: str = "http://localhost:8081"
+    NOCODB_API_KEY: str = ""
 
     # Redis
     REDIS_HOST: str = "localhost"
@@ -51,9 +57,20 @@ class Settings(BaseSettings):
     QQ_AUTH_CODE: Optional[str] = None
     FEISHU_WEBHOOK: Optional[str] = None
 
+    # 加密
+    ENCRYPTION_KEY: str = "u7f5ZaldUvoH4QKomSipfk7hBRlq3LZl1/y9KUYHwFk="
+
+    # AI 相关
+    GROQ_API_KEY: Optional[str] = "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"
+    GEMINI_API_KEY: Optional[str] = "AIzaSyCicIEXYhxHb8qqsZge-Kp07a5iSH47FJM"
+    ZHIPU_API_KEY: Optional[str] = "a5d63731a2dc4ef68d3dea49c3240eff.n9gDmEANrgAHwDDr"
+    HTTP_PROXY: Optional[str] = "http://127.0.0.1:7897"
+    HTTPS_PROXY: Optional[str] = "http://127.0.0.1:7897"
+
     class Config:
-        env_file = ".env"                # 因为从 ~/nova 启动，根目录的 .env
+        # 如果未来想用 .env 文件，可取消注释并指向正确路径
+        # env_file = "/home/nova/nova/.env"
         env_file_encoding = "utf-8"
-        extra = "ignore"                 # 忽略额外的环境变量，不报错
+        extra = "ignore"
 
 settings = Settings()

@@ -9,13 +9,17 @@
       </template>
 
       <el-table :data="briefings" v-loading="loading" stripe>
-        <el-table-column prop="date" label="日期" width="120" sortable>
+        <el-table-column prop="created_at" label="日期" width="120" sortable>
           <template #default="{ row }">
-            {{ formatDate(row.date, 'YYYY-MM-DD') }}
+            {{ formatDate(row.created_at, 'YYYY-MM-DD') }}
           </template>
         </el-table-column>
         <el-table-column prop="title" label="标题" min-width="200" />
-        <el-table-column prop="summary" label="摘要" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="content" label="摘要" min-width="300" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.content ? row.content.slice(0, 100) + (row.content.length > 100 ? '...' : '') : '' }}
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="viewDetail(row)">查看</el-button>
@@ -45,10 +49,9 @@ import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Plus } from '@element-plus/icons-vue';
 import { formatDate } from '@/utils/format';
-import { useBriefingStore } from '@/stores/briefings';
+import { getBriefings, deleteBriefing as apiDeleteBriefing, generateBriefing as apiGenerateBriefing } from '@/api/briefings';
 
 const router = useRouter();
-const briefingStore = useBriefingStore();
 
 const briefings = ref([]);
 const total = ref(0);
@@ -59,9 +62,22 @@ const loading = ref(false);
 const fetchBriefings = async () => {
   loading.value = true;
   try {
-    const res = await briefingStore.fetchList(currentPage.value, pageSize.value);
-    briefings.value = briefingStore.items;
-    total.value = briefingStore.total;
+    // 注意：后端可能需要 skip 和 limit，根据实际情况调整
+    const params = {
+      skip: (currentPage.value - 1) * pageSize.value,
+      limit: pageSize.value
+    };
+    const res = await getBriefings(params);
+    // 假设后端返回 { items: [], total: number }，如果直接返回数组则需调整
+    if (Array.isArray(res)) {
+      briefings.value = res;
+      total.value = res.length; // 如果后端不分页，可只显示全部
+    } else {
+      briefings.value = res.items || [];
+      total.value = res.total || briefings.value.length;
+    }
+  } catch (error) {
+    ElMessage.error('加载简报列表失败：' + (error.message || '未知错误'));
   } finally {
     loading.value = false;
   }
@@ -78,22 +94,37 @@ const deleteBriefing = async (briefing) => {
       cancelButtonText: '取消',
       type: 'warning'
     });
-    await briefingStore.remove(briefing.id);
+    await apiDeleteBriefing(briefing.id);
     ElMessage.success('删除成功');
-    fetchBriefings();
-  } catch {
-    // 取消
+    fetchBriefings(); // 刷新列表
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error('删除失败');
   }
 };
 
-const generateBriefing = () => {
-  // 跳转到生成简报的页面或打开对话框
-  router.push('/briefings/generate');
+const generateBriefing = async () => {
+  loading.value = true;
+  try {
+    await apiGenerateBriefing();
+    ElMessage.success('简报生成请求已发送，请稍后刷新查看');
+    // 等待2秒后刷新列表
+    setTimeout(() => fetchBriefings(), 2000);
+  } catch (error) {
+    ElMessage.error('生成简报失败：' + (error.message || '未知错误'));
+  } finally {
+    loading.value = false;
+  }
 };
 
 const exportBriefing = (briefing) => {
-  // 调用导出 API
-  console.log('导出简报', briefing);
+  // 简单导出为文本文件
+  const content = `${briefing.title}\n\n${briefing.content}\n\n生成时间：${formatDate(briefing.created_at)}`;
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${briefing.title}.txt`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 };
 
 onMounted(() => {

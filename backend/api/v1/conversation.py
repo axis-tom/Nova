@@ -4,21 +4,21 @@ from typing import List, Optional
 from datetime import datetime
 import json
 import uuid
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# 导入新增的依赖
 from backend.api.v1.auth import get_current_user
+from backend.core.database import get_db
 from backend.models.conversation import (
     ConversationCreate,
     ConversationUpdate,
     ConversationOut,
-    ConversationResponse,   # 新增导入
-    MessageInDB,
+    ConversationResponse,
     MessageOut
 )
 from backend.models.project import TreeNode
-from backend.repositories.nocodb.conversation_repo import ConversationRepository
-from backend.repositories.nocodb.message_repo import MessageRepository
-from backend.repositories.nocodb.project_repo import ProjectRepository
+from backend.repositories.postgres.conversation_repo import ConversationRepository
+from backend.repositories.postgres.message_repo import MessageRepository
+from backend.repositories.postgres.project_repo import ProjectRepository
 from backend.core.orchestrator import orchestrator
 
 router = APIRouter(prefix="/conversation", tags=["对话"])
@@ -27,10 +27,12 @@ router = APIRouter(prefix="/conversation", tags=["对话"])
 @router.get("/tree", response_model=List[TreeNode])
 async def get_conversation_tree(
     current_user = Depends(get_current_user),
-    project_repo: ProjectRepository = Depends(),
-    conv_repo: ConversationRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """获取项目-对话树形结构（供前端侧边栏使用）"""
+    project_repo = ProjectRepository(db)
+    conv_repo = ConversationRepository(db)
+
     projects = await project_repo.get_by_user(current_user.id)
     tree = []
     for proj in projects:
@@ -57,9 +59,10 @@ async def get_conversation_tree(
 async def get_conversations(
     project_id: int,
     current_user = Depends(get_current_user),
-    repo: ConversationRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """获取指定项目下的对话列表"""
+    repo = ConversationRepository(db)
     convs = await repo.get_by_project(project_id)
     # 确保对话属于当前用户（repository层已过滤）
     return convs
@@ -68,10 +71,12 @@ async def get_conversations(
 async def create_conversation(
     data: ConversationCreate,
     current_user = Depends(get_current_user),
-    repo: ConversationRepository = Depends(),
-    project_repo: ProjectRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """在指定项目下创建新对话"""
+    project_repo = ProjectRepository(db)
+    repo = ConversationRepository(db)
+
     # 验证项目存在且属于当前用户
     project = await project_repo.get_by_id(data.project_id)
     if not project or project.user_id != current_user.id:
@@ -89,9 +94,10 @@ async def update_conversation(
     conv_id: int,
     data: ConversationUpdate,
     current_user = Depends(get_current_user),
-    repo: ConversationRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """更新对话（重命名或修改默认场景/模型）"""
+    repo = ConversationRepository(db)
     conv = await repo.get_by_id(conv_id)
     if not conv or conv.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="对话不存在")
@@ -101,15 +107,17 @@ async def update_conversation(
 async def delete_conversation(
     conv_id: int,
     current_user = Depends(get_current_user),
-    repo: ConversationRepository = Depends(),
-    msg_repo: MessageRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """删除对话（同时删除其下所有消息）"""
-    conv = await repo.get_by_id(conv_id)
+    conv_repo = ConversationRepository(db)
+    msg_repo = MessageRepository(db)
+
+    conv = await conv_repo.get_by_id(conv_id)
     if not conv or conv.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="对话不存在")
     await msg_repo.delete_by_conversation(conv_id)
-    await repo.delete(conv_id)
+    await conv_repo.delete(conv_id)
 
 # ========== 消息接口 ==========
 class SendMessageRequest(BaseModel):
@@ -123,10 +131,12 @@ class SendMessageRequest(BaseModel):
 async def send_message(
     req: SendMessageRequest,
     current_user = Depends(get_current_user),
-    conv_repo: ConversationRepository = Depends(),
-    msg_repo: MessageRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """发送消息并获取回复（保存消息元数据）"""
+    conv_repo = ConversationRepository(db)
+    msg_repo = MessageRepository(db)
+
     # 验证对话归属
     conv = await conv_repo.get_by_id(req.conversation_id)
     if not conv or conv.user_id != current_user.id:
@@ -180,9 +190,10 @@ async def send_message(
 async def get_history(
     conversation_id: int,
     current_user = Depends(get_current_user),
-    msg_repo: MessageRepository = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     """获取指定对话的历史消息"""
+    msg_repo = MessageRepository(db)
     msgs = await msg_repo.get_by_conversation(conversation_id)
     # 确保消息属于当前用户（repository层已过滤）
     return msgs

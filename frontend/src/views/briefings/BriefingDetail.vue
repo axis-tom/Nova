@@ -16,10 +16,10 @@
           {{ formatDate(briefing.created_at) }}
         </el-descriptions-item>
         <el-descriptions-item label="内容">
-          <div class="content" v-html="briefing.content"></div>
+          <div class="content" v-html="formattedContent"></div>
         </el-descriptions-item>
         <el-descriptions-item label="来源数据">
-          <pre>{{ briefing.source_data }}</pre>
+          <pre>{{ formattedSourceData }}</pre>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -27,49 +27,70 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { getBriefing } from '@/api/briefings'
-import { formatDate } from '@/utils/format'
+import { ref, onMounted, computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { ElMessage } from 'element-plus';
+import { getBriefing } from '@/api/briefings';
+import { formatDate } from '@/utils/format';
 
-const route = useRoute()
-const router = useRouter()
+const route = useRoute();
+const router = useRouter();
 
-const loading = ref(false)
+const loading = ref(false);
 const briefing = ref({
   id: null,
   title: '',
   content: '',
   created_at: '',
   source_data: {}
-})
+});
 
-// 获取简报详情
-const fetchBriefing = async () => {
-  const id = route.params.id
-  if (!id) {
-    ElMessage.error('缺少简报ID')
-    return
-  }
-  loading.value = true
+const formattedContent = computed(() => {
+  // 将纯文本换行转为 <br>，以便在 HTML 中显示
+  return briefing.value.content ? briefing.value.content.replace(/\n/g, '<br>') : '';
+});
+
+const formattedSourceData = computed(() => {
   try {
-    const res = await getBriefing(id)
-    briefing.value = res.briefing
-  } catch (error) {
-    ElMessage.error(error.message || '获取简报详情失败')
-  } finally {
-    loading.value = false
+    return JSON.stringify(briefing.value.source_data, null, 2);
+  } catch {
+    return briefing.value.source_data;
   }
-}
+});
+
+const fetchBriefing = async () => {
+  const id = route.params.id;
+  if (!id) {
+    ElMessage.error('缺少简报ID');
+    router.push('/briefings');
+    return;
+  }
+  loading.value = true;
+  try {
+    const res = await getBriefing(id);
+    // 后端可能直接返回对象，也可能包装在 briefing 字段中
+    if (res && res.briefing) {
+      briefing.value = res.briefing;
+    } else if (res && res.id) {
+      briefing.value = res;
+    } else {
+      throw new Error('返回数据格式错误');
+    }
+  } catch (error) {
+    ElMessage.error('获取简报详情失败：' + (error.message || '未知错误'));
+    router.push('/briefings');
+  } finally {
+    loading.value = false;
+  }
+};
 
 const goBack = () => {
-  router.push('/briefings')
-}
+  router.push('/briefings');
+};
 
 onMounted(() => {
-  fetchBriefing()
-})
+  fetchBriefing();
+});
 </script>
 
 <style scoped>

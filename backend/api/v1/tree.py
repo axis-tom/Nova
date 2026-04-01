@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from backend.models.project import ProjectCreate, ProjectUpdate, ProjectOut
 from backend.models.conversation import ConversationCreate, ConversationUpdate, ConversationOut
-from backend.repositories.nocodb.project_repo import ProjectRepository
-from backend.repositories.nocodb.conversation_repo import ConversationRepository
+from backend.repositories.postgres.project_repo import ProjectRepository
+from backend.repositories.postgres.conversation_repo import ConversationRepository
 
 router = APIRouter(prefix="/tree", tags=["项目与对话"])
 

@@ -32,8 +32,13 @@ class DataSourceInDB(DataSourceBase):
     """数据库中的数据源模型"""
     id: int
     user_id: int
+    last_collected_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    # 添加 status 属性
+    @property
+    def status(self) -> str:
+        return "active" if self.enabled else "inactive"
 
 class DataSourceOut(DataSourceBase):
     """返回给前端的数据源模型"""

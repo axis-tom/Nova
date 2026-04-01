@@ -6,7 +6,20 @@ import client from './client';
  * @returns {Promise} { items: [], total, page, limit }
  */
 export function getBriefings(params = {}) {
-  return client.get('/briefings', { params });
+  // 将前端常用的 page/limit 转换为后端需要的 skip/limit
+  let { page, limit, skip, ...rest } = params;
+
+  // 如果传入了 page 和 limit，则自动计算 skip
+  if (page !== undefined && limit !== undefined) {
+    skip = (page - 1) * limit;
+    // 保留 limit 用于后端
+  } else if (skip === undefined) {
+    skip = 0;
+  }
+  if (limit === undefined) limit = 10;
+
+  // 使用带斜杠的 URL，避免重定向丢失认证头
+  return client.get('/briefings/', { params: { skip, limit, ...rest } });
 }
 
 /**

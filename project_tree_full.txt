@@ -1,0 +1,372 @@
+[Apr  1 02:01]  ./
+├── [Mar 29 03:44]  backend/
+│   ├── [Mar 28 19:56]  agents/
+│   │   ├── [Mar 28 19:56]  collector/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  competitor_agent.py*
+│   │   │   ├── [Mar 31 22:09]  email_agent.py*
+│   │   │   ├── [Mar 24 23:58]  financial_agent.py*
+│   │   │   ├── [Mar 24 23:58]  news_agent.py*
+│   │   │   └── [Mar 24 23:58]  social_agent.py*
+│   │   ├── [Mar 28 19:56]  conversation/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  dialog_manager.py*
+│   │   │   ├── [Mar 24 23:58]  emotion_agent.py*
+│   │   │   └── [Mar 24 23:58]  intent_agent.py*
+│   │   ├── [Mar 31 02:25]  executor/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 31 19:56]  briefing_generator_agent.py
+│   │   │   ├── [Mar 24 23:58]  followup_agent.py*
+│   │   │   ├── [Mar 24 23:58]  outbound_agent.py*
+│   │   │   ├── [Mar 24 23:58]  payment_agent.py*
+│   │   │   └── [Mar 24 23:58]  project_agent.py*
+│   │   ├── [Mar 28 19:56]  judge/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  insight_agent.py*
+│   │   │   ├── [Mar 24 23:58]  priority_agent.py*
+│   │   │   └── [Mar 24 23:58]  risk_agent.py*
+│   │   ├── [Mar 28 19:56]  learning/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  implicit_learner.py*
+│   │   │   ├── [Mar 24 23:58]  outcome_learner.py*
+│   │   │   ├── [Mar 24 23:58]  rule_generator.py*
+│   │   │   └── [Mar 24 23:58]  weight_updater.py*
+│   │   ├── [Mar 28 19:56]  quality/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  auditor_agent.py*
+│   │   │   ├── [Mar 24 23:58]  compliance_agent.py*
+│   │   │   ├── [Mar 24 23:58]  efficiency_agent.py*
+│   │   │   └── [Mar 24 23:58]  validator_agent.py*
+│   │   ├── [Mar 28 19:56]  strategist/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  financial_advisor.py*
+│   │   │   ├── [Mar 24 23:58]  growth_advisor.py*
+│   │   │   └── [Mar 24 23:58]  knowledge_advisor.py*
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   └── [Mar 24 23:58]  base.py*
+│   ├── [Mar 28 19:56]  api/
+│   │   ├── [Mar 28 19:56]  v1/
+│   │   │   ├── [Mar 26 18:12]  __init__.py*
+│   │   │   ├── [Mar 29 01:19]  auth.py*
+│   │   │   ├── [Mar 29 01:31]  briefings.py*
+│   │   │   ├── [Mar 29 04:01]  conversation.py*
+│   │   │   ├── [Mar 30 18:27]  data_sources.py*
+│   │   │   ├── [Mar 29 01:28]  logs.py*
+│   │   │   ├── [Mar 24 23:58]  market.py*
+│   │   │   ├── [Mar 26 19:49]  models.py
+│   │   │   ├── [Mar 28 04:01]  projects.py
+│   │   │   ├── [Mar 28 04:01]  scenes.py
+│   │   │   ├── [Mar 26 17:39]  settings.py*
+│   │   │   └── [Mar 29 04:03]  tree.py
+│   │   └── [Mar 24 23:58]  __init__.py*
+│   ├── [Mar 28 19:56]  cloud/
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 24 23:58]  crawler_pool.py*
+│   │   └── [Mar 24 23:58]  heavy_agents.py*
+│   ├── [Mar 28 19:56]  config/
+│   │   ├── [Mar 24 23:58]  templates/
+│   │   │   ├── [Mar 24 23:58]  ecommerce/
+│   │   │   │   ├── [Mar 24 23:58]  README.md*
+│   │   │   │   └── [Mar 24 23:58]  __init__.py*
+│   │   │   └── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 30 18:33]  data_source_providers.py
+│   │   └── [Mar 24 23:58]  settings.py*
+│   ├── [Mar 28 19:56]  connectors/
+│   │   ├── [Mar 28 19:56]  email/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   └── [Mar 31 05:28]  imap_client.py*
+│   │   ├── [Mar 28 19:56]  outbound/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  email.py*
+│   │   │   ├── [Mar 24 23:58]  feishu.py*
+│   │   │   ├── [Mar 24 23:58]  notion.py*
+│   │   │   └── [Mar 24 23:58]  todoist.py*
+│   │   ├── [Mar 28 19:56]  social/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  weibo.py*
+│   │   │   └── [Mar 24 23:58]  xiaohongshu.py*
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 24 23:58]  base.py*
+│   │   ├── [Mar 24 23:58]  financial.py*
+│   │   ├── [Mar 24 23:58]  qichacha.py*
+│   │   └── [Mar 24 23:58]  rss.py*
+│   ├── [Mar 29 00:11]  core/
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 24 23:58]  audit.py*
+│   │   ├── [Mar 31 22:34]  config.py*
+│   │   ├── [Mar 29 01:00]  database.py
+│   │   ├── [Mar 24 23:58]  exceptions.py*
+│   │   ├── [Mar 26 13:34]  init_db.py
+│   │   ├── [Mar 24 23:58]  message_bus.py*
+│   │   └── [Mar 31 22:48]  orchestrator.py*
+│   ├── [Mar 28 19:56]  model_clients/
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 24 23:58]  base.py*
+│   │   ├── [Mar 26 16:58]  manager.py
+│   │   ├── [Mar 24 23:58]  ollama_client.py*
+│   │   └── [Mar 24 23:58]  openai_client.py*
+│   ├── [Mar 29 00:11]  models/
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 31 23:24]  briefing.py*
+│   │   ├── [Mar 27 15:26]  conversation.py*
+│   │   ├── [Mar 31 03:48]  data_source.py*
+│   │   ├── [Mar 31 02:22]  db.py
+│   │   ├── [Mar 24 23:58]  log.py*
+│   │   ├── [Mar 26 13:32]  message.py
+│   │   ├── [Mar 26 13:29]  model_folder.py
+│   │   ├── [Mar 27 15:24]  project.py
+│   │   ├── [Mar 26 19:42]  scene.py
+│   │   └── [Mar 28 19:55]  user.py*
+│   ├── [Mar 29 01:47]  repositories/
+│   │   ├── [Mar 30 23:07]  postgres/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 29 01:36]  briefing_repo.py*
+│   │   │   ├── [Mar 29 01:37]  conversation_repo.py
+│   │   │   ├── [Mar 31 02:52]  data_source_repo.py
+│   │   │   ├── [Mar 29 01:37]  log_repo.py
+│   │   │   ├── [Mar 29 01:37]  message_repo.py
+│   │   │   ├── [Mar 29 01:37]  project_repo.py
+│   │   │   ├── [Mar 31 02:23]  raw_email_repo.py
+│   │   │   ├── [Mar 29 01:37]  scene_repo.py
+│   │   │   └── [Mar 29 01:04]  user_repo.py
+│   │   ├── [Mar 28 19:43]  sqlite/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 24 23:58]  base.py*
+│   │   │   └── [Mar 24 23:58]  user_repo.py*
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   └── [Mar 24 23:58]  base.py*
+│   ├── [Mar 31 02:30]  sop/
+│   │   ├── [Mar 24 23:58]  briefing.yaml*
+│   │   ├── [Mar 31 02:30]  daily_briefing.yaml
+│   │   ├── [Mar 24 23:58]  risk_alert.yaml*
+│   │   └── [Mar 24 23:58]  strategy.yaml*
+│   ├── [Mar 31 19:06]  utils/
+│   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   ├── [Mar 27 22:12]  crypto.py
+│   │   ├── [Mar 31 22:39]  daily_briefing.py
+│   │   ├── [Mar 31 23:52]  llm_client.py
+│   │   ├── [Mar 24 23:58]  logger.py*
+│   │   ├── [Mar 24 23:58]  text_utils.py*
+│   │   └── [Mar 24 23:58]  time_utils.py*
+│   ├── [Mar 24 23:58]  __init__.py*
+│   ├── [Mar 30 17:42]  main.py*
+│   └── [Mar 29 05:35]  requirements.txt*
+├── [Mar 25 00:09]  data/
+│   ├── [Mar 25 00:09]  chroma/
+│   ├── [Mar 25 00:09]  neo4j/
+│   │   ├── [Mar 25 00:09]  data/
+│   │   │   ├── [Mar 25 00:09]  databases/
+│   │   │   │   ├── [Apr  1 01:44]  neo4j/
+│   │   │   │   │   ├── [Mar 25 00:09]  schema/
+│   │   │   │   │   │   └── [Mar 25 00:09]  index/
+│   │   │   │   │   │       └── [Mar 25 00:09]  token-lookup-1.0/
+│   │   │   │   │   │           ├── [Mar 25 00:09]  1/
+│   │   │   │   │   │           │   └── [Apr  1 01:44]  index-1
+│   │   │   │   │   │           └── [Mar 25 00:09]  2/
+│   │   │   │   │   │               └── [Apr  1 01:44]  index-2
+│   │   │   │   │   ├── [Mar 25 00:09]  database_lock
+│   │   │   │   │   ├── [Apr  1 01:44]  id-buffer.tmp.0
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.counts.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.indexstats.db
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.labeltokenstore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.labeltokenstore.db.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.labeltokenstore.db.names
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.labeltokenstore.db.names.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.nodestore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.nodestore.db.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.nodestore.db.labels
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.nodestore.db.labels.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.propertystore.db
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.propertystore.db.arrays
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.arrays.id
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.propertystore.db.index
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.index.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.propertystore.db.index.keys
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.index.keys.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.propertystore.db.strings
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.strings.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.relationshipgroupstore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshipgroupstore.db.id
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshipgroupstore.degrees.db
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.relationshipstore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshipstore.db.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.relationshiptypestore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshiptypestore.db.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.relationshiptypestore.db.names
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshiptypestore.db.names.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.schemastore.db
+│   │   │   │   │   └── [Apr  1 01:44]  neostore.schemastore.db.id
+│   │   │   │   ├── [Apr  1 01:44]  system/
+│   │   │   │   │   ├── [Mar 25 00:09]  schema/
+│   │   │   │   │   │   └── [Mar 25 00:09]  index/
+│   │   │   │   │   │       ├── [Mar 25 00:09]  range-1.0/
+│   │   │   │   │   │       │   ├── [Mar 25 00:09]  10/
+│   │   │   │   │   │       │   │   └── [Apr  1 01:44]  index-10
+│   │   │   │   │   │       │   ├── [Mar 25 00:09]  11/
+│   │   │   │   │   │       │   │   └── [Apr  1 01:44]  index-11
+│   │   │   │   │   │       │   ├── [Mar 25 00:09]  3/
+│   │   │   │   │   │       │   │   └── [Apr  1 01:44]  index-3
+│   │   │   │   │   │       │   ├── [Mar 25 00:09]  5/
+│   │   │   │   │   │       │   │   └── [Apr  1 01:44]  index-5
+│   │   │   │   │   │       │   ├── [Mar 25 00:09]  6/
+│   │   │   │   │   │       │   │   └── [Apr  1 01:44]  index-6
+│   │   │   │   │   │       │   └── [Mar 25 00:09]  9/
+│   │   │   │   │   │       │       └── [Apr  1 01:44]  index-9
+│   │   │   │   │   │       └── [Mar 25 00:09]  token-lookup-1.0/
+│   │   │   │   │   │           ├── [Mar 25 00:09]  1/
+│   │   │   │   │   │           │   └── [Apr  1 01:44]  index-1
+│   │   │   │   │   │           └── [Mar 25 00:09]  2/
+│   │   │   │   │   │               └── [Apr  1 01:44]  index-2
+│   │   │   │   │   ├── [Mar 25 00:09]  database_lock
+│   │   │   │   │   ├── [Apr  1 01:44]  id-buffer.tmp.0
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.counts.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.indexstats.db
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.labeltokenstore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.labeltokenstore.db.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.labeltokenstore.db.names
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.labeltokenstore.db.names.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.nodestore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.nodestore.db.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.nodestore.db.labels
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.nodestore.db.labels.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.propertystore.db
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.propertystore.db.arrays
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.arrays.id
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.propertystore.db.index
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.index.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.propertystore.db.index.keys
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.index.keys.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.propertystore.db.strings
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.propertystore.db.strings.id
+│   │   │   │   │   ├── [Mar 25 00:09]  neostore.relationshipgroupstore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshipgroupstore.db.id
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshipgroupstore.degrees.db
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.relationshipstore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshipstore.db.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.relationshiptypestore.db
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshiptypestore.db.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.relationshiptypestore.db.names
+│   │   │   │   │   ├── [Apr  1 01:44]  neostore.relationshiptypestore.db.names.id
+│   │   │   │   │   ├── [Mar 25 00:24]  neostore.schemastore.db
+│   │   │   │   │   └── [Apr  1 01:44]  neostore.schemastore.db.id
+│   │   │   │   └── [Mar 25 00:09]  store_lock
+│   │   │   ├── [Apr  1 01:44]  dbms/
+│   │   │   │   └── [Apr  1 01:44]  auth.ini
+│   │   │   ├── [Mar 25 00:09]  transactions/
+│   │   │   │   ├── [Mar 25 00:09]  neo4j/
+│   │   │   │   │   ├── [Apr  1 01:44]  checkpoint.0
+│   │   │   │   │   └── [Mar 25 00:09]  neostore.transaction.db.0
+│   │   │   │   └── [Mar 25 00:09]  system/
+│   │   │   │       ├── [Apr  1 01:44]  checkpoint.0
+│   │   │   │       └── [Mar 25 00:09]  neostore.transaction.db.0
+│   │   │   └── [Mar 25 00:09]  server_id
+│   │   └── [Mar 25 00:09]  logs/
+│   │       ├── [Apr  1 01:44]  debug.log
+│   │       ├── [Mar 25 00:09]  http.log
+│   │       ├── [Apr  1 01:44]  neo4j.log
+│   │       ├── [Mar 25 00:09]  query.log
+│   │       └── [Mar 25 00:09]  security.log
+│   ├── [Mar 29 00:42]  nocodb/
+│   │   └── [Mar 29 00:42]  noco.db
+│   └── [Apr  1 01:44]  redis/
+│       ├── [Mar 25 00:09]  appendonlydir/  [error opening dir]
+│       └── [Apr  1 01:44]  dump.rdb
+├── [Mar 31 03:13]  frontend/
+│   ├── [Mar 24 23:58]  public/
+│   │   └── [Mar 24 23:58]  favicon.ico*
+│   ├── [Mar 24 23:58]  src/
+│   │   ├── [Mar 27 16:41]  api/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 25 16:41]  auth.js*
+│   │   │   ├── [Mar 25 13:08]  briefings.js*
+│   │   │   ├── [Mar 24 23:58]  client.js*
+│   │   │   ├── [Mar 27 16:38]  conversation.js*
+│   │   │   ├── [Mar 27 22:28]  dataSources.js*
+│   │   │   ├── [Mar 24 23:58]  logs.js*
+│   │   │   ├── [Mar 27 16:40]  models.js
+│   │   │   ├── [Mar 25 00:52]  priority.js
+│   │   │   ├── [Mar 27 16:41]  project.js
+│   │   │   ├── [Mar 27 16:39]  scenes.js
+│   │   │   ├── [Mar 25 13:19]  settings.js*
+│   │   │   └── [Mar 27 16:40]  tree.js
+│   │   ├── [Mar 24 23:58]  assets/
+│   │   │   ├── [Mar 24 23:58]  css/
+│   │   │   │   ├── [Mar 24 23:58]  main.css*
+│   │   │   │   └── [Mar 24 23:58]  variables.css*
+│   │   │   └── [Mar 24 23:58]  images/
+│   │   ├── [Mar 24 23:58]  components/
+│   │   │   ├── [Mar 24 23:58]  chat/
+│   │   │   │   ├── [Mar 24 23:58]  ChatWindow.vue*
+│   │   │   │   ├── [Mar 24 23:58]  InputArea.vue*
+│   │   │   │   └── [Mar 24 23:58]  MessageBubble.vue*
+│   │   │   ├── [Mar 24 23:58]  common/
+│   │   │   │   ├── [Mar 24 23:58]  LoadingSpinner.vue*
+│   │   │   │   ├── [Mar 24 23:58]  NavBar.vue*
+│   │   │   │   └── [Mar 26 17:09]  SideMenu.vue*
+│   │   │   ├── [Mar 24 23:58]  dashboard/
+│   │   │   │   ├── [Mar 24 23:58]  BriefingPreview.vue*
+│   │   │   │   ├── [Mar 24 23:58]  PriorityList.vue*
+│   │   │   │   └── [Mar 24 23:58]  StatsCard.vue*
+│   │   │   └── [Mar 24 23:58]  settings/
+│   │   │       ├── [Mar 30 12:08]  DataSourceConfig.vue*
+│   │   │       └── [Mar 24 23:58]  ProfileForm.vue*
+│   │   ├── [Mar 24 23:58]  router/
+│   │   │   └── [Mar 27 18:35]  index.js*
+│   │   ├── [Mar 26 17:05]  stores/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 25 16:03]  auth.js*
+│   │   │   ├── [Mar 24 23:58]  briefings.js*
+│   │   │   ├── [Mar 29 06:00]  dataSources.js*
+│   │   │   ├── [Mar 26 17:05]  models.js
+│   │   │   ├── [Mar 25 16:57]  priority.js
+│   │   │   ├── [Mar 24 23:58]  settings.js*
+│   │   │   └── [Mar 24 23:58]  user.js*
+│   │   ├── [Mar 24 23:58]  utils/
+│   │   │   ├── [Mar 24 23:58]  __init__.py*
+│   │   │   ├── [Mar 26 18:57]  format.js*
+│   │   │   ├── [Mar 24 23:58]  validate.js*
+│   │   │   └── [Mar 24 23:58]  websocket.js*
+│   │   ├── [Mar 26 03:09]  views/
+│   │   │   ├── [Mar 25 00:38]  briefings/
+│   │   │   │   ├── [Mar 25 00:43]  BriefingDetail.vue
+│   │   │   │   └── [Mar 24 23:58]  BriefingHistory.vue*
+│   │   │   ├── [Mar 27 16:10]  conversations/
+│   │   │   │   └── [Mar 27 16:54]  Conversation.vue
+│   │   │   ├── [Mar 25 00:41]  priority/
+│   │   │   │   └── [Mar 25 00:44]  PriorityDetail.vue
+│   │   │   ├── [Mar 26 17:05]  AIModelManager.vue
+│   │   │   ├── [Mar 24 23:58]  Dashboard.vue*
+│   │   │   ├── [Mar 24 23:58]  DataSources.vue*
+│   │   │   ├── [Mar 24 23:58]  Login.vue*
+│   │   │   ├── [Mar 24 23:58]  Logs.vue*
+│   │   │   ├── [Mar 24 23:58]  Marketplace.vue*
+│   │   │   ├── [Mar 25 01:02]  NotFound.vue
+│   │   │   └── [Mar 24 23:58]  Settings.vue*
+│   │   ├── [Mar 24 23:58]  App.vue*
+│   │   └── [Mar 27 18:10]  main.js*
+│   ├── [Mar 24 23:58]  index.html*
+│   ├── [Mar 25 00:19]  package-lock.json
+│   ├── [Mar 24 23:58]  package.json*
+│   └── [Mar 25 12:58]  vite.config.js*
+├── [Mar 25 01:20]  logs/
+│   └── [Mar 27 22:43]  audit.log
+├── [Mar 31 21:55]  Q&A.txt
+├── [Mar 29 00:30]  docker-compose.yml*
+├── [Mar 31 15:52]  ollama-linux-amd64.tar.zst*
+├── [Mar 31 15:42]  ollama-linux-arm64.tar.zst*
+├── [Apr  1 02:01]  project_tree_full.txt
+├── [Mar 30 21:59]  test_direct.py
+├── [Mar 30 18:49]  test_email_agent.py
+├── [Mar 31 04:23]  test_fetch.py
+├── [Mar 31 04:50]  test_fetch2.py
+├── [Mar 31 05:08]  test_fetch3.py
+├── [Mar 31 20:09]  test_groq.py
+├── [Mar 31 23:50]  test_llm.py
+└── [Mar 30 21:53]  test_login.py
+
+80 directories, 290 files

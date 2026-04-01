@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from backend.models.scene import SceneOut, SceneCreate, SceneUpdate
-from backend.core.auth import get_current_user
+from backend.api.v1.auth import get_current_user          # 统一使用backend.api.v1.auth中的依赖
+from backend.models.user import UserOut                  # 依赖返回 UserOut 对象
 from bbackend.repositories.nocodb.scene_repo import SceneRepository
 
 router = APIRouter(prefix="/scenes", tags=["场景商店"])

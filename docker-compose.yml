@@ -1,18 +1,18 @@
 version: '3.8'
 
 services:
-  # NocoDB - 结构化数据存储（替代传统数据库）
-  nocodb:
-    image: nocodb/nocodb:latest
-    container_name: nova_nocodb
-    ports:
-      - "8081:8080"
-    volumes:
-      - ./data/nocodb:/usr/app/data
-    environment:
-      # - NC_DB=sqlite:///usr/app/data/nocodb.db
-      - NC_AUTH_JWT_SECRET=cvQLm1IE/CxFken7AgI8qTMpUBSgEaP2FFepJzRpK0U=
-    restart: unless-stopped
+  # # NocoDB - 结构化数据存储（替代传统数据库）
+  # nocodb:
+  #   image: nocodb/nocodb:latest
+  #   container_name: nova_nocodb
+  #   ports:
+  #     - "8081:8080"
+  #   volumes:
+  #     - ./data/nocodb:/usr/app/data
+  #   environment:
+  #     # - NC_DB=sqlite:///usr/app/data/nocodb.db
+  #     - NC_AUTH_JWT_SECRET=cvQLm1IE/CxFken7AgI8qTMpUBSgEaP2FFepJzRpK0U=
+  #   restart: unless-stopped
 
   # Redis - 消息总线与缓存
   redis:
@@ -52,3 +52,25 @@ services:
       - IS_PERSISTENT=TRUE
       - PERSIST_DIRECTORY=/chroma/chroma
     restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: nova_postgres
+    environment:
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: Nova@2026
+      POSTGRES_DB: nova_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nova_net
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  nova_net:
+    driver: bridge  

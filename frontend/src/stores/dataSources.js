@@ -7,13 +7,13 @@ export const useDataSourceStore = defineStore('dataSources', () => {
   const loading = ref(false);
   const error = ref(null);
 
-  // 加载所有数据源
+  // 加载所有数据源（后端直接返回数组）
   const fetchAll = async () => {
     loading.value = true;
     error.value = null;
     try {
-      const res = await getDataSources();
-      sources.value = res.sources;
+      const data = await getDataSources();  // data 就是数组
+      sources.value = data;                 // 直接赋值
     } catch (err) {
       error.value = err.message;
       throw err;
@@ -22,26 +22,26 @@ export const useDataSourceStore = defineStore('dataSources', () => {
     }
   };
 
-  // 新增
+  // 新增（后端返回创建的数据源对象）
   const add = async (data) => {
     loading.value = true;
     try {
-      const res = await createDataSource(data);
-      sources.value.push(res.source);
-      return res.source;
+      const newSource = await createDataSource(data);
+      sources.value.push(newSource);
+      return newSource;
     } finally {
       loading.value = false;
     }
   };
 
-  // 更新
+  // 更新（后端返回更新后的数据源对象）
   const update = async (id, data) => {
     loading.value = true;
     try {
-      const res = await updateDataSource(id, data);
+      const updated = await updateDataSource(id, data);
       const index = sources.value.findIndex(s => s.id === id);
-      if (index !== -1) sources.value[index] = res.source;
-      return res.source;
+      if (index !== -1) sources.value[index] = updated;
+      return updated;
     } finally {
       loading.value = false;
     }
@@ -58,7 +58,7 @@ export const useDataSourceStore = defineStore('dataSources', () => {
     }
   };
 
-  // 测试连接
+  // 测试连接（直接返回结果）
   const test = async (config) => {
     loading.value = true;
     try {

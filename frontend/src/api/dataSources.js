@@ -53,3 +53,7 @@ export function deleteDataSource(id) {
 export function testDataSource(config) {
   return client.post('/data-sources/test', config);
 }
+
+export function getDataSourceTypes() {
+  return client.get('/data-sources/types');
+}
