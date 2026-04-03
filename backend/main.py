@@ -1,9 +1,3 @@
-from pathlib import Path
-from dotenv import load_dotenv
-from fastapi import FastAPI, Depends
-from sqlalchemy.orm import Session
-# from .database import SessionLocal, engine
-# from . import models, schemas, auth
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -24,7 +18,6 @@ from backend.utils.logger import logger
 from backend.core.database import engine, Base
 import backend.models.db  # 确保所有模型被加载
 
-print(f"[DEBUG] DATABASE_URL: {settings.DATABASE_URL}")
 # 生命周期管理
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,9 +29,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Nova backend...")
     
     # 创建数据库表（如果不存在）
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables created (if not exist)")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables created (if not exist)")
+    except Exception as e:
+        logger.error(f"Database initialization skipped: {e}")
 
     # 初始化消息总线连接
     try:
@@ -174,7 +170,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # 可选：启动独立服务器（用于直接运行）
 if __name__ == "__main__":
     uvicorn.run(
-        "main:app",
+        "backend.main:app",
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,
