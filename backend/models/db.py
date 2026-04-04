@@ -3,14 +3,26 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Foreign
 from sqlalchemy.sql import func
 from backend.core.database import Base
 
+# class User(Base):
+#     __tablename__ = "users"
+#     id = Column(Integer, primary_key=True, index=True)
+#     email = Column(String(255), unique=True, index=True, nullable=False)
+#     name = Column(String(100), nullable=False)
+#     password = Column(String(255), nullable=False)
+#     created_at = Column(DateTime(timezone=True), server_default=func.now())
+#     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+# 在User类中添加新字段
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(100), nullable=False)
     password = Column(String(255), nullable=False)
+    company = Column(String(200), nullable=True)  # 新增字段
+    phone = Column(String(20), nullable=True)     # 新增字段
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
 
 class DataSource(Base):
     __tablename__ = "data_sources"

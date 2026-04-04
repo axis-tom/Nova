@@ -22,7 +22,7 @@ class UserRepository:
         return None
 
     async def create(self, data: UserCreate) -> UserInDB:
-        # data 包含 email, name, password（已哈希）
+        # data 包含 email, name, password（已哈希）, company, phone
         user = User(**data.model_dump())
         self.db.add(user)
         await self.db.commit()

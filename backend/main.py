@@ -109,31 +109,6 @@ app.include_router(market.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(tree.router, prefix=settings.API_V1_PREFIX)
 
 
-# # 创建数据库表（如果未创建）
-# models.Base.metadata.create_all(bind=engine)
-
-# @app.on_event("startup")
-# def create_test_user():
-#     db = SessionLocal()
-#     # 检查是否已存在测试账号
-#     existing_user = db.query(models.User).filter(models.User.email == "test@example.com").first()
-#     if not existing_user:
-#         # 创建测试用户
-#         hashed_password = auth.get_password_hash("test123")
-#         test_user = models.User(
-#             email="test@example.com",
-#             name="Test User",
-#             hashed_password=hashed_password,
-#             is_active=True
-#         )
-#         db.add(test_user)
-#         db.commit()
-#         print("✅ 测试账号已创建: test@example.com / test123")
-#     else:
-#         print("ℹ️ 测试账号已存在")
-#     db.close()
-
-
 # 健康检查端点
 @app.get("/health", tags=["系统"])
 async def health_check():

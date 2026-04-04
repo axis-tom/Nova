@@ -1,7 +1,7 @@
 <template>
   <div id="app">
-    <!-- 仅在登录页不显示布局，其他页面显示完整布局 -->
-    <template v-if="!isLoginPage">
+    <!-- 仅在登录页和注册页不显示布局，其他页面显示完整布局 -->
+    <template v-if="!isAuthPage">
       <NavBar @toggle-sidebar="toggleSidebar" @logout="handleLogout" />
       <SideMenu
         :collapsed="sidebarCollapsed"
@@ -17,7 +17,7 @@
       </div>
     </template>
     <template v-else>
-      <!-- 登录页直接显示路由视图 -->
+      <!-- 登录页和注册页直接显示路由视图 -->
       <router-view />
     </template>
   </div>
@@ -41,8 +41,10 @@ watch(sidebarCollapsed, (val) => {
   localStorage.setItem('sidebarCollapsed', val);
 });
 
-// 判断当前是否在登录页
-const isLoginPage = computed(() => route.name === 'Login');
+// 判断当前是否在认证页面（登录或注册）
+const isAuthPage = computed(() => {
+  return route.name === 'Login' || route.name === 'Register';
+});
 
 // 切换侧边栏（由 NavBar 触发）
 const toggleSidebar = () => {
@@ -55,9 +57,14 @@ const handleNavigate = (path) => {
 };
 
 // 退出登录（由 NavBar 触发）
-const handleLogout = () => {
-  // 退出后重定向到登录页，清除路由历史
-  router.push('/login');
+const handleLogout = async () => {
+  try {
+    await authStore.logout();
+    // 退出后重定向到登录页
+    router.push('/login');
+  } catch (error) {
+    console.error('退出登录失败:', error);
+  }
 };
 </script>
 

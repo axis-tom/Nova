@@ -14,6 +14,7 @@ const BriefingHistory = () => import('@/views/briefings/BriefingHistory.vue');  
 const BriefingDetail = () => import('@/views/briefings/BriefingDetail.vue');
 const PriorityDetail = () => import('@/views/priority/PriorityDetail.vue');
 const NotFound = () => import('@/views/NotFound.vue');
+const Register = () => import('@/views/Register.vue');
 
 // 定义路由
 const routes = [
@@ -93,7 +94,13 @@ const routes = [
     name: 'AIModelManager',
     component: AIModelManager,
     meta: { requiresAuth: true }
-  }
+  },
+  {
+  path: '/register',
+  name: 'Register',
+  component: Register,
+  meta: { requiresAuth: false, title: '注册' }
+}
 ];
 
 const router = createRouter({

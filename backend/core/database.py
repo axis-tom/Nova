@@ -1,26 +1,38 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+"""
+数据库连接和初始化
+"""
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import declarative_base
 from backend.core.config import settings
 
 # 创建异步引擎
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,               # 开发时打印 SQL
-    future=True,
-    pool_pre_ping=True,                # 连接前检测
+    echo=settings.DEBUG,
+    pool_pre_ping=True,
+    pool_recycle=3600,
 )
 
-# 会话工厂
-AsyncSessionLocal = sessionmaker(
+# 创建会话工厂
+AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
 
-# 基类，供模型继承
+# 声明基类
 Base = declarative_base()
 
-# 依赖注入函数
-async def get_db() -> AsyncSession:
+# 依赖注入：获取数据库会话
+async def get_db():
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            await session.close()
+
+# 初始化数据库
+async def init_db():
+    async with engine.begin() as conn:
+        # 创建所有表
+        await conn.run_sync(Base.metadata.create_all)

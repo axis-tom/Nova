@@ -51,3 +51,4 @@ export function changePassword(data) {
 export function logout() {
   return client.post('/auth/logout');
 }
+

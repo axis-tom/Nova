@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from datetime import datetime, timedelta
 from typing import Optional
 import jwt
 import bcrypt
+import re
 
 from backend.core.config import settings
 from backend.core.database import get_db
@@ -34,9 +35,14 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class UserRegister(UserCreate):
+    """注册请求模型，继承自UserCreate"""
+    pass
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+    user: Optional[UserOut] = None
 
 # ---------- 依赖注入：获取当前用户 ----------
 async def get_current_user(
@@ -66,31 +72,113 @@ async def get_current_user(
         id=user.id,
         email=user.email,
         name=user.name,
+        company=user.company,
+        phone=user.phone,
         created_at=user.created_at,
         updated_at=user.updated_at
     )
 
 # ---------- 路由 ----------
 @router.post("/register", response_model=Token)
-async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(user: UserRegister, db: AsyncSession = Depends(get_db)):
+    """
+    用户注册
+    - 验证邮箱是否已注册
+    - 密码哈希存储
+    - 创建用户并返回JWT token
+    """
     repo = UserRepository(db)
+    
+    # 检查邮箱是否已注册
     existing = await repo.get_by_email(user.email)
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    hashed = hash_password(user.password)
-    new_user = await repo.create(UserCreate(email=user.email, password=hashed, name=user.name))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该邮箱已被注册"
+        )
+    
+    # 哈希密码
+    hashed_password = hash_password(user.password)
+    
+    # 创建用户数据字典
+    user_data = user.model_dump(exclude={'password'})
+    user_data['password'] = hashed_password
+    
+    # 创建用户
+    new_user = await repo.create(UserCreate(**user_data))
+    
+    # 创建访问令牌
     access_token = create_access_token(data={"sub": str(new_user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    # 返回用户信息
+    user_out = UserOut(
+        id=new_user.id,
+        email=new_user.email,
+        name=new_user.name,
+        company=new_user.company,
+        phone=new_user.phone,
+        created_at=new_user.created_at,
+        updated_at=new_user.updated_at
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user_out
+    }
 
 @router.post("/login", response_model=Token)
 async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
+    """
+    用户登录
+    - 验证邮箱和密码
+    - 返回JWT token和用户信息
+    """
     repo = UserRepository(db)
     db_user = await repo.get_by_email(user.email)
+    
     if not db_user or not verify_password(user.password, db_user.password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="邮箱或密码错误"
+        )
+    
+    # 创建访问令牌
     access_token = create_access_token(data={"sub": str(db_user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    # 返回用户信息
+    user_out = UserOut(
+        id=db_user.id,
+        email=db_user.email,
+        name=db_user.name,
+        # company=db_user.company,
+        # phone=db_user.phone,
+        created_at=db_user.created_at,
+        updated_at=db_user.updated_at
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user_out
+    }
 
 @router.get("/me", response_model=UserOut)
 async def get_current_user_route(current_user: UserOut = Depends(get_current_user)):
+    """
+    获取当前用户信息
+    """
     return current_user
+
+@router.post("/check-email")
+async def check_email(email: str, db: AsyncSession = Depends(get_db)):
+    """
+    检查邮箱是否已注册
+    """
+    repo = UserRepository(db)
+    existing = await repo.get_by_email(email)
+    
+    return {
+        "email": email,
+        "available": existing is None
+    }
