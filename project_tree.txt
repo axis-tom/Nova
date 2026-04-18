@@ -1,0 +1,246 @@
+.
+├── backend
+│   ├── agents
+│   │   ├── collector
+│   │   │   ├── __init__.py
+│   │   │   ├── competitor_agent.py
+│   │   │   ├── email_agent.py
+│   │   │   ├── financial_agent.py
+│   │   │   ├── news_agent.py
+│   │   │   └── social_agent.py
+│   │   ├── conversation
+│   │   │   ├── __init__.py
+│   │   │   ├── dialog_manager.py
+│   │   │   ├── emotion_agent.py
+│   │   │   └── intent_agent.py
+│   │   ├── executor
+│   │   │   ├── __init__.py
+│   │   │   ├── briefing_generator_agent.py
+│   │   │   ├── followup_agent.py
+│   │   │   ├── outbound_agent.py
+│   │   │   ├── payment_agent.py
+│   │   │   └── project_agent.py
+│   │   ├── judge
+│   │   │   ├── __init__.py
+│   │   │   ├── insight_agent.py
+│   │   │   ├── priority_agent.py
+│   │   │   └── risk_agent.py
+│   │   ├── learning
+│   │   │   ├── __init__.py
+│   │   │   ├── implicit_learner.py
+│   │   │   ├── outcome_learner.py
+│   │   │   ├── rule_generator.py
+│   │   │   └── weight_updater.py
+│   │   ├── quality
+│   │   │   ├── __init__.py
+│   │   │   ├── auditor_agent.py
+│   │   │   ├── compliance_agent.py
+│   │   │   ├── efficiency_agent.py
+│   │   │   └── validator_agent.py
+│   │   ├── strategist
+│   │   │   ├── __init__.py
+│   │   │   ├── financial_advisor.py
+│   │   │   ├── growth_advisor.py
+│   │   │   └── knowledge_advisor.py
+│   │   ├── __init__.py
+│   │   └── base.py
+│   ├── api
+│   │   ├── v1
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── briefings.py
+│   │   │   ├── conversation.py
+│   │   │   ├── data_sources.py
+│   │   │   ├── logs.py
+│   │   │   ├── market.py
+│   │   │   ├── models.py
+│   │   │   ├── projects.py
+│   │   │   ├── scenes.py
+│   │   │   ├── settings.py
+│   │   │   └── tree.py
+│   │   └── __init__.py
+│   ├── cloud
+│   │   ├── __init__.py
+│   │   ├── crawler_pool.py
+│   │   └── heavy_agents.py
+│   ├── config
+│   │   ├── templates
+│   │   │   ├── ecommerce
+│   │   │   │   ├── README.md
+│   │   │   │   └── __init__.py
+│   │   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── data_source_providers.py
+│   │   └── settings.py
+│   ├── connectors
+│   │   ├── email
+│   │   │   ├── __init__.py
+│   │   │   └── imap_client.py
+│   │   ├── outbound
+│   │   │   ├── __init__.py
+│   │   │   ├── email.py
+│   │   │   ├── feishu.py
+│   │   │   ├── notion.py
+│   │   │   └── todoist.py
+│   │   ├── social
+│   │   │   ├── __init__.py
+│   │   │   ├── weibo.py
+│   │   │   └── xiaohongshu.py
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── financial.py
+│   │   ├── qichacha.py
+│   │   └── rss.py
+│   ├── core
+│   │   ├── migrations
+│   │   │   └── add_user_fields.py
+│   │   ├── __init__.py
+│   │   ├── audit.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── exceptions.py
+│   │   ├── init_db.py
+│   │   ├── message_bus.py
+│   │   └── orchestrator.py
+│   ├── model_clients
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── manager.py
+│   │   ├── ollama_client.py
+│   │   └── openai_client.py
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── briefing.py
+│   │   ├── conversation.py
+│   │   ├── data_source.py
+│   │   ├── db.py
+│   │   ├── log.py
+│   │   ├── message.py
+│   │   ├── model_folder.py
+│   │   ├── project.py
+│   │   ├── scene.py
+│   │   └── user.py
+│   ├── repositories
+│   │   ├── postgres
+│   │   │   ├── __init__.py
+│   │   │   ├── briefing_repo.py
+│   │   │   ├── conversation_repo.py
+│   │   │   ├── data_source_repo.py
+│   │   │   ├── log_repo.py
+│   │   │   ├── message_repo.py
+│   │   │   ├── project_repo.py
+│   │   │   ├── raw_email_repo.py
+│   │   │   ├── scene_repo.py
+│   │   │   └── user_repo.py
+│   │   ├── sqlite
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   └── user_repo.py
+│   │   ├── __init__.py
+│   │   └── base.py
+│   ├── sop
+│   │   ├── briefing.yaml
+│   │   ├── daily_briefing.yaml
+│   │   ├── risk_alert.yaml
+│   │   └── strategy.yaml
+│   ├── utils
+│   │   ├── __init__.py
+│   │   ├── crypto.py
+│   │   ├── daily_briefing.py
+│   │   ├── llm_client.py
+│   │   ├── logger.py
+│   │   ├── text_utils.py
+│   │   └── time_utils.py
+│   ├── __init__.py
+│   ├── main.py
+│   └── requirements.txt
+├── frontend
+│   ├── public
+│   │   └── favicon.ico
+│   ├── src
+│   │   ├── api
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.js
+│   │   │   ├── briefings.js
+│   │   │   ├── client.js
+│   │   │   ├── conversation.js
+│   │   │   ├── dataSources.js
+│   │   │   ├── logs.js
+│   │   │   ├── models.js
+│   │   │   ├── priority.js
+│   │   │   ├── project.js
+│   │   │   ├── scenes.js
+│   │   │   ├── settings.js
+│   │   │   └── tree.js
+│   │   ├── assets
+│   │   │   └── css
+│   │   │       ├── main.css
+│   │   │       └── variables.css
+│   │   ├── components
+│   │   │   ├── chat
+│   │   │   │   ├── ChatWindow.vue
+│   │   │   │   ├── InputArea.vue
+│   │   │   │   └── MessageBubble.vue
+│   │   │   ├── common
+│   │   │   │   ├── LoadingSpinner.vue
+│   │   │   │   ├── NavBar.vue
+│   │   │   │   └── SideMenu.vue
+│   │   │   ├── dashboard
+│   │   │   │   ├── BriefingPreview.vue
+│   │   │   │   ├── PriorityList.vue
+│   │   │   │   └── StatsCard.vue
+│   │   │   └── settings
+│   │   │       ├── DataSourceConfig.vue
+│   │   │       └── ProfileForm.vue
+│   │   ├── router
+│   │   │   └── index.js
+│   │   ├── stores
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.js
+│   │   │   ├── briefings.js
+│   │   │   ├── dataSources.js
+│   │   │   ├── models.js
+│   │   │   ├── priority.js
+│   │   │   ├── settings.js
+│   │   │   └── user.js
+│   │   ├── utils
+│   │   │   ├── __init__.py
+│   │   │   ├── format.js
+│   │   │   ├── validate.js
+│   │   │   └── websocket.js
+│   │   ├── views
+│   │   │   ├── briefings
+│   │   │   │   ├── BriefingDetail.vue
+│   │   │   │   └── BriefingHistory.vue
+│   │   │   ├── conversations
+│   │   │   │   └── Conversation.vue
+│   │   │   ├── priority
+│   │   │   │   └── PriorityDetail.vue
+│   │   │   ├── AIModelManager.vue
+│   │   │   ├── Dashboard.vue
+│   │   │   ├── DataSources.vue
+│   │   │   ├── Login.vue
+│   │   │   ├── Logs.vue
+│   │   │   ├── Marketplace.vue
+│   │   │   ├── NotFound.vue
+│   │   │   ├── Register.vue
+│   │   │   └── Settings.vue
+│   │   ├── App.vue
+│   │   └── main.js
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   └── vite.config.js
+├── .gitignore
+├── Q&A.txt
+├── backup_source.py
+├── docker-compose.yml
+├── project_tree.txt
+├── test_direct.py
+├── test_email_agent.py
+├── test_fetch.py
+├── test_fetch2.py
+├── test_fetch3.py
+├── test_groq.py
+├── test_llm.py
+└── test_login.py
