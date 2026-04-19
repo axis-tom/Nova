@@ -38,6 +38,7 @@ AGENT_REGISTRY = {
     "project_agent": ProjectAgent,
     "outbound_agent": OutboundAgent,
     "briefing_generator_agent": BriefingGeneratorAgent,
+    "formatter": Formatter,
     # strategist
     "financial_advisor": FinancialAdvisor,
     "growth_advisor": GrowthAdvisor,

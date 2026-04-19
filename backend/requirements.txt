@@ -46,3 +46,6 @@ alembic>=1.13.0
 
 python-jose==3.5.0
 bcrypt==3.2.2
+
+# 定时任务调度
+APScheduler==3.10.4

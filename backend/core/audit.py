@@ -79,3 +79,13 @@ class AuditLogger:
 
 # 全局单例
 audit_logger = AuditLogger()
+
+
+def log_state(state):
+    """
+    打印State的事件日志（轻量级追踪）
+    
+    Args:
+        state: State对象，包含events列表
+    """
+    print(state.events)

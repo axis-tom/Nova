@@ -5,7 +5,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 import logging
 
-from backend.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market
+from backend.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler
 from backend.api.v1 import models, tree
 from backend.api.v1 import router as api_router
 from backend.core.config import settings
@@ -17,6 +17,13 @@ from backend.utils.logger import logger
 # 新增导入，用于建表
 from backend.core.database import engine, Base
 import backend.models.db  # 确保所有模型被加载
+
+# 新增导入，用于 ToolRegistry
+from backend.tools.registry import ToolRegistry
+from backend.tools.mock_tool import MockTool
+
+# 新增导入，用于调度管理器
+from backend.core.scheduler_manager import scheduler_manager
 
 # 生命周期管理
 @asynccontextmanager
@@ -36,6 +43,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization skipped: {e}")
 
+    # 注册 Mock Tool
+    try:
+        ToolRegistry.register("mock", MockTool())
+        logger.info("Mock tool registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register mock tool: {e}")
+
     # 初始化消息总线连接
     try:
         await message_bus.connect()
@@ -53,10 +67,24 @@ async def lifespan(app: FastAPI):
     # 可选：启动爬虫池工作进程（如需要）
     # await crawler_pool.start_workers(worker_count=2)
     
+    # 启动数据采集调度器
+    try:
+        await scheduler_manager.start()
+        logger.info("Data collection scheduler started")
+    except Exception as e:
+        logger.error(f"Failed to start data collection scheduler: {e}")
+    
     yield  # 应用运行期间
     
     # 关闭时
     logger.info("Shutting down Nova backend...")
+    
+    # 停止数据采集调度器
+    try:
+        await scheduler_manager.stop()
+        logger.info("Data collection scheduler stopped")
+    except Exception as e:
+        logger.error(f"Error stopping data collection scheduler: {e}")
     
     # 关闭消息总线
     try:
@@ -105,6 +133,7 @@ app.include_router(conversation.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(settings.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(market.router, prefix=settings.API_V1_PREFIX)
+app.include_router(scheduler.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(models.router, prefix=settings.API_V1_PREFIX)
 # app.include_router(tree.router, prefix=settings.API_V1_PREFIX)
 

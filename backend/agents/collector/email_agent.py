@@ -1,121 +1,138 @@
-from typing import Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.agents.base import Agent, AgentInput, AgentOutput
+from backend.agents.collector.base_collector import BaseCollector
+from backend.agents.base import AgentInput
 from backend.connectors.email.imap_client import IMAPClient
-from backend.repositories.postgres.data_source_repo import DataSourceRepository
 from backend.repositories.postgres.raw_email_repo import RawEmailRepository
 from backend.utils.crypto import decrypt_password
+from backend.utils.logger import logger
 
-class EmailAgent(Agent):
+class EmailAgent(BaseCollector):
+    """邮件数据采集器"""
+    
+    name = "email_agent"
+    description = "采集邮件数据"
+    
     def __init__(self, db: AsyncSession):
-        self.db = db
-        self.data_source_repo = DataSourceRepository(db)
+        super().__init__(db)
         self.raw_email_repo = RawEmailRepository(db)
-
-    async def execute(self, input_data: AgentInput) -> AgentOutput:
-        user_id = input_data.user_id
-        # print(f"[EmailAgent] Starting for user {user_id}")
-
-        data_sources = await self.data_source_repo.list(
-            user_id,
-            filters={"type": "email", "enabled": True}
-        )
-        if not data_sources:
-            # print("[EmailAgent] No active email data source found")
-            return AgentOutput(result=[], metadata={"error": "No active email data source"})
-
-        # print(f"[EmailAgent] Found {len(data_sources)} active email data sources")
-
-        all_emails = []
-        for ds in data_sources:
-            # print(f"[EmailAgent] Processing data source: {ds.name} (id={ds.id})")
-            config = ds.config.copy()
-            if "encrypted_password" in config:
+    
+    async def _collect_data(
+        self, 
+        config: Dict[str, Any],
+        last_collected_at: Optional[datetime],
+        input_data: AgentInput
+    ) -> Dict[str, Any]:
+        """
+        采集邮件数据
+        """
+        try:
+            # 解密密码
+            config_copy = config.copy()
+            if "encrypted_password" in config_copy:
                 try:
-                    config["password"] = decrypt_password(config["encrypted_password"])
-                    # print(f"  Decrypted password (length={len(config['password'])})")
+                    config_copy["password"] = decrypt_password(config_copy["encrypted_password"])
                 except Exception as e:
-                    # print(f"  Failed to decrypt password: {e}")
-                    continue
+                    return {
+                        "success": False,
+                        "data": [],
+                        "error": f"Failed to decrypt password: {e}",
+                        "metadata": {}
+                    }
             else:
-                # print("  No encrypted_password field, skipping")
-                continue
-
-            host = config.get("imap_server")
-            port = config.get("imap_port")
-            username = config.get("email")
-            password = config.get("password")
-            use_ssl = config.get("use_ssl", True)
+                return {
+                    "success": False,
+                    "data": [],
+                    "error": "No encrypted_password in config",
+                    "metadata": {}
+                }
+            
+            # 获取IMAP配置
+            host = config_copy.get("imap_server")
+            port = config_copy.get("imap_port")
+            username = config_copy.get("email")
+            password = config_copy.get("password")
+            use_ssl = config_copy.get("use_ssl", True)
+            
             if not all([host, port, username, password]):
-                # print(f"  Missing IMAP config: host={host}, port={port}, user={username}")
-                continue
-
+                return {
+                    "success": False,
+                    "data": [],
+                    "error": f"Missing IMAP config: host={host}, port={port}, user={username}",
+                    "metadata": {}
+                }
+            
+            # 连接IMAP服务器
+            client = IMAPClient(
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                use_ssl=use_ssl
+            )
+            
+            await client.connect()
+            
+            # 计算起始时间（增量采集）
+            if last_collected_at:
+                since = last_collected_at.strftime("%d-%b-%Y")
+                logger.info(f"[EmailAgent] Incremental collection since {since}")
+            else:
+                # 首次采集：获取最近7天的邮件
+                since = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
+                logger.info(f"[EmailAgent] First collection since {since}")
+            
+            # 获取邮件
+            emails = await client.fetch_since(since, limit=100)
+            await client.disconnect()
+            
+            logger.info(f"[EmailAgent] Fetched {len(emails)} emails")
+            
+            return {
+                "success": True,
+                "data": emails,
+                "error": None,
+                "metadata": {
+                    "host": host,
+                    "username": username,
+                    "fetched_count": len(emails)
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"[EmailAgent] Collection error: {e}")
+            return {
+                "success": False,
+                "data": [],
+                "error": str(e),
+                "metadata": {"exception": e.__class__.__name__}
+            }
+    
+    async def _store_collected_data(
+        self,
+        user_id: int,
+        data_source_id: int,
+        data: List[Dict[str, Any]]
+    ) -> int:
+        """
+        存储采集到的邮件数据
+        """
+        if not data:
+            return 0
+        
+        stored_count = 0
+        for email in data:
             try:
-                client = IMAPClient(
-                    host=host,
-                    port=port,
-                    username=username,
-                    password=password,
-                    use_ssl=use_ssl
+                await self.raw_email_repo.create(
+                    user_id=user_id,
+                    data_source_id=data_source_id,
+                    email_data=email
                 )
-                # print(f"  Connecting to {host}:{port} SSL={use_ssl}")
-                await client.connect()
-
-                # 统一使用 fetch_since，计算起始日期
-                if ds.last_collected_at:
-                    since = ds.last_collected_at.strftime("%d-%b-%Y")
-                    # print(f"  Incremental collection since {since}")
-                else:
-                    # 首次采集：获取最近7天的邮件
-                    since = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
-                    # print(f"  First collection since {since}")
-
-                emails = await client.fetch_since(since, limit=100)
-                # print(f"  Fetched {len(emails)} emails")
-
-                await client.disconnect()
-
-                for email in emails:
-                    try:
-                        await self.raw_email_repo.create(
-                            user_id=user_id,
-                            data_source_id=ds.id,
-                            email_data=email
-                        )
-                        # print(f"    Stored email: {email.get('subject')[:50]}...")
-                    except Exception as e:
-                        print(f"    Failed to store raw email: {e}")
-
-                all_emails.extend(emails)
-
-                # 更新最后采集时间（取最新邮件的日期）
-                if emails:
-                    latest_dt = None
-                    for email in emails:
-                        date_str = email.get('date')
-                        if date_str:
-                            try:
-                                from email.utils import parsedate_to_datetime
-                                dt = parsedate_to_datetime(date_str)
-                                if latest_dt is None or dt > latest_dt:
-                                    latest_dt = dt
-                            except Exception as e:
-                                print(f"      Failed to parse date {date_str}: {e}")
-                    if latest_dt:
-                        await self.data_source_repo.update_last_collected(ds.id, user_id, latest_dt)
-                        # print(f"  Updated last_collected_at to {latest_dt}")
-                    else:
-                        await self.data_source_repo.update_last_collected(ds.id, user_id, datetime.now())
-                        # print(f"  Updated last_collected_at to current time (no date in emails)")
-                else:
-                    await self.data_source_repo.update_last_collected(ds.id, user_id, datetime.now())
-                    # print("  No new emails, updated last_collected_at to current time")
-
+                stored_count += 1
             except Exception as e:
-                # print(f"  Error fetching from {ds.name}: {e}")
-                continue
-
-        # print(f"[EmailAgent] Total emails collected: {len(all_emails)}")
-        return AgentOutput(result=all_emails, metadata={"count": len(all_emails)})
+                logger.error(f"[EmailAgent] Failed to store email: {e}")
+        
+        logger.info(f"[EmailAgent] Stored {stored_count} emails for user {user_id}, source {data_source_id}")
+        return stored_count
