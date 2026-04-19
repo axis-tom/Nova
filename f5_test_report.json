@@ -1,0 +1,414 @@
+{
+  "test_name": "F5稳定性验证",
+  "timestamp": "2026-04-19T17:10:04.987580",
+  "total_runs": 10,
+  "consistency_requirements": {
+    "graph_path_consistency": "100%",
+    "agent_output_consistency": "100%",
+    "no_graph_drift": true,
+    "no_agent_responsibility_violation": true
+  },
+  "test_results": [
+    {
+      "test_id": 1,
+      "success": true,
+      "execution_time": 0.00015687942504882812,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 1,
+        "timestamp": 1776589804.9878943,
+        "data": {
+          "sample_field": "test_value_1",
+          "numeric_value": 10,
+          "array_data": [
+            1,
+            2,
+            3,
+            1
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 1,
+        "environment": "stability_test",
+        "request_id": "f5_test_1"
+      },
+      "error": null
+    },
+    {
+      "test_id": 2,
+      "success": true,
+      "execution_time": 6.008148193359375e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 2,
+        "timestamp": 1776589804.9880743,
+        "data": {
+          "sample_field": "test_value_2",
+          "numeric_value": 20,
+          "array_data": [
+            1,
+            2,
+            3,
+            2
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 2,
+        "environment": "stability_test",
+        "request_id": "f5_test_2"
+      },
+      "error": null
+    },
+    {
+      "test_id": 3,
+      "success": true,
+      "execution_time": 4.5299530029296875e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 3,
+        "timestamp": 1776589804.9881477,
+        "data": {
+          "sample_field": "test_value_3",
+          "numeric_value": 30,
+          "array_data": [
+            1,
+            2,
+            3,
+            3
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 3,
+        "environment": "stability_test",
+        "request_id": "f5_test_3"
+      },
+      "error": null
+    },
+    {
+      "test_id": 4,
+      "success": true,
+      "execution_time": 3.981590270996094e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 4,
+        "timestamp": 1776589804.9882035,
+        "data": {
+          "sample_field": "test_value_4",
+          "numeric_value": 40,
+          "array_data": [
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 4,
+        "environment": "stability_test",
+        "request_id": "f5_test_4"
+      },
+      "error": null
+    },
+    {
+      "test_id": 5,
+      "success": true,
+      "execution_time": 4.124641418457031e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 5,
+        "timestamp": 1776589804.9882562,
+        "data": {
+          "sample_field": "test_value_5",
+          "numeric_value": 50,
+          "array_data": [
+            1,
+            2,
+            3,
+            5
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 5,
+        "environment": "stability_test",
+        "request_id": "f5_test_5"
+      },
+      "error": null
+    },
+    {
+      "test_id": 6,
+      "success": true,
+      "execution_time": 3.814697265625e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 6,
+        "timestamp": 1776589804.9883075,
+        "data": {
+          "sample_field": "test_value_6",
+          "numeric_value": 60,
+          "array_data": [
+            1,
+            2,
+            3,
+            6
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 6,
+        "environment": "stability_test",
+        "request_id": "f5_test_6"
+      },
+      "error": null
+    },
+    {
+      "test_id": 7,
+      "success": true,
+      "execution_time": 0.00011110305786132812,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 7,
+        "timestamp": 1776589804.9883542,
+        "data": {
+          "sample_field": "test_value_7",
+          "numeric_value": 70,
+          "array_data": [
+            1,
+            2,
+            3,
+            7
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 7,
+        "environment": "stability_test",
+        "request_id": "f5_test_7"
+      },
+      "error": null
+    },
+    {
+      "test_id": 8,
+      "success": true,
+      "execution_time": 4.4345855712890625e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 8,
+        "timestamp": 1776589804.988477,
+        "data": {
+          "sample_field": "test_value_8",
+          "numeric_value": 80,
+          "array_data": [
+            1,
+            2,
+            3,
+            8
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 8,
+        "environment": "stability_test",
+        "request_id": "f5_test_8"
+      },
+      "error": null
+    },
+    {
+      "test_id": 9,
+      "success": true,
+      "execution_time": 3.981590270996094e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 9,
+        "timestamp": 1776589804.9885306,
+        "data": {
+          "sample_field": "test_value_9",
+          "numeric_value": 90,
+          "array_data": [
+            1,
+            2,
+            3,
+            9
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 9,
+        "environment": "stability_test",
+        "request_id": "f5_test_9"
+      },
+      "error": null
+    },
+    {
+      "test_id": 10,
+      "success": true,
+      "execution_time": 4.38690185546875e-05,
+      "execution_path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "output": {
+        "test_id": 10,
+        "timestamp": 1776589804.9885798,
+        "data": {
+          "sample_field": "test_value_10",
+          "numeric_value": 100,
+          "array_data": [
+            1,
+            2,
+            3,
+            10
+          ]
+        }
+      },
+      "metadata": {
+        "test_run": 10,
+        "environment": "stability_test",
+        "request_id": "f5_test_10"
+      },
+      "error": null
+    }
+  ],
+  "analysis": {
+    "total_runs": 10,
+    "successful_runs": 10,
+    "failed_runs": 0,
+    "success_rate": "10/10",
+    "graph_path_consistency": {
+      "consistent": true,
+      "path": [
+        "validate_input",
+        "process_data",
+        "generate_output"
+      ],
+      "path_list": [
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ],
+        [
+          "validate_input",
+          "process_data",
+          "generate_output"
+        ]
+      ],
+      "consistency_rate": "10/10"
+    },
+    "agent_output_consistency": {
+      "consistent": true,
+      "hash": "99914b932bd37a50b983c5e7c90ae93b",
+      "hash_list": [
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b",
+        "99914b932bd37a50b983c5e7c90ae93b"
+      ],
+      "consistency_rate": "10/10"
+    },
+    "graph_drift_detected": false,
+    "agent_responsibility_violation": false,
+    "execution_times": [
+      0.00015687942504882812,
+      6.008148193359375e-05,
+      4.5299530029296875e-05,
+      3.981590270996094e-05,
+      4.124641418457031e-05,
+      3.814697265625e-05,
+      0.00011110305786132812,
+      4.4345855712890625e-05,
+      3.981590270996094e-05,
+      4.38690185546875e-05
+    ],
+    "average_execution_time": 6.206035614013672e-05
+  },
+  "overall_passed": true,
+  "verdict": "PASS"
+}
