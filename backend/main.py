@@ -5,7 +5,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 import logging
 
-from backend.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph
+from backend.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
 from backend.api.v1 import models, tree
 from backend.api.v1 import router as api_router
 from backend.core.config import settings
@@ -139,6 +139,9 @@ app.include_router(scheduler.router, prefix=settings.API_V1_PREFIX)
 
 # 注册Graph API路由 - 统一AI行为入口
 app.include_router(graph.router, prefix=f"{settings.API_V1_PREFIX}/graph", tags=["Graph"])
+
+# 注册Trace API路由 - 执行追踪和调试
+app.include_router(trace.router, prefix=f"{settings.API_V1_PREFIX}/trace", tags=["Trace"])
 
 
 # 健康检查端点

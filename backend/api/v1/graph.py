@@ -236,6 +236,76 @@ async def list_scenarios():
         "details": SCENARIO_GRAPHS
     }
 
+@router.get("/schema", tags=["Graph"])
+async def get_graph_schema(scenario: str = None):
+    """
+    获取Graph Schema
+    
+    如果提供scenario参数，返回特定场景的Graph定义
+    如果不提供scenario参数，返回所有场景的Graph定义
+    """
+    try:
+        if scenario:
+            if scenario not in SCENARIO_GRAPHS:
+                raise HTTPException(status_code=404, detail=f"场景 '{scenario}' 不存在")
+            
+            # 创建Graph定义以获取完整结构
+            graph = create_graph_from_scenario(scenario)
+            
+            # 转换为前端可用的格式
+            schema = {
+                "scenario": scenario,
+                "graph_id": graph.graph_id,
+                "version": graph.version,
+                "description": graph.description,
+                "nodes": [],
+                "edges": []
+            }
+            
+            # 添加节点
+            for node in graph.nodes:
+                node_data = {
+                    "id": node.node_id,
+                    "type": node.node_type.value,
+                    "name": node.node_id,
+                    "config": node.config,
+                    "status": "idle"  # 默认状态
+                }
+                schema["nodes"].append(node_data)
+                
+                # 添加边（连接关系）
+                if node.next_node:
+                    edge = {
+                        "id": f"{node.node_id}_{node.next_node}",
+                        "source": node.node_id,
+                        "target": node.next_node,
+                        "type": "default"
+                    }
+                    schema["edges"].append(edge)
+            
+            return schema
+        else:
+            # 返回所有场景的概览
+            scenarios_overview = []
+            for scenario_name in SCENARIO_GRAPHS.keys():
+                graph = create_graph_from_scenario(scenario_name)
+                scenarios_overview.append({
+                    "scenario": scenario_name,
+                    "graph_id": graph.graph_id,
+                    "version": graph.version,
+                    "description": graph.description,
+                    "node_count": len(graph.nodes)
+                })
+            
+            return {
+                "scenarios": scenarios_overview,
+                "total": len(scenarios_overview)
+            }
+            
+    except Exception as e:
+        logger.error(f"获取Graph Schema失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取Graph Schema失败: {str(e)}")
+
 @router.get("/health", tags=["Graph"])
 async def graph_health():
     """

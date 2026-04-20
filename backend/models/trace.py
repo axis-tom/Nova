@@ -43,7 +43,7 @@ class TraceSession(Base):
     
     # 元数据
     tags = Column(JSON, nullable=True)  # 标签，用于分类和搜索
-    metadata = Column(JSON, nullable=True)  # 其他元数据
+    meta_info = Column(JSON, nullable=True)  # 其他元数据（避免使用metadata保留字）
     
     # 时间戳
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -67,7 +67,7 @@ class TraceSession(Base):
             "initial_state": self.initial_state,
             "final_state": self.final_state,
             "tags": self.tags or [],
-            "metadata": self.metadata or {},
+            "metadata": self.meta_info or {},
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }

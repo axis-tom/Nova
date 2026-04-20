@@ -15,6 +15,8 @@ const BriefingDetail = () => import('@/views/briefings/BriefingDetail.vue');
 const PriorityDetail = () => import('@/views/priority/PriorityDetail.vue');
 const NotFound = () => import('@/views/NotFound.vue');
 const Register = () => import('@/views/Register.vue');
+const Console = () => import('@/views/Console.vue');
+const TraceView = () => import('@/views/TraceView.vue');
 
 // 定义路由
 const routes = [
@@ -96,11 +98,23 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-  path: '/register',
-  name: 'Register',
-  component: Register,
-  meta: { requiresAuth: false, title: '注册' }
-}
+    path: '/register',
+    name: 'Register',
+    component: Register,
+    meta: { requiresAuth: false, title: '注册' }
+  },
+  {
+    path: '/console',
+    name: 'Console',
+    component: Console,
+    meta: { requiresAuth: true, title: 'AI控制台' }
+  },
+  {
+    path: '/trace',
+    name: 'TraceView',
+    component: TraceView,
+    meta: { requiresAuth: true, title: 'Trace查看器' }
+  }
 ];
 
 const router = createRouter({

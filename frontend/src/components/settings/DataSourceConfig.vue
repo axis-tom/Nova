@@ -2,7 +2,7 @@
   <el-card class="data-source-config">
     <template #header>
       <div class="card-header">
-        <span class="title">数据源管理</span>
+        <span class="title">数据源管理 (UI-7: Mock实现)</span>
         <el-button type="primary" :icon="Plus" @click="handleAdd">添加数据源</el-button>
       </div>
     </template>
@@ -132,10 +132,10 @@
         <!-- 测试连接按钮区域 -->
         <div class="test-section" v-if="currentTypeDef">
           <el-button type="primary" @click="testConnection" :loading="testing">
-            测试连接
+            测试连接 (仅console.log)
           </el-button>
           <span v-if="testSuccess" class="test-success">
-            <el-icon><CircleCheckFilled /></el-icon> 连接成功
+            <el-icon><CircleCheckFilled /></el-icon> 连接成功 (模拟)
           </span>
           <span v-if="testError" class="test-error">
             <el-icon><CircleCloseFilled /></el-icon> {{ testError }}
@@ -146,7 +146,7 @@
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitForm" :loading="submitting" :disabled="!isFormValid">
-          确定
+          确定 (模拟提交)
         </el-button>
       </template>
     </el-dialog>
@@ -158,14 +158,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, InfoFilled, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import { formatDate } from '@/utils/format'
-import {
-  getDataSources,
-  createDataSource,
-  updateDataSource,
-  deleteDataSource,
-  testDataSource,
-  getDataSourceTypes
-} from '@/api/dataSources'
+import { useDataSourceStore } from '@/stores/dataSources'
 
 const props = defineProps({
   dataSources: {
@@ -179,6 +172,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['add', 'update', 'delete', 'test'])
+
+// 使用数据源store
+const dataSourceStore = useDataSourceStore()
 
 // 本地状态（用于表单，不直接修改 props）
 const dataSourceTypes = ref({})
@@ -276,10 +272,13 @@ const getPasswordHint = () => {
 
 const fetchTypes = async () => {
   try {
-    const res = await getDataSourceTypes()
-    dataSourceTypes.value = res
+    console.log('[UI-7] 加载数据源类型（mock）');
+    const res = await dataSourceStore.fetchTypes();
+    dataSourceTypes.value = res;
+    console.log('[UI-7] 数据源类型加载完成:', Object.keys(res).length, '种类型');
   } catch (error) {
-    ElMessage.error('加载数据源类型失败')
+    console.error('[UI-7] 加载数据源类型失败:', error);
+    ElMessage.error('加载数据源类型失败');
   }
 }
 
@@ -318,10 +317,15 @@ const testConnection = async () => {
   testError.value = ''
   testSuccess.value = false
   try {
-    const res = await testDataSource({ type: formData.type, config: formData.config })
+    console.log('[UI-7] 测试连接按钮点击（仅console.log）');
+    console.log('[UI-7] 表单数据:', formData);
+    
+    // 使用store的test方法（仅console.log）
+    const res = await dataSourceStore.test({ type: formData.type, config: formData.config })
+    
     if (res.success) {
       testSuccess.value = true
-      ElMessage.success('连接成功')
+      ElMessage.success('连接测试成功（模拟）')
     } else {
       testError.value = res.message || '连接失败'
       ElMessage.error(testError.value)
@@ -363,17 +367,34 @@ const handleEdit = (row) => {
 
 const handleDelete = async (row) => {
   try {
-    await ElMessageBox.confirm(`确定要删除数据源“${row.name}”吗？`, '提示', { type: 'warning' })
+    await ElMessageBox.confirm(`确定要删除数据源"${row.name}"吗？（模拟操作）`, '提示', { 
+      type: 'warning',
+      confirmButtonText: '删除（模拟）',
+      cancelButtonText: '取消'
+    })
+    console.log(`[UI-7] 删除数据源: ${row.name} (ID: ${row.id})`);
     emit('delete', row.id)
-  } catch { /* 取消 */ }
+  } catch { 
+    console.log('[UI-7] 删除操作取消');
+    /* 取消 */ 
+  }
 }
 
 const handleTest = async (row) => {
   try {
-    const res = await testDataSource({ type: row.type, config: row.config });
-    if (res.success) ElMessage.success('连接成功');
-    else ElMessage.error('连接失败：' + (res.message || '未知错误'));
+    console.log(`[UI-7] 测试数据源连接: ${row.name} (ID: ${row.id})`);
+    console.log('[UI-7] 数据源配置:', row.config);
+    
+    // 使用store的test方法（仅console.log）
+    const res = await dataSourceStore.test({ type: row.type, config: row.config });
+    
+    if (res.success) {
+      ElMessage.success('连接测试成功（模拟）');
+    } else {
+      ElMessage.error('连接测试失败（模拟）：' + (res.message || '未知错误'));
+    }
   } catch (error) {
+    console.error('[UI-7] 测试失败:', error);
     ElMessage.error('测试失败：' + error.message);
   }
 };
@@ -398,19 +419,27 @@ const submitForm = async () => {
   try {
     await formRef.value.validate()
     submitting.value = true
+    
     const payload = {
       name: formData.name,
       type: formData.type,
       config: formData.config
     }
+    
+    console.log('[UI-7] 提交表单（模拟）:', payload);
+    
     if (editingId.value) {
+      console.log(`[UI-7] 更新数据源 ID: ${editingId.value}`);
       emit('update', { id: editingId.value, ...payload })
     } else {
+      console.log('[UI-7] 添加新数据源');
       emit('add', payload)
     }
+    
     dialogVisible.value = false
-    ElMessage.success(editingId.value ? '更新成功' : '添加成功')
+    ElMessage.success(editingId.value ? '更新成功（模拟）' : '添加成功（模拟）')
   } catch (error) {
+    console.error('[UI-7] 表单提交失败:', error);
     if (error.response?.data?.detail) ElMessage.error(error.response.data.detail)
     else ElMessage.error('操作失败')
   } finally {

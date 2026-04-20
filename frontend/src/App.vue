@@ -41,9 +41,9 @@ watch(sidebarCollapsed, (val) => {
   localStorage.setItem('sidebarCollapsed', val);
 });
 
-// 判断当前是否在认证页面（登录或注册）
+// 判断当前是否在认证页面（登录或注册）或Console页面
 const isAuthPage = computed(() => {
-  return route.name === 'Login' || route.name === 'Register';
+  return route.name === 'Login' || route.name === 'Register' || route.name === 'Console';
 });
 
 // 切换侧边栏（由 NavBar 触发）
