@@ -44,8 +44,8 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import ProfileForm from '@/components/settings/ProfileForm.vue';
-import DataSourceConfig from '@/components/settings/DataSourceConfig.vue';
+import ProfileForm from '@/ui/settings/ProfileForm.vue';
+import DataSourceConfig from '@/ui/settings/DataSourceConfig.vue';
 import { useUserStore } from '@/stores/user';
 import { useDataSourceStore } from '@/stores/dataSources';
 import { getNotificationPreferences, updateNotificationPreferences } from '@/api/settings';

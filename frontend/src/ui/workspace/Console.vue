@@ -257,13 +257,13 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import GraphCanvas from '@/components/console/GraphCanvas.vue'
-import RunConsole from '@/components/console/RunConsole.vue'
-import TraceList from '@/components/console/TraceList.vue'
-import DebugTools from '@/components/console/DebugTools.vue'
-import TraceViewer from '@/components/console/TraceViewer.vue'
-import DebugPanel from '@/components/console/DebugPanel.vue'
-import TraceGraphIntegration from '@/components/console/TraceGraphIntegration.vue'
+import GraphCanvas from '@/ui/console/GraphCanvas.vue'
+import RunConsole from '@/ui/console/RunConsole.vue'
+import TraceList from '@/ui/console/TraceList.vue'
+import DebugTools from '@/ui/console/DebugTools.vue'
+import TraceViewer from '@/ui/console/TraceViewer.vue'
+import DebugPanel from '@/ui/console/DebugPanel.vue'
+import TraceGraphIntegration from '@/ui/console/TraceGraphIntegration.vue'
 import { listScenarios } from '@/api/graph.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 

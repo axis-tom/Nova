@@ -294,10 +294,10 @@ const handleRegister = async () => {
     // 调用注册接口
     await authStore.register(registerData);
     
-    ElMessage.success('注册成功！正在跳转到仪表盘...');
+    ElMessage.success('注册成功！正在跳转到工作台...');
     
-    // 注册成功后自动登录，跳转到仪表盘
-    router.push('/dashboard');
+    // 注册成功后自动登录，跳转到工作台
+    router.push('/workspace');
     
   } catch (err) {
     console.error('注册失败:', err);

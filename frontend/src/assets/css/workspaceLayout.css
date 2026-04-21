@@ -1,0 +1,266 @@
+/* 
+ * workspaceLayout.css
+ * Nova Workspace 布局样式
+ * S1阶段：UI骨架层布局定义
+ */
+
+/* 全局 Workspace 布局规则 */
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 20% 55% 25%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* 响应式布局调整 */
+@media (max-width: 1200px) {
+  .workspace-grid {
+    grid-template-columns: 25% 50% 25%;
+  }
+}
+
+@media (max-width: 992px) {
+  .workspace-grid {
+    grid-template-columns: 30% 70%;
+  }
+  
+  .workspace-right {
+    display: none; /* 小屏幕隐藏右侧面板 */
+  }
+}
+
+@media (max-width: 768px) {
+  .workspace-grid {
+    grid-template-columns: 100%;
+  }
+  
+  .workspace-left,
+  .workspace-right {
+    display: none; /* 移动端只显示中间画布 */
+  }
+}
+
+/* 面板通用样式 */
+.workspace-panel {
+  overflow: auto;
+  border-right: 1px solid var(--border-color, #334155);
+  background-color: var(--panel-bg, #1e293b);
+}
+
+.workspace-panel:last-child {
+  border-right: none;
+}
+
+/* 滚动条样式 */
+.workspace-panel::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.workspace-panel::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, #0f172a);
+}
+
+.workspace-panel::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #475569);
+  border-radius: 3px;
+}
+
+.workspace-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #64748b);
+}
+
+/* 面板标题样式 */
+.panel-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--title-color, #f1f5f9);
+  margin: 0 0 4px 0;
+}
+
+.panel-subtitle {
+  font-size: 12px;
+  color: var(--subtitle-color, #94a3b8);
+}
+
+/* 占位符样式 */
+.placeholder-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+}
+
+.placeholder-content {
+  text-align: center;
+  padding: 30px;
+  max-width: 300px;
+}
+
+.placeholder-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.placeholder-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--placeholder-title, #e2e8f0);
+  margin-bottom: 8px;
+}
+
+.placeholder-description {
+  font-size: 13px;
+  color: var(--placeholder-desc, #94a3b8);
+  margin-bottom: 10px;
+}
+
+.placeholder-hint {
+  font-size: 11px;
+  color: var(--placeholder-hint, #64748b);
+  font-style: italic;
+  padding: 6px;
+  background-color: var(--placeholder-hint-bg, #1e293b);
+  border-radius: 4px;
+  border: 1px solid var(--placeholder-hint-border, #334155);
+}
+
+/* 工具栏样式 */
+.toolbar-container {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  background-color: var(--toolbar-bg, #0f172a);
+  border-radius: 8px;
+  border: 1px solid var(--toolbar-border, #334155);
+}
+
+.toolbar-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  background-color: var(--toolbar-item-bg, #1e293b);
+  border: 1px solid var(--toolbar-item-border, #334155);
+  border-radius: 6px;
+  color: var(--toolbar-item-color, #94a3b8);
+  cursor: default;
+  transition: all 0.2s;
+}
+
+.toolbar-item:hover {
+  background-color: var(--toolbar-item-hover-bg, #334155);
+  color: var(--toolbar-item-hover-color, #cbd5e1);
+}
+
+.toolbar-icon {
+  font-size: 16px;
+}
+
+.toolbar-label {
+  font-size: 12px;
+}
+
+/* 分割线 */
+.panel-divider {
+  height: 1px;
+  background-color: var(--divider-color, #334155);
+  margin: 16px 0;
+}
+
+/* 面板内容区域 */
+.panel-content {
+  padding: 16px;
+}
+
+.panel-section {
+  margin-bottom: 20px;
+  background-color: var(--section-bg, #0f172a);
+  border-radius: 8px;
+  border: 1px solid var(--section-border, #334155);
+  overflow: hidden;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: var(--section-header-bg, #1e293b);
+  border-bottom: 1px solid var(--section-header-border, #334155);
+}
+
+.section-icon {
+  font-size: 16px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--section-title-color, #e2e8f0);
+}
+
+.section-content {
+  padding: 16px;
+}
+
+/* 工作台头部样式 */
+.workspace-header {
+  height: 48px;
+  background-color: var(--header-bg, #1e293b);
+  border-bottom: 1px solid var(--header-border, #334155);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-logo {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--logo-color, #60a5fa);
+}
+
+.header-title {
+  font-size: 14px;
+  color: var(--header-title-color, #94a3b8);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.header-action-item {
+  font-size: 14px;
+  color: var(--header-action-color, #cbd5e1);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.header-action-item:hover {
+  background-color: var(--header-action-hover-bg, #334155);
+}

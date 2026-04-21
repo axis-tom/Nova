@@ -41,9 +41,9 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import StatsCard from '@/components/dashboard/StatsCard.vue';
-import PriorityList from '@/components/dashboard/PriorityList.vue';
-import BriefingPreview from '@/components/dashboard/BriefingPreview.vue';
+import StatsCard from '@/ui/dashboard/StatsCard.vue';
+import PriorityList from '@/ui/dashboard/PriorityList.vue';
+import BriefingPreview from '@/ui/dashboard/BriefingPreview.vue';
 import { useBriefingStore } from '@/stores/briefings';
 import { usePriorityStore } from '@/stores/priority'; // 假设有优先级 store
 

@@ -14,7 +14,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import DataSourceConfig from '@/components/settings/DataSourceConfig.vue';
+import DataSourceConfig from '@/ui/settings/DataSourceConfig.vue';
 import { useDataSourceStore } from '@/stores/dataSources';
 
 const dataSourceStore = useDataSourceStore();

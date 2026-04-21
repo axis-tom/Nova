@@ -79,7 +79,7 @@ const handleLogin = async () => {
     loading.value = true;
     await authStore.login({ email: formData.email, password: formData.password });
     ElMessage.success('登录成功');
-    router.push('/dashboard');
+    router.push('/workspace');
   } catch (err) {
     ElMessage.error(err.message || '登录失败');
   } finally {

@@ -3,16 +3,24 @@ import { ref, computed } from 'vue';
 import { login as apiLogin, register as apiRegister, getCurrentUser, logout as apiLogout, changePassword } from '@/api/auth';
 // import client from './client';
 
+const MOCK_USER = {
+  id: 'dev-user',
+  name: '开发者模式',
+  email: 'dev@nova.local'
+};
 
 export const useAuthStore = defineStore('auth', () => {
   // 状态
-  const token = ref(localStorage.getItem('nova_token') || null);
-  const user = ref(null);
+  // const token = ref(localStorage.getItem('nova_token') || null);
+  // const user = ref(null);
+  const token = ref(localStorage.getItem('nova_token') || 'mock-token-for-dev'); // 强制有 token
+  const user = ref(MOCK_USER); // 强制有用户信息
   const loading = ref(false);
   const error = ref(null);
 
   // 计算属性
-  const isAuthenticated = computed(() => !!token.value);
+  // const isAuthenticated = computed(() => !!token.value);
+  const isAuthenticated = computed(() => true); // 直接返回 true
   const userName = computed(() => user.value?.name || '');
   const userEmail = computed(() => user.value?.email || '');
 

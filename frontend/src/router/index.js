@@ -15,14 +15,15 @@ const BriefingDetail = () => import('@/views/briefings/BriefingDetail.vue');
 const PriorityDetail = () => import('@/views/priority/PriorityDetail.vue');
 const NotFound = () => import('@/views/NotFound.vue');
 const Register = () => import('@/views/Register.vue');
-const Console = () => import('@/views/Console.vue');
+const Console = () => import('@/ui/workspace/Console.vue');
 const TraceView = () => import('@/views/TraceView.vue');
+const Workspace = () => import('@/ui/workspace/Workspace.vue');
 
 // 定义路由
 const routes = [
   {
     path: '/',
-    redirect: '/dashboard'
+    redirect: '/workspace'
   },
   {
     path: '/login',
@@ -114,6 +115,12 @@ const routes = [
     name: 'TraceView',
     component: TraceView,
     meta: { requiresAuth: true, title: 'Trace查看器' }
+  },
+  {
+    path: '/workspace',
+    name: 'Workspace',
+    component: Workspace,
+    meta: { requiresAuth: true, title: 'AI工作台', layout: 'blank' }
   }
 ];
 
@@ -131,6 +138,13 @@ const router = createRouter({
 
 // 全局前置守卫：认证检查 + 页面标题
 router.beforeEach(async (to, from, next) => {
+    // 🔧 开发模式：绕过所有认证
+  const isDevBypass = true; // 上线前改为 false
+  if (isDevBypass) {
+    next();
+    return;
+  }
+  
   const loading = ElLoading.service({
     fullscreen: true,
     text: '加载中...',
@@ -157,8 +171,8 @@ router.beforeEach(async (to, from, next) => {
     // 需要登录但未登录，跳转到登录页，并携带原路径
     next({ name: 'Login', query: { redirect: to.fullPath } });
   } else if (to.name === 'Login' && isAuthenticated) {
-    // 已登录访问登录页，重定向到仪表盘
-    next({ name: 'Dashboard' });
+    // 已登录访问登录页，重定向到工作台
+    next({ name: 'Workspace' });
   } else {
     next();
   }
