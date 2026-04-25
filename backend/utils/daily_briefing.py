@@ -9,7 +9,7 @@ import uuid
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
-from backend.core.config import settings
+from backend.config.config import settings
 from backend.core.orchestrator import orchestrator
 from backend.models.db import DataSource
 

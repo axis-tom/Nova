@@ -1,6 +1,6 @@
 import aiosqlite
 from typing import Optional
-from backend.core.config import settings
+from backend.config.config import settings
 
 class SQLiteRepository:
     """SQLite 基础仓库，提供连接获取"""

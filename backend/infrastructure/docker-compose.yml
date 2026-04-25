@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # # NocoDB - 结构化数据存储（替代传统数据库）
+  # nocodb:
+  #   image: nocodb/nocodb:latest
+  #   container_name: nova_nocodb
+  #   ports:
+  #     - "8081:8080"
+  #   volumes:
+  #     - ./data/nocodb:/usr/app/data
+  #   environment:
+  #     # - NC_DB=sqlite:///usr/app/data/nocodb.db
+  #     - NC_AUTH_JWT_SECRET=cvQLm1IE/CxFken7AgI8qTMpUBSgEaP2FFepJzRpK0U=
+  #   restart: unless-stopped
+
+  # Redis - 消息总线与缓存
+  redis:
+    image: redis:7-alpine
+    container_name: nova_redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+
+  # Neo4j - 知识图谱存储
+  neo4j:
+    image: neo4j:5-community
+    container_name: nova_neo4j
+    ports:
+      - "7474:7474"  # HTTP 控制台
+      - "7687:7687"  # Bolt 协议
+    environment:
+      - NEO4J_AUTH=neo4j/Nova@2026   # 请修改密码
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+    restart: unless-stopped
+
+  # Chroma - 向量数据库（用于知识库检索）
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: nova_chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data/chroma:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: nova_postgres
+    environment:
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: Nova@2026
+      POSTGRES_DB: nova_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nova_net
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  nova_net:
+    driver: bridge  

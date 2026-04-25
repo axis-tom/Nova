@@ -23,6 +23,6 @@ app.use(ElementPlus);      // Element Plus UI 库
 
 // 应用挂载前，初始化认证状态（等待 init 完成）
 const authStore = useAuthStore();
-await authStore.init();  // 重要：确保用户信息加载完成再挂载
-
-app.mount('#app');
+authStore.init().then(() => {
+  app.mount('#app');
+});

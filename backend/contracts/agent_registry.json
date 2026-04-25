@@ -1,0 +1,255 @@
+{
+  "version": "1.0.0",
+  "description": "Agent Responsibility Lock System - 智能体职责锁定系统",
+  "last_updated": "2026-04-19",
+  "agents": {
+    "briefing_generator": {
+      "name": "briefing_generator",
+      "description": "生成简报 - 从分析结果生成结构化简报",
+      "single_responsibility": "将分析结果转换为结构化简报",
+      "input_schema": {
+        "type": "object",
+        "required": ["analysis_result"],
+        "properties": {
+          "analysis_result": {
+            "type": "object",
+            "description": "分析结果，包含总结和关键信息"
+          },
+          "user_id": {
+            "type": "integer",
+            "description": "用户ID"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["briefing"],
+        "properties": {
+          "briefing": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "简报标题"
+              },
+              "content": {
+                "type": "string",
+                "description": "简报内容"
+              },
+              "summary": {
+                "type": "string",
+                "description": "简报摘要"
+              }
+            }
+          }
+        }
+      },
+      "prohibited_actions": [
+        "分析数据",
+        "评估质量",
+        "判断风险",
+        "执行其他Agent的职责"
+      ]
+    },
+    "ai_analyzer": {
+      "name": "ai_analyzer",
+      "description": "分析数据 - 使用AI分析输入数据并生成总结",
+      "single_responsibility": "分析输入数据并生成结构化分析结果",
+      "input_schema": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "要分析的数据列表"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["analysis_result"],
+        "properties": {
+          "analysis_result": {
+            "type": "object",
+            "properties": {
+              "summary": {
+                "type": "string",
+                "description": "分析总结"
+              },
+              "key_insights": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "关键洞察"
+              }
+            }
+          }
+        }
+      },
+      "prohibited_actions": [
+        "生成简报",
+        "评估质量",
+        "判断风险",
+        "执行其他Agent的职责"
+      ]
+    },
+    "quality_assessor": {
+      "name": "quality_assessor",
+      "description": "质量评估 - 评估执行结果的质量",
+      "single_responsibility": "评估执行结果的质量并提供质量评分",
+      "input_schema": {
+        "type": "object",
+        "required": ["execution_result"],
+        "properties": {
+          "execution_result": {
+            "type": "object",
+            "description": "执行结果"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["quality_assessment"],
+        "properties": {
+          "quality_assessment": {
+            "type": "object",
+            "properties": {
+              "overall_score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "总体质量得分"
+              },
+              "passed": {
+                "type": "boolean",
+                "description": "是否通过质量检查"
+              }
+            }
+          }
+        }
+      },
+      "prohibited_actions": [
+        "检查合规性",
+        "评估风险",
+        "分析数据",
+        "生成简报"
+      ]
+    },
+    "compliance_checker": {
+      "name": "compliance_checker",
+      "description": "合规检查 - 检查执行结果的合规性",
+      "single_responsibility": "检查执行结果是否符合合规要求",
+      "input_schema": {
+        "type": "object",
+        "required": ["execution_result"],
+        "properties": {
+          "execution_result": {
+            "type": "object",
+            "description": "执行结果"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["compliance_check"],
+        "properties": {
+          "compliance_check": {
+            "type": "object",
+            "properties": {
+              "overall_compliant": {
+                "type": "boolean",
+                "description": "总体是否合规"
+              }
+            }
+          }
+        }
+      },
+      "prohibited_actions": [
+        "评估质量",
+        "评估风险",
+        "分析数据",
+        "生成简报"
+      ]
+    },
+    "risk_assessor": {
+      "name": "risk_assessor",
+      "description": "风险评估 - 评估执行结果的风险",
+      "single_responsibility": "评估执行结果的风险等级和风险因素",
+      "input_schema": {
+        "type": "object",
+        "required": ["execution_result"],
+        "properties": {
+          "execution_result": {
+            "type": "object",
+            "description": "执行结果"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["risk_assessment"],
+        "properties": {
+          "risk_assessment": {
+            "type": "object",
+            "properties": {
+              "overall_risk_level": {
+                "type": "string",
+                "enum": ["critical", "high", "medium", "low"],
+                "description": "总体风险等级"
+              }
+            }
+          }
+        }
+      },
+      "prohibited_actions": [
+        "评估质量",
+        "检查合规性",
+        "分析数据",
+        "生成简报"
+      ]
+    },
+    "performance_evaluator": {
+      "name": "performance_evaluator",
+      "description": "性能评估 - 评估执行结果的性能",
+      "single_responsibility": "评估执行结果的性能指标",
+      "input_schema": {
+        "type": "object",
+        "required": ["execution_result"],
+        "properties": {
+          "execution_result": {
+            "type": "object",
+            "description": "执行结果"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["performance_evaluation"],
+        "properties": {
+          "performance_evaluation": {
+            "type": "object",
+            "properties": {
+              "overall_score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "总体性能得分"
+              }
+            }
+          }
+        }
+      },
+      "prohibited_actions": [
+        "评估质量",
+        "检查合规性",
+        "评估风险",
+        "分析数据",
+        "生成简报"
+      ]
+    }
+  }
+}

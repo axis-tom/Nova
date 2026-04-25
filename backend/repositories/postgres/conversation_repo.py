@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict, Any
 from backend.models.db import Conversation
-from backend.models.conversation import ConversationInDB, ConversationOut
+from backend.memory.short_term.conversation_store import ConversationInDB, ConversationOut
 
 class ConversationRepository:
     def __init__(self, db: AsyncSession):

@@ -211,7 +211,7 @@ def test_agent_registry_json():
     """测试agent_registry.json文件"""
     print("=== 测试agent_registry.json ===")
     
-    registry_path = Path("agent_registry.json")
+    registry_path = Path("backend/contracts/agent_registry.json")
     if not registry_path.exists():
         print("✗ agent_registry.json文件不存在")
         return False
@@ -253,7 +253,7 @@ def test_agent_contracts_md():
     """测试agent_contracts.md文件"""
     print("=== 测试agent_contracts.md ===")
     
-    contracts_path = Path("agent_contracts.md")
+    contracts_path = Path("backend/contracts/agent_contracts.md")
     if not contracts_path.exists():
         print("✗ agent_contracts.md文件不存在")
         return False
@@ -310,7 +310,7 @@ def test_single_responsibility():
     print("=== 测试单一职责原则 ===")
     
     # 从registry中读取Agent定义
-    registry_path = Path("agent_registry.json")
+    registry_path = Path("backend/contracts/agent_registry.json")
     with open(registry_path, 'r', encoding='utf-8') as f:
         registry_data = json.load(f)
     
@@ -375,7 +375,7 @@ def test_structured_json_output():
     print("=== 测试结构化JSON输出 ===")
     
     # 从registry中读取输出模式
-    registry_path = Path("agent_registry.json")
+    registry_path = Path("backend/contracts/agent_registry.json")
     with open(registry_path, 'r', encoding='utf-8') as f:
         registry_data = json.load(f)
     

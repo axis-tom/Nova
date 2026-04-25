@@ -1,6 +1,6 @@
 # backend/utils/crypto.py
 from cryptography.fernet import Fernet
-from backend.core.config import settings
+from backend.config.config import settings
 
 def encrypt_password(password: str) -> str:
     cipher = Fernet(settings.ENCRYPTION_KEY.encode())

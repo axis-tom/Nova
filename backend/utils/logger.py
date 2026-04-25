@@ -1,6 +1,6 @@
 import logging
 import sys
-from backend.core.config import settings
+from backend.config.config import settings
 
 def setup_logger(name: str = "nova") -> logging.Logger:
     """配置并返回 logger 实例"""

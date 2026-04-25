@@ -14,9 +14,10 @@
       <NavBar @toggle-sidebar="toggleSidebar" @logout="handleLogout" />
       <SideMenu
         :collapsed="sidebarCollapsed"
-        @update:collapsed="sidebarCollapsed = $event"
-        @navigate="handleNavigate"
+        @update:collapsed="sidebarCollapsed = $event as boolean"
+        @navigate="handleNavigate as (...args: unknown[]) => void"
       />
+
       <div class="main-content" :class="{ 'collapsed': sidebarCollapsed }">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -28,23 +29,25 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import NavBar from '@/ui/common/NavBar.vue';
-import SideMenu from '@/ui/common/SideMenu.vue';
+import NavBar from '@/interface/components/common/NavBar.vue';
+import SideMenu from '@/interface/components/common/SideMenu.vue';
 import { useAuthStore } from '@/stores/auth';
+
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 
 // 侧边栏折叠状态，持久化到 localStorage
-const sidebarCollapsed = ref(localStorage.getItem('sidebarCollapsed') === 'true');
+const sidebarCollapsed = ref<boolean>(localStorage.getItem('sidebarCollapsed') === 'true');
 
-watch(sidebarCollapsed, (val) => {
-  localStorage.setItem('sidebarCollapsed', val);
+watch(sidebarCollapsed, (val: boolean) => {
+  localStorage.setItem('sidebarCollapsed', String(val));
 });
+
 
 // 判断当前是否在认证页面（登录或注册）或Console页面或Workspace页面
 const isAuthPage = computed(() => {
@@ -57,9 +60,10 @@ const toggleSidebar = () => {
 };
 
 // 处理路由跳转（可选，用于埋点等）
-const handleNavigate = (path) => {
+const handleNavigate = (path: string) => {
   // 可以在这里添加页面访问统计等逻辑
 };
+
 
 // 退出登录（由 NavBar 触发）
 const handleLogout = async () => {

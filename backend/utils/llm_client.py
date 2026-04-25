@@ -3,7 +3,7 @@ import asyncio
 import re
 import httpx
 from typing import Optional, List, Dict, Any
-from backend.core.config import settings
+from backend.config.config import settings
 
 
 class LLMClient:

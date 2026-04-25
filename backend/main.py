@@ -5,25 +5,25 @@ import uvicorn
 from contextlib import asynccontextmanager
 import logging
 
-from backend.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.api.v1 import models, tree
-from backend.api.v1 import router as api_router
-from backend.core.config import settings
-from backend.core.message_bus import message_bus
-from backend.core.audit import audit_logger
-from backend.cloud.crawler_pool import crawler_pool
-from backend.utils.logger import logger
+from backend.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
+from backend.communication.api.v1 import models, tree
+from backend.communication.api.v1 import router as api_router
+from backend.config.config import settings
+from backend.communication.message_bus import message_bus
+from backend.communication.audit import audit_logger                      # ✅ 已迁移
+from backend.perception.connectors.crawler_pool import crawler_pool       # ✅ 已迁移
+from backend.utils.logger import logger                                   # ✅ 保留原位
 
 # 新增导入，用于建表
-from backend.core.database import engine, Base
+from backend.data.database import engine, Base                            # ✅ 已迁移
 import backend.models.db  # 确保所有模型被加载
 
 # 新增导入，用于 ToolRegistry
-from backend.tools.registry import ToolRegistry
-from backend.tools.mock_tool import MockTool
+from backend.action.tools.registry import ToolRegistry                    # ✅ 已迁移
+from backend.action.tools.mock_tool import MockTool                       # ✅ 已迁移
 
 # 新增导入，用于调度管理器
-from backend.core.scheduler_manager import scheduler_manager
+from backend.communication.scheduler_manager import scheduler_manager      # ✅ 已迁移
 
 # 生命周期管理
 @asynccontextmanager
@@ -100,8 +100,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping audit logger: {e}")
 
-    
-    
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -115,7 +113,6 @@ app = FastAPI(
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=["*"],  # 生产环境应限制具体域名
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -124,18 +121,12 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
-# print("Before data_sources router include")
 app.include_router(data_sources.router, prefix=settings.API_V1_PREFIX)
-# print("After data_sources router include")
 app.include_router(briefings.router, prefix=settings.API_V1_PREFIX)
 app.include_router(logs.router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversation.router, prefix=settings.API_V1_PREFIX)
-# app.include_router(settings.router, prefix=settings.API_V1_PREFIX)
-# app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(market.router, prefix=settings.API_V1_PREFIX)
 app.include_router(scheduler.router, prefix=settings.API_V1_PREFIX)
-# app.include_router(models.router, prefix=settings.API_V1_PREFIX)
-# app.include_router(tree.router, prefix=settings.API_V1_PREFIX)
 
 # 注册Graph API路由 - 统一AI行为入口
 app.include_router(graph.router, prefix=f"{settings.API_V1_PREFIX}/graph", tags=["Graph"])
@@ -177,7 +168,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error"},
     )
 
-# 可选：启动独立服务器（用于直接运行）
+# 启动独立服务器
 if __name__ == "__main__":
     uvicorn.run(
         "backend.main:app",

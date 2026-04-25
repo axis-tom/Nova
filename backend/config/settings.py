@@ -1,4 +1,4 @@
-from backend.core.config import settings as core_settings
+from backend.config.config import settings as core_settings
 from pathlib import Path
 
 # 重新导出核心设置

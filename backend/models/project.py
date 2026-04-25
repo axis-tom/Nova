@@ -32,6 +32,6 @@ class TreeNode(BaseModel):
 TreeNode.model_rebuild()
 
 # 解决循环引用
-from backend.models.conversation import ConversationOut
+from backend.memory.short_term.conversation_store import ConversationOut
 ProjectOut.update_forward_refs()
 TreeNode.update_forward_refs()

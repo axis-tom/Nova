@@ -16,17 +16,19 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       open: true,
+      host: '0.0.0.0',
+      hmr: {
+        protocol: 'ws',
+        host: '0.0.0.0',
+        port: 5173,
+      },
       proxy: {
-        // 代理 API 请求到后端
         '/api': {
-          // target: env.VITE_API_BASE_URL || 'http://localhost:8000',
-          target: 'http://localhost:8000',
+          target: 'http://127.0.0.1:8000',  // 强制 IPv4，避免 IPv6 连接问题
           changeOrigin: true,
-        //   rewrite: (path) => path?.replace(/^\/api/, '') || ''
         },
-        // WebSocket 代理（如果需要）
         '/ws': {
-          target: env.VITE_WS_BASE_URL || 'ws://localhost:8000',
+          target: 'ws://127.0.0.1:8000',
           ws: true,
         },
       },

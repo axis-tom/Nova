@@ -1,23 +1,23 @@
-import AIModelManager from '@/views/AIModelManager.vue';
+import AIModelManager from '@/interface/views/AIModelManager.vue';
 import { createRouter, createWebHistory } from 'vue-router';
 import { ElLoading } from 'element-plus';
 
 // 路由懒加载
-const Login = () => import('@/views/Login.vue');
-const Dashboard = () => import('@/views/Dashboard.vue');
-const DataSources = () => import('@/views/DataSources.vue');
-const Logs = () => import('@/views/Logs.vue');
-const Conversation = () => import('@/views/conversations/Conversation.vue');
-const Settings = () => import('@/views/Settings.vue');
-const Marketplace = () => import('@/views/Marketplace.vue');
-const BriefingHistory = () => import('@/views/briefings/BriefingHistory.vue');  // 取消注释并确认路径
-const BriefingDetail = () => import('@/views/briefings/BriefingDetail.vue');
-const PriorityDetail = () => import('@/views/priority/PriorityDetail.vue');
-const NotFound = () => import('@/views/NotFound.vue');
-const Register = () => import('@/views/Register.vue');
-const Console = () => import('@/ui/workspace/Console.vue');
-const TraceView = () => import('@/views/TraceView.vue');
-const Workspace = () => import('@/ui/workspace/Workspace.vue');
+const Login = () => import('@/interface/views/Login.vue');
+const Dashboard = () => import('@/interface/views/Dashboard.vue');
+const DataSources = () => import('@/interface/views/DataSources.vue');
+const Logs = () => import('@/interface/views/Logs.vue');
+const Conversation = () => import('@/interface/views/Conversation.vue');
+const Settings = () => import('@/interface/views/Settings.vue');
+const Marketplace = () => import('@/interface/views/Marketplace.vue');
+const BriefingHistory = () => import('@/interface/views/BriefingHistory.vue');  // 取消注释并确认路径
+const BriefingDetail = () => import('@/interface/views/BriefingDetail.vue');
+const PriorityDetail = () => import('@/interface/views/PriorityDetail.vue');
+const NotFound = () => import('@/interface/views/NotFound.vue');
+const Register = () => import('@/interface/views/Register.vue');
+const Console = () => import('@/interface/components/workspace/Console.vue');
+const TraceView = () => import('@/interface/views/TraceView.vue');
+const Workspace = () => import('@/interface/components/workspace/Workspace.vue');
 
 // 定义路由
 const routes = [
@@ -89,7 +89,7 @@ const routes = [
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
-    component: () => import('@/views/NotFound.vue'),
+    component: () => import('@/interface/views/NotFound.vue'),
     meta: { requiresAuth: false, title: '页面不存在' }
   },
   {

@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from backend.core.config import settings
+from backend.config.config import settings
 from backend.agents.collector.email_agent import EmailAgent
 from backend.agents.base import AgentInput
 
