@@ -1,0 +1,216 @@
+backend/
+├── __init__.py
+├── agents
+│   ├── __init__.py
+│   ├── base.py
+│   ├── collector
+│   │   ├── __init__.py
+│   │   ├── base_collector.py
+│   │   ├── competitor_agent.py
+│   │   ├── email_agent.py
+│   │   ├── financial_agent.py
+│   │   ├── news_agent.py
+│   │   └── social_agent.py
+│   ├── contract_agent.py
+│   ├── conversation
+│   │   ├── __init__.py
+│   │   ├── dialog_manager.py
+│   │   ├── emotion_agent.py
+│   │   └── intent_agent.py
+│   ├── ecommerce
+│   │   ├── ARCHITECTURE.md
+│   │   ├── __init__.py
+│   │   ├── analyst.py
+│   │   ├── api_layer.py
+│   │   ├── base.py
+│   │   ├── executor.py
+│   │   ├── judge.py
+│   │   ├── judge_enhanced.py
+│   │   ├── judge_enhanced_complete.py
+│   │   ├── memory.py
+│   │   ├── memory_complete.py
+│   │   └── planner.py
+│   ├── executor
+│   │   ├── __init__.py
+│   │   ├── ai_analyzer.py
+│   │   ├── briefing_generator_agent.py
+│   │   ├── contextual_ai_analyzer.py
+│   │   ├── followup_agent.py
+│   │   ├── formatter.py
+│   │   ├── outbound_agent.py
+│   │   ├── payment_agent.py
+│   │   └── project_agent.py
+│   ├── judge
+│   │   ├── __init__.py
+│   │   ├── insight_agent.py
+│   │   ├── priority_agent.py
+│   │   └── risk_agent.py
+│   ├── learning
+│   │   ├── __init__.py
+│   │   ├── implicit_learner.py
+│   │   ├── outcome_learner.py
+│   │   ├── rule_generator.py
+│   │   └── weight_updater.py
+│   ├── quality
+│   │   ├── __init__.py
+│   │   ├── auditor_agent.py
+│   │   ├── compliance_agent.py
+│   │   ├── efficiency_agent.py
+│   │   └── validator_agent.py
+│   ├── registry.py
+│   ├── standard_base.py
+│   └── strategist
+│       ├── __init__.py
+│       ├── financial_advisor.py
+│       ├── growth_advisor.py
+│       └── knowledge_advisor.py
+├── api
+│   ├── __init__.py
+│   └── v1
+│       ├── __init__.py
+│       ├── auth.py
+│       ├── briefings.py
+│       ├── conversation.py
+│       ├── data_sources.py
+│       ├── graph.py
+│       ├── logs.py
+│       ├── market.py
+│       ├── models.py
+│       ├── projects.py
+│       ├── scenes.py
+│       ├── scheduler.py
+│       ├── settings.py
+│       ├── trace.py
+│       └── tree.py
+├── backend_structure.txt
+├── cloud
+│   ├── __init__.py
+│   ├── crawler_pool.py
+│   └── heavy_agents.py
+├── config
+│   ├── __init__.py
+│   ├── data_source_providers.py
+│   ├── settings.py
+│   └── templates
+│       ├── __init__.py
+│       └── ecommerce
+│           ├── README.md
+│           └── __init__.py
+├── connectors
+│   ├── __init__.py
+│   ├── base.py
+│   ├── email
+│   │   ├── __init__.py
+│   │   └── imap_client.py
+│   ├── financial.py
+│   ├── outbound
+│   │   ├── __init__.py
+│   │   ├── email.py
+│   │   ├── feishu.py
+│   │   ├── notion.py
+│   │   └── todoist.py
+│   ├── qichacha.py
+│   ├── rss.py
+│   └── social
+│       ├── __init__.py
+│       ├── weibo.py
+│       └── xiaohongshu.py
+├── core
+│   ├── __init__.py
+│   ├── audit.py
+│   ├── collector_scheduler.py
+│   ├── config.py
+│   ├── context.py
+│   ├── contextual_data.py
+│   ├── data_semantic_layer.py
+│   ├── database.py
+│   ├── exceptions.py
+│   ├── execution_result_manager.py
+│   ├── init_db.py
+│   ├── message_bus.py
+│   ├── migrations
+│   │   └── add_user_fields.py
+│   ├── orchestrator.py
+│   ├── scheduler_manager.py
+│   ├── state.py
+│   └── trace_manager.py
+├── main.py
+├── model_clients
+│   ├── __init__.py
+│   ├── base.py
+│   ├── manager.py
+│   ├── ollama_client.py
+│   └── openai_client.py
+├── models
+│   ├── __init__.py
+│   ├── briefing.py
+│   ├── conversation.py
+│   ├── data_source.py
+│   ├── db.py
+│   ├── execution_result.py
+│   ├── log.py
+│   ├── message.py
+│   ├── model_folder.py
+│   ├── project.py
+│   ├── scene.py
+│   ├── trace.py
+│   └── user.py
+├── repositories
+│   ├── __init__.py
+│   ├── base.py
+│   ├── postgres
+│   │   ├── __init__.py
+│   │   ├── briefing_repo.py
+│   │   ├── conversation_repo.py
+│   │   ├── data_source_repo.py
+│   │   ├── log_repo.py
+│   │   ├── message_repo.py
+│   │   ├── project_repo.py
+│   │   ├── raw_email_repo.py
+│   │   ├── scene_repo.py
+│   │   └── user_repo.py
+│   └── sqlite
+│       ├── __init__.py
+│       ├── base.py
+│       └── user_repo.py
+├── requirements.txt
+├── sop
+│   ├── briefing.yaml
+│   ├── daily_briefing.yaml
+│   ├── daily_graph.py
+│   ├── risk_alert.yaml
+│   └── strategy.yaml
+├── tools
+│   ├── base.py
+│   ├── mock_tool.py
+│   └── registry.py
+├── utils
+│   ├── __init__.py
+│   ├── crypto.py
+│   ├── daily_briefing.py
+│   ├── llm_client.py
+│   ├── logger.py
+│   ├── text_utils.py
+│   └── time_utils.py
+└── workflow
+    ├── agent_adapter.py
+    ├── agent_wrapper.py
+    ├── contextual_graph_engine.py
+    ├── deterministic_graph_engine.py
+    ├── ecommerce_graph.py
+    ├── ecommerce_graph_enhanced.py
+    ├── final_test.py
+    ├── graph_engine.py
+    ├── graph_engine_v2.py
+    ├── integration_test.py
+    ├── mock_agent.py
+    ├── simple_registry_test.py
+    ├── simple_state_flow_test.py
+    ├── simple_test.py
+    ├── test_graph_engine.py
+    ├── test_registry_integration.py
+    ├── test_state_flow.py
+    ├── trace_graph_engine.py
+    └── trace_replay_engine.py
+
+31 directories, 183 files
