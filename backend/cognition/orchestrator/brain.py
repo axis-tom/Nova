@@ -9,8 +9,8 @@ import uuid
 
 from backend.config.config import settings
 from backend.core.exceptions import SOPNotFoundError, StepExecutionError
-from backend.core.audit import audit_logger
-from backend.agents.base import Agent, AgentInput, AgentOutput
+from backend.communication.audit import audit_logger
+from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.agents.collector import *   # 实际导入各个智能体类
 from backend.agents.judge import *
 from backend.agents.executor import *

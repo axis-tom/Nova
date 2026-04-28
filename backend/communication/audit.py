@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 # 为避免循环导入，使用字符串导入或直接引用
-from backend.core.config import settings
+from backend.config.config import settings
 from backend.core.exceptions import AuditError
 
 class AuditLogger:

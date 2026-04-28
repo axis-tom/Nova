@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class NotionConnector(DataConnector):
     """Notion API 客户端"""

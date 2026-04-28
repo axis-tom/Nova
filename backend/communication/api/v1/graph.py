@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 import logging
 
-from backend.workflow.deterministic_graph_engine import (
+from backend.cognition.state_machine.deterministic_graph import (
     DeterministicGraphEngine,
     GraphDefinition,
     NodeDefinition,

@@ -1,6 +1,6 @@
 import asyncio
 from typing import Dict, Any, List
-from backend.agents.base import Agent, AgentInput, AgentOutput
+from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.perception.connectors.rss import RSSConnector
 from backend.perception.connectors.weibo import WeiboConnector
 

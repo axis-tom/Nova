@@ -4,7 +4,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any
 
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class EmailOutbound(DataConnector):
     """邮件发送连接器，使用 SMTP 发送邮件"""

@@ -1,5 +1,5 @@
-from backend.agents.base import Agent, AgentInput, AgentOutput
-from backend.core.audit import audit_logger
+from backend.common.core import Agent, AgentInput, AgentOutput
+from backend.communication.audit import audit_logger
 
 class AuditorAgent(Agent):
     """

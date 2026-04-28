@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class QichachaConnector(DataConnector):
     """企查查 API 客户端（需申请 API Key）"""

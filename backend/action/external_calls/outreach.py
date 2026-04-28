@@ -1,6 +1,6 @@
 import asyncio
 from typing import List, Dict, Any
-from backend.agents.base import Agent, AgentInput, AgentOutput
+from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.connectors.outbound.notion import NotionConnector
 from backend.connectors.outbound.feishu import FeishuConnector
 from backend.connectors.outbound.todoist import TodoistConnector

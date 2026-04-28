@@ -5,7 +5,7 @@ State Machine - 状态机引擎
 
 from typing import Dict, Any, Optional, Callable, List
 from enum import Enum
-from backend.core.state import State
+from backend.cognition.state_machine.state_machine import State
 
 
 class StateMachine:

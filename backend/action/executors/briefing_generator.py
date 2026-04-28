@@ -2,8 +2,8 @@ from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
-from backend.agents.base import Agent, AgentInput, AgentOutput
-from backend.core.state import State
+from backend.common.core import Agent, AgentInput, AgentOutput
+from backend.cognition.state_machine.state_machine import State
 from backend.repositories.postgres.raw_email_repo import RawEmailRepository
 from backend.repositories.postgres.briefing_repo import BriefingRepository
 from backend.models.briefing import BriefingCreate

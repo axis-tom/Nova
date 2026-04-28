@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any, List
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class XiaohongshuConnector(DataConnector):
     """小红书公开数据采集（模拟）"""

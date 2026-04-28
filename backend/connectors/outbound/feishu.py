@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 import json
 
 class FeishuConnector(DataConnector):

@@ -1,6 +1,6 @@
 import re
 from typing import Dict, Any, List
-from backend.agents.base import Agent, AgentInput, AgentOutput
+from backend.common.core import Agent, AgentInput, AgentOutput
 
 class ComplianceAgent(Agent):
     """

@@ -1,8 +1,8 @@
 import asyncio
 import csv
 from typing import Dict, Any, List
-from backend.agents.base import Agent, AgentInput, AgentOutput
-from backend.perception.connectors.financial import CSVImporter  # TODO: update path after full migration
+from backend.common.core import Agent, AgentInput, AgentOutput
+from backend.connectors.financial import CSVImporter  # TODO: update path after full migration
 
 class FinancialAgent(Agent):
     """财务数据采集智能体：从银行CSV、API等获取收支记录"""

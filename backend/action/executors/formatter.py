@@ -1,5 +1,5 @@
-from backend.agents.base import Agent
-from backend.core.state import State
+from backend.common.core import Agent
+from backend.cognition.state_machine.state_machine import State
 
 
 class Formatter(Agent):

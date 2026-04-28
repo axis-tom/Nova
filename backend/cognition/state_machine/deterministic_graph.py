@@ -19,11 +19,11 @@ import hashlib
 import time
 from dataclasses import dataclass, asdict
 
-from backend.agents.base import Agent, AgentInput, AgentOutput
-from backend.agents.standard_base import BaseAgent
-from backend.agents.registry import AgentRegistry
-from backend.workflow.agent_adapter import adapt_agent, adapt_agent_async
-from backend.core.state import State
+from backend.common.core import Agent, AgentInput, AgentOutput
+from backend.common.core import BaseAgent
+from backend.common.contracts import AgentRegistry
+from backend.cognition.state_machine.agent_adapter import adapt_agent, adapt_agent_async
+from backend.cognition.state_machine.state_machine import State
 
 
 class NodeType(Enum):

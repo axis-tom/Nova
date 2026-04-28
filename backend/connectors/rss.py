@@ -1,7 +1,7 @@
 import feedparser
 import asyncio
 from typing import Dict, Any, List
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class RSSConnector(DataConnector):
     """RSS 订阅源采集"""

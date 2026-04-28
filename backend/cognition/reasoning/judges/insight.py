@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from backend.agents.base import Agent, AgentInput, AgentOutput
+from backend.common.core import Agent, AgentInput, AgentOutput
 
 class InsightAgent(Agent):
     """

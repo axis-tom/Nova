@@ -19,7 +19,7 @@ async def generate_briefing_task(user_id: int, briefing_data: dict):
         try:
             # 1. 获取用户的数据源（通过 EmailAgent）
             agent = EmailAgent(db)
-            from backend.agents.base import AgentInput
+            from backend.common.core import AgentInput
             input_data = AgentInput(user_id=user_id, parameters=briefing_data)
             output = await agent.execute(input_data)
 

@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any, List
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class WeiboConnector(DataConnector):
     """微博公开数据采集（需要模拟请求或使用官方API）"""

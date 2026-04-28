@@ -5,7 +5,7 @@
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey, Text, Float
 from sqlalchemy.sql import func
-from backend.core.database import Base
+from backend.data.database import Base
 import uuid
 from datetime import datetime
 

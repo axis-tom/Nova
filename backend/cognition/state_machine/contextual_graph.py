@@ -7,7 +7,7 @@ Graph内部不得判断env/source，只处理state.payload
 from typing import Dict, Any, Union, Optional
 from backend.core.state import State
 from backend.memory.short_term.contextual_data import ContextualData, ContextWrapper, is_sandbox_data, is_production_data
-from backend.agents.registry import AgentRegistry
+from backend.common.contracts.registry import AgentRegistry
 from backend.utils.logger import logger
 
 

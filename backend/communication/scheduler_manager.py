@@ -16,8 +16,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.collector_scheduler import CollectorScheduler
-from backend.core.database import AsyncSessionLocal
+from backend.perception.collectors import CollectorScheduler
+from backend.data.database import AsyncSessionLocal
 from backend.utils.logger import logger
 
 class SchedulerManager:

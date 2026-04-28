@@ -5,7 +5,7 @@ from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class IMAPClient(DataConnector):
     name = "imap_client"

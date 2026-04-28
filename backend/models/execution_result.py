@@ -5,7 +5,7 @@
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Float, Text, ForeignKey
 from sqlalchemy.sql import func
-from backend.core.database import Base
+from backend.data.database import Base
 
 
 class ExecutionResult(Base):

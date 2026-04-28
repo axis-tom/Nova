@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from backend.models.trace import TraceSession, TraceNode, TraceReplay, TraceView
-from backend.core.state import State
+from backend.cognition.state_machine.state_machine import State
 import json
 import copy
 

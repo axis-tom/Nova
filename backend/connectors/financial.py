@@ -1,6 +1,6 @@
 import csv
 from typing import Dict, Any, List
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class CSVImporter(DataConnector):
     """CSV 文件导入连接器，用于解析银行账单等财务数据"""

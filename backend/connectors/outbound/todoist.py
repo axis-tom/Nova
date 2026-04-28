@@ -1,6 +1,6 @@
 import httpx
 from typing import Dict, Any, List
-from backend.connectors.base import DataConnector
+from backend.perception.connectors.base import DataConnector
 
 class TodoistConnector(DataConnector):
     """Todoist API 客户端"""
