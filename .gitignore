@@ -14,3 +14,6 @@ Homestead.yaml
 *.sqlite
 /data*.log
 data/redis/
+data/postgres/
+data/chroma/
+data/neo4j/
