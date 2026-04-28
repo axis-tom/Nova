@@ -5,9 +5,9 @@ from datetime import datetime
 
 from backend.data.database import get_db
 from backend.foundation.communication.api.v1.auth import get_current_user
-from backend.models.user import UserOut
-from backend.repositories.postgres.log_repo import LogRepository
-from backend.models.log import LogEntryOut
+from backend.data.models.user import UserOut
+from backend.data.repositories.postgres.log_repo import LogRepository
+from backend.data.models.log import LogEntryOut
 
 router = APIRouter(prefix="/logs", tags=["审计日志"])
 

@@ -7,10 +7,10 @@ from backend.config.config import settings
 from backend.config.settings import BASE_DIR, TEMPLATES_DIR, IS_DEV
 
 # 统一导出 models 模块
-from backend import models as models_module
+from backend.data import models as models_module
 
 # 统一导出 repositories 模块
-from backend import repositories as repositories_module
+from backend.data import repositories as repositories_module
 
 __all__ = [
     "settings",

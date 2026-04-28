@@ -2,8 +2,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, and_
 from typing import Optional, List
 from datetime import datetime
-from backend.models.db import Log
-from backend.models.log import LogEntryOut, LogEntryCreate, LogStatus
+from backend.data.models.db import Log
+from backend.data.models.log import LogEntryOut, LogEntryCreate, LogStatus
 
 class LogRepository:
     def __init__(self, db: AsyncSession):

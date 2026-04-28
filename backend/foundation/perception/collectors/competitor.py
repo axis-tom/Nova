@@ -2,7 +2,7 @@ import asyncio
 from typing import Dict, Any, List
 from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.foundation.perception.connectors.rss import RSSConnector
-from backend.foundation.perception.connectors.weibo import WeiboConnector
+from backend.foundation.perception.connectors.social.weibo import WeiboConnector
 
 class CompetitorAgent(Agent):
     """竞品监控智能体：采集指定竞品的最新动态（RSS/社交媒体）"""

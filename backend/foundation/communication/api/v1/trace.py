@@ -13,7 +13,7 @@ import logging
 
 from backend.data.database import get_db
 from backend.foundation.memory.trace.trace_manager import get_trace_manager
-from backend.models.db import User
+from backend.data.models.db import User
 from backend.foundation.communication.api.v1.auth import get_current_user
 from backend.utils.logger import logger
 

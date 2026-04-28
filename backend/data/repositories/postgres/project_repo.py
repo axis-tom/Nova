@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict, Any
-from backend.models.db import Project
-from backend.models.project import ProjectInDB, ProjectOut
+from backend.data.models.db import Project
+from backend.data.models.project import ProjectInDB, ProjectOut
 
 class ProjectRepository:
     def __init__(self, db: AsyncSession):

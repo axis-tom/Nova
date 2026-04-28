@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
-from backend.models.project import ProjectCreate, ProjectUpdate, ProjectOut, TreeNode
+from backend.data.models.project import ProjectCreate, ProjectUpdate, ProjectOut, TreeNode
 from backend.foundation.memory.short_term.conversation_store import ConversationOut
 from backend.foundation.communication.api.v1.auth import get_current_user          # 统一使用backend.communication.api.v1.auth中的依赖
-from backend.models.user import UserOut                  # 依赖返回 UserOut 对象
-from backend.repositories.nocodb.project_repo import ProjectRepository
-from backend.repositories.nocodb.conversation_repo import ConversationRepository
+from backend.data.models.user import UserOut                  # 依赖返回 UserOut 对象
+from backend.data.repositories.nocodb.project_repo import ProjectRepository
+from backend.data.repositories.nocodb.conversation_repo import ConversationRepository
 
 router = APIRouter(prefix="/projects", tags=["项目管理"])
 

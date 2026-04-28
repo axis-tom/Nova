@@ -3,10 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
 from backend.common.core import Agent, AgentInput, AgentOutput
-from backend.foundation.cognition.state_machine.state_machine import State
-from backend.repositories.postgres.raw_email_repo import RawEmailRepository
-from backend.repositories.postgres.briefing_repo import BriefingRepository
-from backend.models.briefing import BriefingCreate
+from backend.common.core.state import State
+from backend.data.repositories.postgres.raw_email_repo import RawEmailRepository
+from backend.data.repositories.postgres.briefing_repo import BriefingRepository
+from backend.data.models.briefing import BriefingCreate
 
 class BriefingGeneratorAgent(Agent):
     def __init__(self, db: AsyncSession):

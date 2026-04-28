@@ -1,6 +1,6 @@
 
 import asyncio
-from backend.connectors.email.imap_client import IMAPClient
+from backend.foundation.perception.connectors.email.imap_client import IMAPClient
 
 async def test():
     client = IMAPClient(

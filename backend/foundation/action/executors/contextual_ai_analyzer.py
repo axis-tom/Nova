@@ -6,7 +6,7 @@ AI输出不得携带数据来源信息
 
 from typing import Dict, Any, List, Optional
 from backend.common.core import Agent
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.foundation.memory.short_term.contextual_data import ContextWrapper
 from backend.utils.logger import logger
 

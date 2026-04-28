@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 import asyncio
 from pydantic import BaseModel, Field
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 
 class AgentInput(BaseModel):
     """智能体输入模型（向后兼容）"""
@@ -101,7 +101,7 @@ class Agent(ABC):
         调用模型服务的辅助方法（子类可使用）
         实际应通过 model_clients 模块实现
         """
-        from backend.model_clients.ollama_client import ollama_client
+        from backend.foundation.communication.model_clients.ollama import ollama_client
         # 示例调用
         response = await ollama_client.generate(prompt, model=model)
         return response

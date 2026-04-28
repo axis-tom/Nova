@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from sqlalchemy.exc import IntegrityError
-from backend.models.db import RawEmail
+from backend.data.models.db import RawEmail
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 

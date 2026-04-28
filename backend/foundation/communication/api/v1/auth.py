@@ -10,8 +10,8 @@ import re
 
 from backend.config.config import settings
 from backend.data.database import get_db
-from backend.repositories.postgres.user_repo import UserRepository
-from backend.models.user import UserCreate, UserOut
+from backend.data.repositories.postgres.user_repo import UserRepository
+from backend.data.models.user import UserCreate, UserOut
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 security = HTTPBearer()

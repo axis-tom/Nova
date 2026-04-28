@@ -2,8 +2,8 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict, Any
-from backend.models.db import DataSource
-from backend.models.data_source import DataSourceCreate, DataSourceUpdate, DataSourceInDB
+from backend.data.models.db import DataSource
+from backend.data.models.data_source import DataSourceCreate, DataSourceUpdate, DataSourceInDB
 
 class DataSourceRepository:
     def __init__(self, db: AsyncSession):

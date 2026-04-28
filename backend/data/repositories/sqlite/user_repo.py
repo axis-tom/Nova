@@ -1,8 +1,8 @@
 import aiosqlite
 from typing import Optional, List, Dict, Any
-from backend.models.user import UserCreate, UserUpdate, UserInDB
-from backend.repositories.base import BaseRepository
-from backend.repositories.sqlite.base import SQLiteRepository
+from backend.data.models.user import UserCreate, UserUpdate, UserInDB
+from backend.data.repositories.base import BaseRepository
+from backend.data.repositories.sqlite.base import SQLiteRepository
 
 class UserRepository(BaseRepository[UserInDB, UserCreate, UserUpdate], SQLiteRepository):
     """SQLite 实现的用户仓库"""

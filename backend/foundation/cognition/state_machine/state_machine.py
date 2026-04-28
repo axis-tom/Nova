@@ -4,6 +4,7 @@ State Machine - 状态机引擎
 """
 
 from typing import Dict, Any, Optional, Callable, List
+from backend.common.core.state import State
 from enum import Enum
 
 

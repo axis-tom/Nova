@@ -15,9 +15,9 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.core import Agent, AgentInput, AgentOutput
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.foundation.memory.short_term.contextual_data import ContextWrapper, Environment, DataSource
-from backend.repositories.postgres.data_source_repo import DataSourceRepository
+from backend.data.repositories.postgres.data_source_repo import DataSourceRepository
 from backend.utils.logger import logger
 
 class BaseCollector(Agent, ABC):

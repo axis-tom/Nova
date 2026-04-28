@@ -1,1 +1,0 @@
-WSL环境下代理地址需要使用Windows的172.25.48.1而不是127.0.0.1；Groq模型名要用llama-3.3-70b-versatile；Gemini模型名要用gemini-2.0-flash这类稳定版本

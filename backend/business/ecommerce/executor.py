@@ -4,7 +4,7 @@ Executor Agent - API执行Agent
 """
 
 from typing import Dict, Any, List
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.business.ecommerce.base import BaseEcommerceAgent
 from backend.business.ecommerce.api_layer import APILayer, APIRequest, APIMethod, get_api_layer
 

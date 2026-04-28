@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional, List, Dict, Any
-from backend.models.db import Briefing
-from backend.models.briefing import BriefingCreate, BriefingUpdate, BriefingInDB, BriefingOut
+from backend.data.models.db import Briefing
+from backend.data.models.briefing import BriefingCreate, BriefingUpdate, BriefingInDB, BriefingOut
 
 class BriefingRepository:
     def __init__(self, db: AsyncSession):

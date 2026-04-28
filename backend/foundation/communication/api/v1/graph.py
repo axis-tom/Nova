@@ -15,7 +15,7 @@ from backend.foundation.cognition.state_machine.deterministic_graph import (
     NodeDefinition,
     NodeType
 )
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.utils.logger import logger
 
 # 定义请求模型

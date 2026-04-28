@@ -16,7 +16,7 @@ from backend.utils.logger import logger                                   # ✅ 
 
 # 新增导入，用于建表
 from backend.data.database import engine, Base                            # ✅ 已迁移
-import backend.models.db  # 确保所有模型被加载
+import backend.data.models.db  # 确保所有模型被加载
 
 # 新增导入，用于 ToolRegistry
 from backend.foundation.action.tools.registry import ToolRegistry                    # ✅ 已迁移

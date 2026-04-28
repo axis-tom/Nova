@@ -4,7 +4,7 @@ Ecommerce Graph Engine - 电商前置执行Graph引擎
 """
 
 from typing import Dict, Any, List, Optional
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.foundation.cognition.state_machine.graph_engine import GraphEngine
 from backend.business.ecommerce.planner import PlannerAgent
 from backend.business.ecommerce.analyst import AnalystAgent

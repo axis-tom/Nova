@@ -4,7 +4,7 @@
 """
 
 from typing import Dict, Any, List, Optional
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.business.ecommerce.base import BaseEcommerceAgent
 import time
 import json

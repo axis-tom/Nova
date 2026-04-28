@@ -8,7 +8,7 @@ Agent Adapter - 统一 Agent 接口适配器（新规范）
 from typing import Dict, Any, Union
 from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.common.core import BaseAgent
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 
 
 class AgentAdapter(BaseAgent):

@@ -1,8 +1,8 @@
 import asyncio
 from typing import Dict, Any, List
 from backend.common.core import Agent, AgentInput, AgentOutput
-from backend.foundation.perception.connectors.weibo import WeiboConnector
-from backend.foundation.perception.connectors.xiaohongshu import XiaohongshuConnector
+from backend.foundation.perception.connectors.social.weibo import WeiboConnector
+from backend.foundation.perception.connectors.social.xiaohongshu import XiaohongshuConnector
 
 class SocialAgent(Agent):
     """社交媒体采集智能体：采集指定社交账号的公开内容"""

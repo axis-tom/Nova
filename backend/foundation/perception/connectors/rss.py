@@ -1,7 +1,7 @@
 import feedparser
 import asyncio
 from typing import Dict, Any, List
-from backend.foundation.perception.connectors.base import DataConnector  # TODO: update path after full migration
+from backend.foundation.perception.connectors.base import DataConnector
 
 class RSSConnector(DataConnector):
     """RSS 订阅源采集"""

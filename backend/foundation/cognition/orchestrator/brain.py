@@ -12,6 +12,13 @@ from backend.common.exceptions import SOPNotFoundError, StepExecutionError
 from backend.foundation.communication.audit import audit_logger
 from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.common.collectors.base import BaseCollector
+from backend.foundation.action.external_calls.outreach import OutboundAgent
+from backend.foundation.action.executors.formatter import Formatter
+from backend.foundation.action.external_calls.payment import PaymentAgent
+from backend.foundation.perception.collectors.competitor import CompetitorAgent
+from backend.foundation.perception.collectors.social import SocialAgent
+from backend.foundation.perception.collectors.finance import FinancialAgent
+from backend.foundation.perception.collectors.news import NewsAgent
 from backend.foundation.perception.collectors.email import EmailAgent   # 实际导入各个智能体类
 from backend.foundation.cognition.reasoning.judges import PriorityAgent, RiskAgent, InsightAgent
 from backend.foundation.action.executors.contextual_ai_analyzer import ContextualAIAnalyzer

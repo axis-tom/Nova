@@ -5,7 +5,7 @@
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.common.core import Agent
 
 

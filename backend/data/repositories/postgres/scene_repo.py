@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List, Optional
-from backend.models.db import Scene, UserScene
-from backend.models.scene import SceneOut
+from backend.data.models.db import Scene, UserScene
+from backend.data.models.scene import SceneOut
 
 class SceneRepository:
     def __init__(self, db: AsyncSession):

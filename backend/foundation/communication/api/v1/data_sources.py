@@ -4,10 +4,10 @@ from pydantic import BaseModel
 from typing import Dict, Any
 
 from backend.data.database import get_db
-from backend.repositories.postgres.data_source_repo import DataSourceRepository
+from backend.data.repositories.postgres.data_source_repo import DataSourceRepository
 from backend.foundation.communication.api.v1.auth import get_current_user
-from backend.models.user import UserOut
-from backend.models.data_source import DataSourceCreate, DataSourceUpdate
+from backend.data.models.user import UserOut
+from backend.data.models.data_source import DataSourceCreate, DataSourceUpdate
 from backend.config.data_source_providers import DATA_SOURCE_TYPES, PROVIDERS_MAP
 from backend.utils.crypto import encrypt_password
 

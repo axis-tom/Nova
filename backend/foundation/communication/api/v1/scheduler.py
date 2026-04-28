@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from backend.foundation.communication.scheduler_manager import scheduler_manager
 from backend.foundation.communication.api.v1.auth import get_current_user
-from backend.models.user import UserOut
+from backend.data.models.user import UserOut
 
 router = APIRouter(prefix="/scheduler", tags=["数据采集调度"])
 

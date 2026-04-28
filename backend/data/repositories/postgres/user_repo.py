@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
-from backend.models.db import User
-from backend.models.user import UserCreate, UserUpdate, UserInDB
+from backend.data.models.db import User
+from backend.data.models.user import UserCreate, UserUpdate, UserInDB
 
 class UserRepository:
     def __init__(self, db: AsyncSession):

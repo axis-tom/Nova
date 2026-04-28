@@ -4,7 +4,7 @@
 """
 
 from typing import Dict, Any, Optional, Union, List
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 from backend.foundation.memory.short_term.contextual_data import ContextualData, ContextWrapper, create_contextual_data
 from backend.foundation.cognition.state_machine.contextual_graph import ContextualGraphEngine
 from backend.foundation.action.executors.contextual_ai_analyzer import ContextualAIAnalyzer

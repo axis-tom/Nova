@@ -1,7 +1,7 @@
 import asyncio
 from typing import List, Dict, Any
 from backend.common.core import Agent, AgentInput, AgentOutput
-from backend.connectors.outbound.email import EmailOutbound
+from backend.foundation.perception.connectors.outbound.email import EmailOutbound
 
 class PaymentAgent(Agent):
     """

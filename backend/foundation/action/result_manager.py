@@ -12,10 +12,10 @@ from sqlalchemy import desc, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
-from backend.models.execution_result import (
+from backend.data.models.execution_result import (
     ExecutionResult, ActionLog, OptimizationHistory, LoopExecution
 )
-from backend.core.database import AsyncSessionLocal
+from backend.data.database import AsyncSessionLocal
 
 
 class ExecutionResultManager:

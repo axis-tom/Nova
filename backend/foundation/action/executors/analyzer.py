@@ -1,5 +1,5 @@
 from backend.common.core import Agent
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.common.core.state import State
 
 
 class AIAnalyzer(Agent):

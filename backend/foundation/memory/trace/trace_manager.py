@@ -9,8 +9,8 @@ from typing import Dict, Any, List, Optional, Union
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from backend.models.trace import TraceSession, TraceNode, TraceReplay, TraceView
-from backend.foundation.cognition.state_machine.state_machine import State
+from backend.data.models.trace import TraceSession, TraceNode, TraceReplay, TraceView
+from backend.common.core.state import State
 import json
 import copy
 

@@ -9,7 +9,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import text
-from backend.core.database import engine
+from backend.data.database import engine
 
 async def migrate():
     print("开始数据库迁移...")

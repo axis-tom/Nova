@@ -16,7 +16,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.foundation.perception.collectors import CollectorScheduler
+from backend.foundation.perception.connectors.scheduler import CollectorScheduler
 from backend.data.database import AsyncSessionLocal
 from backend.utils.logger import logger
 
