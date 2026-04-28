@@ -5,13 +5,13 @@ import uvicorn
 from contextlib import asynccontextmanager
 import logging
 
-from backend.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.communication.api.v1 import models, tree
-from backend.communication.api.v1 import router as api_router
+from backend.foundation.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
+from backend.foundation.communication.api.v1 import models, tree
+from backend.foundation.communication.api.v1 import router as api_router
 from backend.config.config import settings
-from backend.communication.message_bus import message_bus
-from backend.communication.audit import audit_logger                      # ✅ 已迁移
-from backend.perception.connectors.crawler_pool import crawler_pool       # ✅ 已迁移
+from backend.foundation.communication.message_bus import message_bus
+from backend.foundation.communication.audit import audit_logger                      # ✅ 已迁移
+from backend.foundation.perception.connectors.crawler_pool import crawler_pool       # ✅ 已迁移
 from backend.utils.logger import logger                                   # ✅ 保留原位
 
 # 新增导入，用于建表
@@ -19,11 +19,11 @@ from backend.data.database import engine, Base                            # ✅ 
 import backend.models.db  # 确保所有模型被加载
 
 # 新增导入，用于 ToolRegistry
-from backend.action.tools.registry import ToolRegistry                    # ✅ 已迁移
-from backend.action.tools.mock_tool import MockTool                       # ✅ 已迁移
+from backend.foundation.action.tools.registry import ToolRegistry                    # ✅ 已迁移
+from backend.foundation.action.tools.mock_tool import MockTool                       # ✅ 已迁移
 
 # 新增导入，用于调度管理器
-from backend.communication.scheduler_manager import scheduler_manager      # ✅ 已迁移
+from backend.foundation.communication.scheduler_manager import scheduler_manager      # ✅ 已迁移
 
 # 生命周期管理
 @asynccontextmanager

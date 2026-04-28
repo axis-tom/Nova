@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Union, List
-from backend.core.state import State
+from backend.foundation.cognition.state_machine.state_machine import State
 
 
 class BaseAgent(ABC):

@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 import asyncio
 from pydantic import BaseModel, Field
-from backend.core.state import State
+from backend.foundation.cognition.state_machine.state_machine import State
 
 class AgentInput(BaseModel):
     """智能体输入模型（向后兼容）"""

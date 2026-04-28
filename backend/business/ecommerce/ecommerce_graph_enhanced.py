@@ -4,14 +4,14 @@
 """
 
 from typing import Dict, Any, List, Optional
-from backend.core.state import State
-from backend.cognition.state_machine.graph_engine import GraphEngine
-from backend.agents.ecommerce.planner import PlannerAgent
-from backend.agents.ecommerce.analyst import AnalystAgent
-from backend.agents.ecommerce.executor import ExecutorAgent
-from backend.agents.ecommerce.judge_enhanced_complete import JudgeEnhancedAgentComplete
-from backend.agents.ecommerce.memory import MemoryAgent
-from backend.agents.ecommerce.api_layer import APILayer, get_api_layer
+from backend.foundation.cognition.state_machine.state_machine import State
+from backend.foundation.cognition.state_machine.graph_engine import GraphEngine
+from backend.business.ecommerce.planner import PlannerAgent
+from backend.business.ecommerce.analyst import AnalystAgent
+from backend.business.ecommerce.executor import ExecutorAgent
+from backend.business.ecommerce.judge_enhanced_complete import JudgeEnhancedAgentComplete
+from backend.business.ecommerce.memory import MemoryAgent
+from backend.business.ecommerce.api_layer import APILayer, get_api_layer
 from backend.core.execution_result_manager import get_execution_result_manager
 import time
 import json

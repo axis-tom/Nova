@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select
 from backend.config.config import settings
-from backend.cognition.orchestrator.brain import orchestrator
+from backend.foundation.cognition.orchestrator.brain import orchestrator
 from backend.models.db import DataSource
 
 async def process_user(uid: int, semaphore: asyncio.Semaphore, engine):

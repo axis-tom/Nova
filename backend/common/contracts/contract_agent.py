@@ -9,7 +9,7 @@ import json
 from typing import Dict, Any, Optional, Type
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, ValidationError
-from backend.core.state import State
+from backend.foundation.cognition.state_machine.state_machine import State
 
 
 class AgentContract(BaseModel):
