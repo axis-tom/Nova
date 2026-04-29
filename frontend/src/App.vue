@@ -34,7 +34,7 @@ import { ref, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import NavBar from '@/interface/components/common/NavBar.vue';
 import SideMenu from '@/interface/components/common/SideMenu.vue';
-import { useAuthStore } from '@/stores/auth';
+import { useAuthStore } from '@/state/auth';
 
 
 const route = useRoute();

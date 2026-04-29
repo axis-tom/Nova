@@ -77,8 +77,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { useAuthStore } from '@/stores/auth';
-import { useEnvironmentStore } from '@/stores/environment';
+import { useAuthStore } from '@/state/auth';
+import { useEnvironmentStore } from '@/state/environment';
 
 import { Menu, ArrowDown, Box, Check, Close, Select } from '@element-plus/icons-vue';
 

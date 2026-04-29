@@ -8,7 +8,7 @@ import App from './App.vue';
 
 // 引入 Element Plus 图标（可选，按需注册）
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
-import { useAuthStore } from './stores/auth';
+import { useAuthStore } from './state/auth';
 
 const app = createApp(App);
 

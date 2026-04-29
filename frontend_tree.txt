@@ -1,0 +1,201 @@
+frontend
+├── fix_all_types.js
+├── index.html
+├── package-lock.json
+├── package.json
+├── public
+│   └── favicon.ico
+├── src
+│   ├── App.vue
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── auth.js
+│   │   ├── auth.ts
+│   │   ├── briefings.js
+│   │   ├── briefings.ts
+│   │   ├── client.js
+│   │   ├── client.ts
+│   │   ├── conversations.js
+│   │   ├── conversations.ts
+│   │   ├── dataSources.js
+│   │   ├── dataSources.ts
+│   │   ├── graph.js
+│   │   ├── graph.ts
+│   │   ├── logs.js
+│   │   ├── logs.ts
+│   │   ├── mockDataSources.js
+│   │   ├── mockDataSources.ts
+│   │   ├── models.js
+│   │   ├── models.ts
+│   │   ├── priority.js
+│   │   ├── priority.ts
+│   │   ├── project.js
+│   │   ├── project.ts
+│   │   ├── scenes.js
+│   │   ├── scenes.ts
+│   │   ├── settings.js
+│   │   ├── settings.ts
+│   │   ├── tree.js
+│   │   └── tree.ts
+│   ├── assets
+│   │   └── css
+│   │       ├── console-theme.css
+│   │       ├── main.css
+│   │       ├── variables.css
+│   │       └── workspaceLayout.css
+│   ├── core
+│   │   └── graph
+│   │       ├── dependencyResolver.js
+│   │       ├── dependencyResolver.ts
+│   │       ├── executionQueue.js
+│   │       ├── executionQueue.ts
+│   │       ├── graphEngine.js
+│   │       ├── graphEngine.ts
+│   │       ├── index.js
+│   │       ├── index.ts
+│   │       ├── nodeRunner.js
+│   │       ├── nodeRunner.ts
+│   │       ├── nodeStateMachine.js
+│   │       └── nodeStateMachine.ts
+│   ├── env.d.ts
+│   ├── events
+│   │   ├── README.md
+│   │   ├── bridge
+│   │   │   ├── graphBridge.js
+│   │   │   ├── resultBridge.js
+│   │   │   └── uiBridge.js
+│   │   ├── dispatcher.js
+│   │   ├── eventBus.js
+│   │   ├── eventTypes.js
+│   │   ├── index.js
+│   │   ├── integration-example.js
+│   │   ├── listeners
+│   │   │   ├── graphListener.js
+│   │   │   ├── nodeListener.js
+│   │   │   └── uiListener.js
+│   │   ├── test-voe-system.js
+│   │   └── utils
+│   │       └── helpers.js
+│   ├── features
+│   │   ├── result
+│   │   │   ├── editor
+│   │   │   ├── parser
+│   │   │   └── renderers
+│   │   └── voe
+│   │       ├── bridge
+│   │       ├── listeners
+│   │       └── utils
+│   ├── interface
+│   │   ├── components
+│   │   │   ├── chat
+│   │   │   │   ├── ChatWindow.vue
+│   │   │   │   ├── InputArea.vue
+│   │   │   │   └── MessageBubble.vue
+│   │   │   ├── common
+│   │   │   │   ├── DataSourceConfig.vue
+│   │   │   │   ├── LoadingSpinner.vue
+│   │   │   │   ├── NavBar.vue
+│   │   │   │   ├── ProfileForm.vue
+│   │   │   │   └── SideMenu.vue
+│   │   │   ├── console
+│   │   │   │   ├── ConsolePanel.vue
+│   │   │   │   ├── DebugPanel.vue
+│   │   │   │   ├── DebugTools.vue
+│   │   │   │   ├── GraphCanvas.vue
+│   │   │   │   ├── RunConsole.vue
+│   │   │   │   ├── TraceGraphIntegration.vue
+│   │   │   │   ├── TraceList.vue
+│   │   │   │   └── TraceViewer.vue
+│   │   │   ├── dashboard
+│   │   │   │   ├── BriefingPreview.vue
+│   │   │   │   ├── PriorityList.vue
+│   │   │   │   └── StatsCard.vue
+│   │   │   └── workspace
+│   │   │       ├── Console.vue
+│   │   │       ├── ExecutionCanvas.vue
+│   │   │       ├── LeftPanel.vue
+│   │   │       ├── ResultContainer.vue
+│   │   │       ├── ResultLayer.vue
+│   │   │       ├── Workspace.vue
+│   │   │       └── components
+│   │   │           ├── BusinessNode.vue
+│   │   │           ├── ChartPanel.vue
+│   │   │           ├── ImageCompare.vue
+│   │   │           ├── ListingEditor.vue
+│   │   │           ├── StrategyPanel.vue
+│   │   │           └── TaskLauncher.vue
+│   │   └── views
+│   │       ├── AIModelManager.vue
+│   │       ├── BriefingDetail.vue
+│   │       ├── BriefingHistory.vue
+│   │       ├── Conversation.vue
+│   │       ├── Dashboard.vue
+│   │       ├── DataSources.vue
+│   │       ├── Login.vue
+│   │       ├── Logs.vue
+│   │       ├── Marketplace.vue
+│   │       ├── NotFound.vue
+│   │       ├── PriorityDetail.vue
+│   │       ├── Register.vue
+│   │       ├── Settings.vue
+│   │       └── TraceView.vue
+│   ├── main.js
+│   ├── rendering
+│   │   └── result-renderer
+│   │       ├── README.md
+│   │       ├── ResultContainer.vue
+│   │       ├── ResultRenderer.vue
+│   │       ├── editor
+│   │       │   ├── EditToolbar.vue
+│   │       │   └── InlineEditor.vue
+│   │       ├── integration-example.vue
+│   │       ├── parser
+│   │       │   └── resultParser.js
+│   │       ├── renderers
+│   │       │   ├── ChartRenderer.vue
+│   │       │   ├── ImageCompareRenderer.vue
+│   │       │   ├── MarkdownRenderer.vue
+│   │       │   ├── TableRenderer.vue
+│   │       │   └── TextRenderer.vue
+│   │       └── test-result-system.js
+│   ├── router
+│   │   ├── index.js
+│   │   └── index.ts
+│   ├── shared
+│   ├── state
+│   │   └── workspace.js
+│   ├── stores
+│   │   ├── __init__.py
+│   │   ├── auth.js
+│   │   ├── auth.ts
+│   │   ├── briefings.js
+│   │   ├── dataSources.js
+│   │   ├── environment.js
+│   │   ├── models.js
+│   │   ├── priority.js
+│   │   ├── settings.js
+│   │   └── user.js
+│   ├── types
+│   │   ├── index.ts
+│   │   └── modules.d.ts
+│   ├── ui
+│   │   ├── chat
+│   │   ├── common
+│   │   ├── console
+│   │   ├── dashboard
+│   │   ├── settings
+│   │   └── workspace
+│   │       └── components
+│   ├── utils
+│   │   ├── __init__.py
+│   │   ├── format.js
+│   │   ├── validate.js
+│   │   └── websocket.js
+│   └── views
+│       ├── briefings
+│       ├── conversations
+│       └── priority
+├── tsconfig.json
+└── vite.config.js
+
+53 directories, 146 files

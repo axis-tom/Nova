@@ -140,7 +140,7 @@ import {
   OfficeBuilding,
   Iphone
 } from '@element-plus/icons-vue';
-import { useAuthStore } from '@/stores/auth';
+import { useAuthStore } from '@/state/auth';
 
 const router = useRouter();
 const authStore = useAuthStore();

@@ -15,7 +15,7 @@
 import { ref, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import DataSourceConfig from '@/interface/components/common/DataSourceConfig.vue';
-import { useDataSourceStore } from '@/stores/dataSources';
+import { useDataSourceStore } from '@/state/dataSources';
 
 const dataSourceStore = useDataSourceStore();
 const dataSources = ref<unknown[]>(576);

@@ -22,12 +22,12 @@ declare module '@/utils/format' {
   export function formatRelativeTime(date: string | Date | number): string
 }
 
-declare module '@/stores/dataSources' {
+declare module '@/state/dataSources' {
   import { defineStore } from 'pinia'
   export const useDataSourceStore: ReturnType<typeof defineStore>
 }
 
-declare module '@/stores/environment' {
+declare module '@/state/environment' {
   import { defineStore } from 'pinia'
   export const useEnvironmentStore: ReturnType<typeof defineStore>
 }

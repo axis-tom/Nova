@@ -1,0 +1,249 @@
+backend
+├── __init__.py
+├── business
+│   ├── conversation
+│   │   ├── __init__.py
+│   │   ├── dialog_manager.py
+│   │   ├── emotion_agent.py
+│   │   └── intent_agent.py
+│   └── ecommerce
+│       ├── __init__.py
+│       ├── analyst.py
+│       ├── api_layer.py
+│       ├── base.py
+│       ├── ecommerce_graph.py
+│       ├── ecommerce_graph_enhanced.py
+│       ├── executor.py
+│       ├── judge.py
+│       ├── judge_enhanced.py
+│       ├── judge_enhanced_complete.py
+│       ├── memory.py
+│       ├── memory_complete.py
+│       └── planner.py
+├── common
+│   ├── collectors
+│   │   └── base.py
+│   ├── context.py
+│   ├── contracts
+│   │   ├── __init__.py
+│   │   ├── contract_agent.py
+│   │   └── registry.py
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── agent.py
+│   │   ├── standard_agent.py
+│   │   └── state.py
+│   └── exceptions
+│       ├── __init__.py
+│       └── exceptions.py
+├── config
+│   ├── __init__.py
+│   ├── config.py
+│   ├── data_source_providers.py
+│   ├── settings.py
+│   └── templates
+│       ├── __init__.py
+│       └── ecommerce
+│           ├── README.md
+│           └── __init__.py
+├── contracts
+│   ├── agent_contracts.md
+│   └── agent_registry.json
+├── data
+│   ├── chroma
+│   ├── database.py
+│   ├── init_db.py
+│   ├── migrations
+│   │   └── add_user_fields.py
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── briefing.py
+│   │   ├── conversation.py
+│   │   ├── data_source.py
+│   │   ├── db.py
+│   │   ├── execution_result.py
+│   │   ├── log.py
+│   │   ├── message.py
+│   │   ├── model_folder.py
+│   │   ├── project.py
+│   │   ├── scene.py
+│   │   ├── trace.py
+│   │   └── user.py
+│   ├── neo4j
+│   ├── postgres
+│   ├── redis
+│   └── repositories
+│       ├── __init__.py
+│       ├── base.py
+│       ├── postgres
+│       │   ├── __init__.py
+│       │   ├── briefing_repo.py
+│       │   ├── conversation_repo.py
+│       │   ├── data_source_repo.py
+│       │   ├── log_repo.py
+│       │   ├── message_repo.py
+│       │   ├── project_repo.py
+│       │   ├── raw_email_repo.py
+│       │   ├── scene_repo.py
+│       │   └── user_repo.py
+│       └── sqlite
+│           ├── __init__.py
+│           ├── base.py
+│           └── user_repo.py
+├── foundation
+│   ├── action
+│   │   ├── executors
+│   │   │   ├── analyzer.py
+│   │   │   ├── briefing_generator.py
+│   │   │   ├── contextual_ai_analyzer.py
+│   │   │   ├── followup_agent.py
+│   │   │   ├── formatter.py
+│   │   │   └── project_agent.py
+│   │   ├── external_calls
+│   │   │   ├── outreach.py
+│   │   │   └── payment.py
+│   │   ├── result_manager.py
+│   │   └── tools
+│   │       ├── base.py
+│   │       ├── mock_tool.py
+│   │       └── registry.py
+│   ├── cognition
+│   │   ├── orchestrator
+│   │   │   └── brain.py
+│   │   ├── planner
+│   │   │   ├── daily_graph.py
+│   │   │   └── sop_blueprints
+│   │   │       ├── briefing.yaml
+│   │   │       ├── daily_briefing.yaml
+│   │   │       ├── risk_alert.yaml
+│   │   │       └── strategy.yaml
+│   │   ├── reasoning
+│   │   │   ├── judges
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── insight.py
+│   │   │   │   ├── priority.py
+│   │   │   │   └── risk.py
+│   │   │   └── strategists
+│   │   │       ├── __init__.py
+│   │   │       ├── financial.py
+│   │   │       ├── growth.py
+│   │   │       └── knowledge.py
+│   │   └── state_machine
+│   │       ├── agent_adapter.py
+│   │       ├── contextual_graph.py
+│   │       ├── dependency_resolver.py
+│   │       ├── deterministic_graph.py
+│   │       ├── execution_queue.py
+│   │       ├── graph_engine.py
+│   │       ├── graph_engine_v2.py
+│   │       ├── node_runner.py
+│   │       └── state_machine.py
+│   ├── communication
+│   │   ├── api
+│   │   │   └── v1
+│   │   │       ├── __init__.py
+│   │   │       ├── auth.py
+│   │   │       ├── briefings.py
+│   │   │       ├── conversation.py
+│   │   │       ├── data_sources.py
+│   │   │       ├── graph.py
+│   │   │       ├── logs.py
+│   │   │       ├── market.py
+│   │   │       ├── models.py
+│   │   │       ├── projects.py
+│   │   │       ├── scenes.py
+│   │   │       ├── scheduler.py
+│   │   │       ├── settings.py
+│   │   │       ├── trace.py
+│   │   │       └── tree.py
+│   │   ├── audit.py
+│   │   ├── message_bus
+│   │   │   ├── __init__.py
+│   │   │   └── bus.py
+│   │   ├── model_clients
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── manager.py
+│   │   │   ├── ollama.py
+│   │   │   └── openai.py
+│   │   └── scheduler_manager.py
+│   ├── memory
+│   │   ├── graph
+│   │   ├── long_term
+│   │   │   ├── agent_memory.py
+│   │   │   └── knowledge_store.py
+│   │   ├── semantic_layer.py
+│   │   ├── short_term
+│   │   │   ├── contextual_data.py
+│   │   │   ├── conversation_store.py
+│   │   │   └── working_memory.py
+│   │   ├── trace
+│   │   │   ├── replay.py
+│   │   │   ├── trace_manager.py
+│   │   │   └── trace_store.py
+│   │   └── vector
+│   ├── perception
+│   │   ├── __init__.py
+│   │   ├── collectors
+│   │   │   ├── __init__.py
+│   │   │   ├── competitor.py
+│   │   │   ├── email.py
+│   │   │   ├── finance.py
+│   │   │   ├── news.py
+│   │   │   └── social.py
+│   │   └── connectors
+│   │       ├── __init__.py
+│   │       ├── base.py
+│   │       ├── crawler_pool.py
+│   │       ├── email
+│   │       │   ├── __init__.py
+│   │       │   └── imap_client.py
+│   │       ├── financial.py
+│   │       ├── outbound
+│   │       │   ├── __init__.py
+│   │       │   ├── email.py
+│   │       │   ├── feishu.py
+│   │       │   ├── notion.py
+│   │       │   └── todoist.py
+│   │       ├── qichacha.py
+│   │       ├── rss.py
+│   │       ├── scheduler.py
+│   │       └── social
+│   │           ├── __init__.py
+│   │           ├── weibo.py
+│   │           └── xiaohongshu.py
+│   └── reflection
+│       ├── __init__.py
+│       ├── feedback
+│       │   ├── __init__.py
+│       │   └── feedback_manager.py
+│       ├── learning
+│       │   ├── __init__.py
+│       │   ├── implicit.py
+│       │   ├── outcome.py
+│       │   ├── rule_generator.py
+│       │   └── weight_updater.py
+│       └── quality
+│           ├── __init__.py
+│           ├── auditor.py
+│           ├── compliance.py
+│           ├── efficiency.py
+│           └── validator.py
+├── infrastructure
+│   └── docker-compose.yml
+├── main.py
+├── requirements.txt
+├── tests
+│   ├── e2e
+│   ├── integration
+│   └── unit
+└── utils
+    ├── __init__.py
+    ├── crypto.py
+    ├── daily_briefing.py
+    ├── llm_client.py
+    ├── logger.py
+    ├── text_utils.py
+    └── time_utils.py
+
+63 directories, 184 files

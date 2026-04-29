@@ -158,7 +158,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import { Plus, InfoFilled, CircleCheckFilled, CircleCloseFilled } from '@element-plus/icons-vue'
 import { formatDate } from '@/utils/format'
-import { useDataSourceStore } from '@/stores/dataSources'
+import { useDataSourceStore } from '@/state/dataSources'
 
 interface DataSourceField {
   name: string

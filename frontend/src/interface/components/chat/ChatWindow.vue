@@ -37,7 +37,7 @@ import { ElScrollbar, ElSkeleton, ElEmpty } from 'element-plus';
 import MessageBubble from './MessageBubble.vue';
 import InputArea from './InputArea.vue';
 import { wsManager } from '@/utils/websocket';
-import { useAuthStore } from '@/stores/auth';
+import { useAuthStore } from '@/state/auth';
 
 
 interface MessageItem {

@@ -156,7 +156,7 @@ router.beforeEach(async (to, from, next) => {
   console.log('🚦 路由守卫:', to.path, 'from:', from.path);
 
   // 直接导入 authStore（此时 pinia 已在 main.js 中初始化）
-  const { useAuthStore } = await import('@/stores/auth');
+  const { useAuthStore } = await import('@/state/auth');
   const authStore = useAuthStore();
 
   // 如果 token 存在但用户信息缺失，尝试重新初始化（防御性）

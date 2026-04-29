@@ -44,8 +44,8 @@ import { useRouter } from 'vue-router';
 import StatsCard from '@/interface/components/dashboard/StatsCard.vue';
 import PriorityList from '@/interface/components/dashboard/PriorityList.vue';
 import BriefingPreview from '@/interface/components/dashboard/BriefingPreview.vue';
-import { useBriefingStore } from '@/stores/briefings';
-import { usePriorityStore } from '@/stores/priority'; // 假设有优先级 store
+import { useBriefingStore } from '@/state/briefings';
+import { usePriorityStore } from '@/state/priority'; // 假设有优先级 store
 
 const router = useRouter();
 const briefingStore = useBriefingStore();

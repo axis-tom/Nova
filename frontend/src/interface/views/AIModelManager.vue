@@ -115,7 +115,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Folder, Document } from '@element-plus/icons-vue';
-import { useModelStore } from '@/stores/models';
+import { useModelStore } from '@/state/models';
 
 const modelStore = useModelStore();
 
