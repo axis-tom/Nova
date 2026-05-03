@@ -17,3 +17,8 @@ data/redis/
 data/postgres/
 data/chroma/
 data/neo4j/
+data/neo4j/
+data/redis/
+data/postgres/
+data/chroma/
+frontend/dist/

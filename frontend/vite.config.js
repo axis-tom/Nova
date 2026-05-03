@@ -18,13 +18,13 @@ export default defineConfig(({ mode }) => {
       open: true,
       host: '0.0.0.0',
       hmr: {
-        protocol: 'ws',
-        host: '0.0.0.0',
+        host: '172.25.51.58', // 你的WSL实际IP
         port: 5173,
+        protocol: 'ws'
       },
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:8000',  // 强制 IPv4，避免 IPv6 连接问题
+          target: 'http://127.0.0.1:8000',
           changeOrigin: true,
         },
         '/ws': {
@@ -33,6 +33,8 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+
+
     build: {
       outDir: 'dist',
       sourcemap: mode === 'development',

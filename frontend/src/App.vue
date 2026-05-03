@@ -1,23 +1,17 @@
 <template>
   <div id="app">
-    <!-- 强制 Workspace 全屏显示 -->
-    <template v-if="$route.path === '/workspace' || $route.meta.layout === 'blank' || isAuthPage">
-      <router-view v-slot="{ Component }">
-        <transition name="fade" mode="out-in">
-          <component :is="Component" />
-        </transition>
-      </router-view>
+    <!-- 工作区和认证页面使用独立布局 -->
+    <template v-if="$route.name === 'Workspace' || $route.name === 'Login' || $route.name === 'Register'">
+      <router-view />
     </template>
 
-    <!-- 其他页面使用后台布局 -->
+    <!-- 其他页面使用标准后台布局 -->
     <template v-else>
       <NavBar @toggle-sidebar="toggleSidebar" @logout="handleLogout" />
       <SideMenu
         :collapsed="sidebarCollapsed"
         @update:collapsed="sidebarCollapsed = $event as boolean"
-        @navigate="handleNavigate as (...args: unknown[]) => void"
       />
-
       <div class="main-content" :class="{ 'collapsed': sidebarCollapsed }">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
