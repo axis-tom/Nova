@@ -115,9 +115,8 @@ npm install && npm run dev
 
 ## 快速体验
 
-```
 ![选品分析演示](docs/demo-product-selection.gif)
-```
+
 
 1. 浏览器打开 `http://localhost:5173`
 
