@@ -207,6 +207,7 @@ const getNodeTypeLabel = () => {
   if (!activeNode.value) return ''
   const typeLabels = {
     research: '调研',
+    collection: '采集',
     analysis: '分析',
     generation: '生成',
     optimization: '优化',

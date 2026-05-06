@@ -26,6 +26,12 @@ class GraphRunRequest(BaseModel):
     env: str = Field(default="sandbox", description="执行环境: sandbox/production")
     graph_config: Optional[Dict[str, Any]] = Field(None, description="自定义图配置（可选）")
 
+class GraphExecuteRequest(BaseModel):
+    """Graph执行请求（基于SOP名称）"""
+    sop_name: str = Field(..., description="SOP名称，如: product_selection")
+    input: Dict[str, Any] = Field(default_factory=dict, description="输入数据")
+    env: str = Field(default="sandbox", description="执行环境: sandbox/production")
+
 class GraphRunResponse(BaseModel):
     """Graph执行响应"""
     success: bool = Field(..., description="执行是否成功")
@@ -127,6 +133,81 @@ SCENARIO_GRAPHS = {
                 "node_type": "output_node",
                 "config": {
                     "output_fields": ["report", "insights", "recommendations"]
+                }
+            }
+        ]
+    },
+    "product_selection": {
+        "graph_id": "product_selection_graph",
+        "version": "1.0",
+        "description": "电商选品分析场景 - 从数据采集到选品简报生成的全链路自动化",
+        "nodes": [
+            {
+                "node_id": "data_collection",
+                "node_type": "data_node",
+                "config": {
+                    "agent": "market_analyst",
+                    "params": {
+                        "task": "collect_product_data",
+                        "data_source": "product_selection_data"
+                    },
+                    "output_fields": ["products", "competitors", "market_trends"]
+                },
+                "next": "market_analysis"
+            },
+            {
+                "node_id": "market_analysis",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "market_analyst",
+                    "params": {
+                        "task": "analyze_market_trends",
+                        "analysis_type": "market_trends"
+                    }
+                },
+                "next": "competitor_analysis"
+            },
+            {
+                "node_id": "competitor_analysis",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "competitor_analyst",
+                    "params": {
+                        "task": "analyze_competitors",
+                        "analysis_type": "competitor_benchmark"
+                    }
+                },
+                "next": "profitability_assessment"
+            },
+            {
+                "node_id": "profitability_assessment",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "market_analyst",
+                    "params": {
+                        "task": "assess_profitability",
+                        "assessment_type": "roi_analysis"
+                    }
+                },
+                "next": "briefing_generation"
+            },
+            {
+                "node_id": "briefing_generation",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "briefing_generator",
+                    "params": {
+                        "task": "generate_briefing",
+                        "format": "markdown"
+                    }
+                },
+                "next": "output_result"
+            },
+            {
+                "node_id": "output_result",
+                "node_type": "output_node",
+                "config": {
+                    "output_fields": ["briefing", "summary", "market_analysis", "competitor_analysis", "profitability"]
                 }
             }
         ]
@@ -305,6 +386,112 @@ async def get_graph_schema(scenario: str = None):
     except Exception as e:
         logger.error(f"获取Graph Schema失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取Graph Schema失败: {str(e)}")
+
+@router.post("/execute", response_model=GraphRunResponse, tags=["Graph"])
+async def execute_graph(request: GraphExecuteRequest):
+    """
+    执行Graph（基于SOP名称）
+    
+    前端Workspace调用此接口执行选品分析等SOP任务
+    输入规范:
+    {
+      "sop_name": "product_selection",
+      "input": {},
+      "env": "sandbox"
+    }
+    """
+    try:
+        logger.info(f"Graph执行请求: sop_name={request.sop_name}, env={request.env}")
+        
+        # SOP名称到场景名称的映射
+        sop_to_scenario = {
+            "product_selection": "product_selection",
+            "email_briefing": "email_briefing",
+            "daily_report": "daily_report",
+        }
+        
+        scenario = sop_to_scenario.get(request.sop_name)
+        if not scenario:
+            raise HTTPException(status_code=400, detail=f"未知的SOP: {request.sop_name}")
+        
+        if scenario not in SCENARIO_GRAPHS:
+            raise HTTPException(status_code=400, detail=f"SOP '{request.sop_name}' 对应的场景 '{scenario}' 未配置")
+        
+        # 1. 创建图定义
+        graph = create_graph_from_scenario(scenario)
+        
+        # 2. 创建初始状态
+        initial_state = State(
+            data=request.input,
+            metadata={
+                "scenario": scenario,
+                "sop_name": request.sop_name,
+                "env": request.env,
+                "request_id": f"graph_{scenario}_{id(request)}"
+            }
+        )
+        
+        # 3. 执行Graph
+        engine = DeterministicGraphEngine()
+        result = await engine.run_async(graph, initial_state)
+        
+        # 4. 提取执行信息
+        execution_metadata = result.get("execution_metadata", {})
+        execution_path = execution_metadata.get("actual_path", [])
+        
+        # 5. 构建响应
+        response = GraphRunResponse(
+            success=True,
+            result=result.get("data", {}),
+            trace_id=execution_metadata.get("execution_id"),
+            execution_path=execution_path,
+            error=None
+        )
+        
+        logger.info(f"Graph执行成功: sop_name={request.sop_name}, trace_id={response.trace_id}")
+        return response
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Graph执行参数错误: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Graph执行失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Graph执行失败: {str(e)}")
+
+@router.get("/status/{trace_id}", tags=["Graph"])
+async def get_graph_status(trace_id: str):
+    """
+    获取Graph执行状态
+    
+    前端轮询此接口获取执行进度
+    """
+    try:
+        # 从Trace系统获取执行状态
+        from backend.data.models.trace import Trace
+        from backend.data.database import get_session
+        
+        async for session in get_session():
+            trace = await session.get(Trace, trace_id)
+            if not trace:
+                raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' 不存在")
+            
+            return {
+                "trace_id": trace.id,
+                "status": trace.status,
+                "progress": trace.progress if hasattr(trace, 'progress') else None,
+                "current_node": trace.current_node if hasattr(trace, 'current_node') else None,
+                "result": trace.result if hasattr(trace, 'result') else None,
+                "error": trace.error if hasattr(trace, 'error') else None,
+                "started_at": trace.started_at.isoformat() if trace.started_at else None,
+                "completed_at": trace.completed_at.isoformat() if trace.completed_at else None,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取Graph状态失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取Graph状态失败: {str(e)}")
 
 @router.get("/health", tags=["Graph"])
 async def graph_health():

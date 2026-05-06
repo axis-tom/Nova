@@ -8,6 +8,7 @@
     <div class="node-header">
       <div class="node-icon">
         <span v-if="node.type === 'research'">🔍</span>
+        <span v-else-if="node.type === 'collection'">📡</span>
         <span v-else-if="node.type === 'analysis'">📊</span>
         <span v-else-if="node.type === 'generation'">✨</span>
         <span v-else-if="node.type === 'optimization'">⚡</span>

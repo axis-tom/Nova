@@ -175,7 +175,11 @@ interface Emits {
 const emit = defineEmits<Emits>()
 
 // 响应式数据
-const localContent = ref(props.content)
+const localContent = ref(
+  props.content !== null && typeof props.content === 'object'
+    ? JSON.stringify(props.content, null, 2)
+    : String(props.content || '')
+)
 const activeFormat = ref<HTMLElement | null>(null)
 const showPreview = ref<boolean>(true)
 const autoSave = ref<boolean>(true)

@@ -92,6 +92,28 @@ export async function getTraceNodeDetail(traceId: string, nodeId: string): Promi
 }
 
 /**
+ * 执行Graph（基于SOP场景）
+ * @param sopName - SOP名称，如 "product_selection"
+ * @param input - 输入数据
+ * @param env - 执行环境
+ */
+export async function executeGraph(sopName: string, input: Record<string, unknown> = {}, env: string = 'sandbox'): Promise<unknown> {
+  return client.post('/graph/execute', {
+    sop_name: sopName,
+    input,
+    env,
+  });
+}
+
+/**
+ * 获取Graph执行状态
+ * @param traceId - 追踪ID
+ */
+export async function getGraphStatus(traceId: string): Promise<unknown> {
+  return client.get(`/graph/status/${traceId}`);
+}
+
+/**
  * 订阅Graph执行状态（WebSocket）
  * @param traceId - Trace ID
  */

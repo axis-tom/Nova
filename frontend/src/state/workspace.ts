@@ -90,15 +90,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       ]
     } else if (task.id === 'product-selection') {
       nodes.value = [
-        { id: 'market-trends', type: 'research', label: '市场趋势', data: {} },
+        { id: 'data-collection', type: 'collection', label: '数据采集', data: {} },
+        { id: 'market-analysis', type: 'analysis', label: '市场分析', data: {} },
         { id: 'competitor-analysis', type: 'analysis', label: '竞品分析', data: {} },
-        { id: 'profitability', type: 'analysis', label: '盈利分析', data: {} },
-        { id: 'risk-assessment', type: 'assessment', label: '风险评估', data: {} },
+        { id: 'profitability-assessment', type: 'assessment', label: '盈利评估', data: {} },
+        { id: 'briefing-generation', type: 'generation', label: '简报生成', data: {} },
       ]
       edges.value = [
-        { id: 'e1', source: 'market-trends', target: 'competitor-analysis' },
-        { id: 'e2', source: 'competitor-analysis', target: 'profitability' },
-        { id: 'e3', source: 'profitability', target: 'risk-assessment' },
+        { id: 'e1', source: 'data-collection', target: 'market-analysis' },
+        { id: 'e2', source: 'market-analysis', target: 'competitor-analysis' },
+        { id: 'e3', source: 'competitor-analysis', target: 'profitability-assessment' },
+        { id: 'e4', source: 'profitability-assessment', target: 'briefing-generation' },
       ]
     }
     nodes.value.forEach((node) => {
