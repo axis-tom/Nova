@@ -1,4 +1,5 @@
 /node_modules
+frontend/node_modules/
 /vendor
 .env
 .env.*
@@ -13,20 +14,8 @@ Homestead.yaml
 /.vscode
 *.sqlite
 /data*.log
-data/redis/
-data/postgres/
-data/chroma/
-data/neo4j/
-data/neo4j/
-data/redis/
-data/postgres/
-data/chroma/
+backend/infrastructure/data/
 frontend/dist/
-data/neo4j/
-data/redis/
-data/postgres/
-data/chroma/
-# test directories are tracked
 __pycache__/
 *.pyc
-.pytest_cache/
+*.gif
