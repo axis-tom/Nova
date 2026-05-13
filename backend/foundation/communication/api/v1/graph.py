@@ -211,6 +211,82 @@ SCENARIO_GRAPHS = {
                 }
             }
         ]
+    },
+    "amazon_market_monitor": {
+        "graph_id": "amazon_market_monitor_graph",
+        "version": "1.0",
+        "description": "亚马逊实时市场监控场景 - 关键词扩展→商品采集→评论分析→流量分析→机会判断→预警通知",
+        "nodes": [
+            {
+                "node_id": "keyword_expansion",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "keyword_expander",
+                    "params": {
+                        "task": "expand_keywords",
+                        "expand_count": 20,
+                        "include_long_tail": true
+                    }
+                },
+                "next": "product_collection"
+            },
+            {
+                "node_id": "product_collection",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "product_collector",
+                    "params": {
+                        "task": "collect_products",
+                        "max_results": 50
+                    }
+                },
+                "next": "review_analysis"
+            },
+            {
+                "node_id": "review_analysis",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "review_analyzer",
+                    "params": {
+                        "task": "analyze_reviews",
+                        "sentiment_analysis": true
+                    }
+                },
+                "next": "traffic_analysis"
+            },
+            {
+                "node_id": "traffic_analysis",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "traffic_analyzer",
+                    "params": {
+                        "task": "analyze_traffic",
+                        "include_bsr_trend": true
+                    }
+                },
+                "next": "opportunity_judgment"
+            },
+            {
+                "node_id": "opportunity_judgment",
+                "node_type": "agent_node",
+                "config": {
+                    "agent": "opportunity_judge",
+                    "params": {
+                        "task": "judge_opportunity",
+                        "min_rating": 3.5,
+                        "min_review_count": 10
+                    }
+                },
+                "next": "alert_notification"
+            },
+            {
+                "node_id": "alert_notification",
+                "node_type": "output_node",
+                "config": {
+                    "output_fields": ["market_report", "price_alerts", "opportunities", "recommendations"]
+                }
+            }
+        ]
     }
 }
 
@@ -408,6 +484,7 @@ async def execute_graph(request: GraphExecuteRequest):
             "product_selection": "product_selection",
             "email_briefing": "email_briefing",
             "daily_report": "daily_report",
+            "amazon_monitor": "amazon_market_monitor",
         }
         
         scenario = sop_to_scenario.get(request.sop_name)

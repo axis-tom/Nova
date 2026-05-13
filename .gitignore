@@ -27,3 +27,6 @@ data/redis/
 data/postgres/
 data/chroma/
 # test directories are tracked
+__pycache__/
+*.pyc
+.pytest_cache/
