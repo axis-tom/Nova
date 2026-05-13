@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from backend.foundation.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.foundation.communication.api.v1 import models, tree
+from backend.foundation.communication.api.v1 import models, tree, amazon_monitor
 from backend.foundation.communication.api.v1 import router as api_router
 from backend.config.config import settings
 from backend.foundation.communication.message_bus import message_bus
@@ -133,6 +133,9 @@ app.include_router(graph.router, prefix=f"{settings.API_V1_PREFIX}/graph", tags=
 
 # 注册Trace API路由 - 执行追踪和调试
 app.include_router(trace.router, prefix=f"{settings.API_V1_PREFIX}/trace", tags=["Trace"])
+
+# 注册Amazon Monitor API路由 - 亚马逊市场监控
+app.include_router(amazon_monitor.router, prefix=f"{settings.API_V1_PREFIX}/amazon-monitor", tags=["Amazon 市场监控"])
 
 
 # 健康检查端点
