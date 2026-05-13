@@ -1,0 +1,15 @@
+name: daily_briefing
+description: 每日邮件采集与简报生成
+steps:
+  - name: collect_emails
+    type: sequential
+    agents:
+      - email_agent
+    timeout: 600
+    retry: 2
+  - name: generate_briefing
+    type: sequential
+    agents:
+      - briefing_generator_agent
+    timeout: 120
+    retry: 1

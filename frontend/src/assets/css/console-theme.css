@@ -1,0 +1,197 @@
+/* Console专用深色主题变量 */
+:root {
+  /* Console主色调 - 深色科技蓝 */
+  --console-color-primary: #3b82f6;
+  --console-color-primary-light: #60a5fa;
+  --console-color-primary-dark: #2563eb;
+  
+  /* Console背景色 - 深色层级 */
+  --console-bg-base: #0f172a;        /* 最底层背景 */
+  --console-bg-surface: #1e293b;     /* 表面层 */
+  --console-bg-elevated: #334155;    /* 悬浮层 */
+  --console-bg-hover: #475569;       /* 悬停状态 */
+  
+  /* Console边框色 */
+  --console-border-base: #334155;
+  --console-border-light: #475569;
+  --console-border-lighter: #64748b;
+  
+  /* Console文字色 */
+  --console-text-primary: #f8fafc;
+  --console-text-secondary: #e2e8f0;
+  --console-text-tertiary: #94a3b8;
+  --console-text-muted: #64748b;
+  
+  /* Console状态色 */
+  --console-color-success: #10b981;
+  --console-color-warning: #f59e0b;
+  --console-color-error: #ef4444;
+  --console-color-info: #3b82f6;
+  
+  /* Console阴影 */
+  --console-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --console-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --console-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  
+  /* Console圆角 */
+  --console-radius-sm: 4px;
+  --console-radius-md: 8px;
+  --console-radius-lg: 12px;
+  --console-radius-xl: 16px;
+  
+  /* Console间距 */
+  --console-spacing-xs: 4px;
+  --console-spacing-sm: 8px;
+  --console-spacing-md: 16px;
+  --console-spacing-lg: 24px;
+  --console-spacing-xl: 32px;
+  
+  /* Console过渡动画 */
+  --console-transition-fast: 0.15s ease;
+  --console-transition-normal: 0.2s ease;
+  --console-transition-slow: 0.3s ease;
+}
+
+/* Console专用Element Plus主题覆盖 */
+.console-container {
+  /* 覆盖Element Plus默认变量 */
+  --el-bg-color: var(--console-bg-surface);
+  --el-bg-color-page: var(--console-bg-base);
+  --el-text-color-primary: var(--console-text-primary);
+  --el-text-color-regular: var(--console-text-secondary);
+  --el-text-color-secondary: var(--console-text-tertiary);
+  --el-border-color: var(--console-border-base);
+  --el-border-color-light: var(--console-border-light);
+  --el-border-color-lighter: var(--console-border-lighter);
+  
+  /* 按钮样式覆盖 */
+  --el-button-bg-color: var(--console-bg-elevated);
+  --el-button-border-color: var(--console-border-base);
+  --el-button-hover-bg-color: var(--console-bg-hover);
+  --el-button-active-bg-color: var(--console-bg-surface);
+  
+  /* 输入框样式覆盖 */
+  --el-input-bg-color: var(--console-bg-surface);
+  --el-input-border-color: var(--console-border-base);
+  --el-input-hover-border-color: var(--console-border-light);
+  --el-input-focus-border-color: var(--console-color-primary);
+  
+  /* 进度条样式覆盖 */
+  --el-progress-bg-color: var(--console-bg-elevated);
+  --el-progress-bar-color: var(--console-color-primary);
+  
+  /* 标签页样式覆盖 */
+  --el-tabs-header-bg-color: var(--console-bg-surface);
+  --el-tabs-active-color: var(--console-color-primary);
+  --el-tabs-hover-color: var(--console-color-primary-light);
+}
+
+/* Console专用工具类 */
+.console-bg-base { background-color: var(--console-bg-base); }
+.console-bg-surface { background-color: var(--console-bg-surface); }
+.console-bg-elevated { background-color: var(--console-bg-elevated); }
+
+.console-text-primary { color: var(--console-text-primary); }
+.console-text-secondary { color: var(--console-text-secondary); }
+.console-text-tertiary { color: var(--console-text-tertiary); }
+
+.console-border { border: 1px solid var(--console-border-base); }
+.console-border-light { border: 1px solid var(--console-border-light); }
+
+.console-shadow-sm { box-shadow: var(--console-shadow-sm); }
+.console-shadow-md { box-shadow: var(--console-shadow-md); }
+.console-shadow-lg { box-shadow: var(--console-shadow-lg); }
+
+.console-radius-sm { border-radius: var(--console-radius-sm); }
+.console-radius-md { border-radius: var(--console-radius-md); }
+.console-radius-lg { border-radius: var(--console-radius-lg); }
+
+/* Console状态指示器 */
+.console-status-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.console-status-success { background-color: var(--console-color-success); }
+.console-status-warning { background-color: var(--console-color-warning); }
+.console-status-error { background-color: var(--console-color-error); }
+.console-status-info { background-color: var(--console-color-info); }
+.console-status-running {
+  background-color: var(--console-color-info);
+  animation: console-pulse 1.5s infinite;
+}
+
+@keyframes console-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Console面板样式 */
+.console-panel {
+  background-color: var(--console-bg-surface);
+  border: 1px solid var(--console-border-base);
+  border-radius: var(--console-radius-md);
+  padding: var(--console-spacing-md);
+}
+
+.console-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--console-spacing-md);
+  border-bottom: 1px solid var(--console-border-base);
+  margin-bottom: var(--console-spacing-md);
+}
+
+.console-panel-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--console-text-primary);
+  margin: 0;
+}
+
+/* Console代码样式 */
+.console-code {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 12px;
+  background-color: var(--console-bg-elevated);
+  color: var(--console-text-secondary);
+  padding: var(--console-spacing-sm) var(--console-spacing-md);
+  border-radius: var(--console-radius-sm);
+  border: 1px solid var(--console-border-base);
+}
+
+/* Console分割线 */
+.console-divider {
+  height: 1px;
+  background-color: var(--console-border-base);
+  margin: var(--console-spacing-md) 0;
+}
+
+/* Console滚动条样式 */
+.console-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--console-border-light) var(--console-bg-surface);
+}
+
+.console-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.console-scrollbar::-webkit-scrollbar-track {
+  background: var(--console-bg-surface);
+  border-radius: 3px;
+}
+
+.console-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--console-border-light);
+  border-radius: 3px;
+}
+
+.console-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--console-border-lighter);
+}

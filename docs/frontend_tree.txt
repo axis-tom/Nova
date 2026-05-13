@@ -1,0 +1,80 @@
+frontend/
+├── frontend_structure.txt
+├── index.html
+├── package-lock.json
+├── package.json
+├── public
+│   └── favicon.ico
+├── src
+│   ├── App.vue
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── auth.js
+│   │   ├── briefings.js
+│   │   ├── client.js
+│   │   ├── conversation.js
+│   │   ├── dataSources.js
+│   │   ├── graph.js
+│   │   ├── logs.js
+│   │   ├── mockDataSources.js
+│   │   ├── models.js
+│   │   ├── priority.js
+│   │   ├── project.js
+│   │   ├── scenes.js
+│   │   ├── settings.js
+│   │   └── tree.js
+│   ├── assets
+│   │   └── css
+│   ├── core
+│   │   └── graph
+│   ├── features
+│   │   ├── result
+│   │   └── voe
+│   ├── main.js
+│   ├── router
+│   │   └── index.js
+│   ├── shared
+│   ├── stores
+│   │   ├── __init__.py
+│   │   ├── auth.js
+│   │   ├── briefings.js
+│   │   ├── dataSources.js
+│   │   ├── environment.js
+│   │   ├── models.js
+│   │   ├── priority.js
+│   │   ├── settings.js
+│   │   ├── user.js
+│   │   └── workspace.js
+│   ├── ui
+│   │   ├── chat
+│   │   ├── common
+│   │   ├── console
+│   │   ├── dashboard
+│   │   ├── settings
+│   │   └── workspace
+│   ├── utils
+│   │   ├── __init__.py
+│   │   ├── format.js
+│   │   ├── validate.js
+│   │   └── websocket.js
+│   └── views
+│       ├── AIModelManager.vue
+│       ├── Dashboard.vue
+│       ├── DataSources.vue
+│       ├── Login.vue
+│       ├── Logs.vue
+│       ├── Marketplace.vue
+│       ├── NotFound.vue
+│       ├── Register.vue
+│       ├── Settings.vue
+│       ├── TraceView.vue
+│       ├── briefings
+│       ├── conversations
+│       └── priority
+├── src_old
+│   ├── components
+│   │   └── Workspace.vue
+│   └── layout
+└── vite.config.js
+
+29 directories, 49 files

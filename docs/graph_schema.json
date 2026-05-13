@@ -1,0 +1,293 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Deterministic Graph Schema",
+  "description": "确定性Graph执行引擎的JSON Schema定义",
+  "type": "object",
+  "required": ["graph_id", "version", "start_node", "nodes"],
+  "properties": {
+    "graph_id": {
+      "type": "string",
+      "description": "图的唯一标识符",
+      "examples": ["ecommerce_workflow", "data_processing_pipeline"]
+    },
+    "version": {
+      "type": "string",
+      "description": "图定义版本",
+      "default": "1.0",
+      "examples": ["1.0", "2.1"]
+    },
+    "description": {
+      "type": "string",
+      "description": "图的描述信息",
+      "default": ""
+    },
+    "start_node": {
+      "type": "string",
+      "description": "起始节点ID",
+      "examples": ["validate_input", "process_data"]
+    },
+    "nodes": {
+      "type": "object",
+      "description": "节点定义集合",
+      "additionalProperties": {
+        "$ref": "#/definitions/node"
+      }
+    }
+  },
+  "definitions": {
+    "node": {
+      "type": "object",
+      "required": ["node_type", "config"],
+      "properties": {
+        "node_type": {
+          "type": "string",
+          "description": "节点类型",
+          "enum": ["data_node", "agent_node", "output_node"],
+          "examples": ["data_node", "agent_node", "output_node"]
+        },
+        "config": {
+          "type": "object",
+          "description": "节点配置",
+          "oneOf": [
+            {
+              "title": "Data Node Configuration",
+              "type": "object",
+              "properties": {
+                "transform": {
+                  "type": "object",
+                  "description": "数据转换配置",
+                  "additionalProperties": {
+                    "type": "string",
+                    "enum": ["to_string", "to_int", "to_float", "to_json"]
+                  }
+                },
+                "filter": {
+                  "type": "object",
+                  "description": "数据过滤配置",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": ["range"]
+                      },
+                      "min": {
+                        "type": ["number", "null"]
+                      },
+                      "max": {
+                        "type": ["number", "null"]
+                      }
+                    },
+                    "required": ["type"]
+                  }
+                },
+                "validate": {
+                  "type": "object",
+                  "description": "数据验证配置",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["required", "numeric", "string", "array", "object"]
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "title": "Agent Node Configuration",
+              "type": "object",
+              "required": ["agent"],
+              "properties": {
+                "agent": {
+                  "type": "string",
+                  "description": "智能体名称",
+                  "examples": ["email_agent", "ai_analyzer", "briefing_agent"]
+                },
+                "input_fields": {
+                  "type": "array",
+                  "description": "输入字段列表",
+                  "items": {
+                    "type": "string"
+                  },
+                  "default": []
+                },
+                "parameters": {
+                  "type": "object",
+                  "description": "额外参数",
+                  "additionalProperties": true
+                }
+              }
+            },
+            {
+              "title": "Output Node Configuration",
+              "type": "object",
+              "properties": {
+                "format": {
+                  "type": "object",
+                  "description": "输出格式配置",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["json", "text", "csv", "html"]
+                    },
+                    "indent": {
+                      "type": "integer",
+                      "description": "缩进空格数（仅JSON格式）",
+                      "default": 2
+                    },
+                    "include_metadata": {
+                      "type": "boolean",
+                      "description": "是否包含元数据",
+                      "default": true
+                    }
+                  },
+                  "required": ["type"]
+                },
+                "validate_output": {
+                  "type": "object",
+                  "description": "输出验证配置",
+                  "additionalProperties": {
+                    "type": "string",
+                    "enum": ["required", "optional"]
+                  }
+                },
+                "destination": {
+                  "type": "object",
+                  "description": "输出目标配置",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["file", "api", "database", "console"]
+                    },
+                    "path": {
+                      "type": "string",
+                      "description": "文件路径或API端点"
+                    },
+                    "format": {
+                      "type": "string",
+                      "description": "目标格式"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "next": {
+          "type": ["string", "null"],
+          "description": "下一个节点ID，null表示结束节点",
+          "examples": ["next_node_id", null]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "graph_id": "simple_data_pipeline",
+      "version": "1.0",
+      "description": "简单数据处理管道",
+      "start_node": "validate_input",
+      "nodes": {
+        "validate_input": {
+          "node_type": "data_node",
+          "config": {
+            "validate": {
+              "data": ["required"],
+              "context": ["required"]
+            }
+          },
+          "next": "process_data"
+        },
+        "process_data": {
+          "node_type": "data_node",
+          "config": {
+            "transform": {
+              "timestamp": "to_int",
+              "value": "to_float"
+            },
+            "filter": {
+              "value": {
+                "type": "range",
+                "min": 0,
+                "max": 1000
+              }
+            }
+          },
+          "next": "analyze"
+        },
+        "analyze": {
+          "node_type": "agent_node",
+          "config": {
+            "agent": "ai_analyzer",
+            "input_fields": ["data", "context", "timestamp"]
+          },
+          "next": "generate_output"
+        },
+        "generate_output": {
+          "node_type": "output_node",
+          "config": {
+            "format": {
+              "type": "json",
+              "indent": 2,
+              "include_metadata": true
+            },
+            "validate_output": {
+              "output": "required"
+            }
+          },
+          "next": null
+        }
+      }
+    },
+    {
+      "graph_id": "ecommerce_workflow",
+      "version": "1.0",
+      "description": "电商工作流",
+      "start_node": "plan",
+      "nodes": {
+        "plan": {
+          "node_type": "agent_node",
+          "config": {
+            "agent": "planner",
+            "input_fields": ["goal", "constraints", "market_data"]
+          },
+          "next": "analyze"
+        },
+        "analyze": {
+          "node_type": "agent_node",
+          "config": {
+            "agent": "analyst",
+            "input_fields": ["planning_result", "market_data"]
+          },
+          "next": "execute"
+        },
+        "execute": {
+          "node_type": "agent_node",
+          "config": {
+            "agent": "executor",
+            "input_fields": ["execution_plan", "parameters"]
+          },
+          "next": "judge"
+        },
+        "judge": {
+          "node_type": "agent_node",
+          "config": {
+            "agent": "judge",
+            "input_fields": ["execution_result", "context"]
+          },
+          "next": "output"
+        },
+        "output": {
+          "node_type": "output_node",
+          "config": {
+            "format": {
+              "type": "json"
+            }
+          },
+          "next": null
+        }
+      }
+    }
+  ]
+}

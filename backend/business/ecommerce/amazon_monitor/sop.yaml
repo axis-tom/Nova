@@ -1,0 +1,150 @@
+# ============================================================
+# Amazon 实时市场监控 SOP 流程定义
+# ============================================================
+# 本 SOP 定义了 Amazon 市场监控的标准操作流程，
+# 从关键词扩展到预警通知的全链路自动化。
+# 对应文章：AI跨境电商市场调研5步法
+# ============================================================
+
+sop_name: "亚马逊实时市场监控"
+sop_id: "amazon_market_monitor"
+version: "1.0.0"
+description: >
+  Amazon 市场实时监控流程，涵盖关键词扩展、商品采集、评论分析、
+  流量分析、市场机会评估和预警通知六个步骤。
+  适用于跨境电商运营团队进行选品决策和竞品监控。
+
+# 监控配置
+monitor_config:
+  # 定时调度
+  schedule:
+    price_monitor: "0 * * * *"       # 每小时：价格监控
+    review_analysis: "0 2 * * *"     # 每天凌晨2点：评论分析
+    market_report: "0 3 * * 1"       # 每周一凌晨3点：市场报告
+  # 默认搜索关键词（可通过前端配置覆盖）
+  default_keywords:
+    - "wireless earbuds"
+    - "bluetooth speaker"
+    - "phone stand"
+    - "laptop stand"
+    - "usb hub"
+  # 监控的 ASIN 列表（可通过前端配置覆盖）
+  watchlist_asins: []
+  # 价格下降预警阈值（百分比）
+  price_drop_threshold: 10.0
+  # 评分下降预警阈值
+  rating_drop_threshold: 0.3
+  # 最大搜索结果数
+  max_search_results: 10
+  # 目标站点
+  marketplace: "www.amazon.com"
+
+steps:
+  - name: "关键词扩展"
+    id: keyword_expansion
+    description: "AI 扩展搜索关键词，覆盖长尾词和相关词（对应文章第1步）"
+    agents:
+      - "keyword_expander"
+    type: sequential
+    input_from: null
+    params:
+      seed_keywords: []          # 从配置或前端传入
+      expand_count: 20           # 每个种子词扩展数量
+      include_long_tail: true    # 是否包含长尾词
+    output_fields:
+      - "expanded_keywords"
+      - "keyword_groups"
+
+  - name: "商品数据采集"
+    id: product_collection
+    description: "通过 Amazon PAAPI 采集商品列表和详情（对应文章第2步）"
+    agents:
+      - "product_collector"
+    type: sequential
+    input_from:
+      - "keyword_expansion.expanded_keywords"
+    params:
+      max_results_per_keyword: 10
+      sort_by: "Relevance"
+      condition: "New"
+      include_details: true
+    output_fields:
+      - "collected_products"
+      - "product_map"
+      - "collection_stats"
+
+  - name: "评论情感分析"
+    id: review_analysis
+    description: "分析商品评论，提取用户需求和痛点（对应文章第3步）"
+    agents:
+      - "review_analyzer"
+    type: sequential
+    input_from:
+      - "product_collection.collected_products"
+    params:
+      max_products_to_analyze: 20
+      sentiment_threshold: 0.7
+    output_fields:
+      - "review_insights"
+      - "sentiment_summary"
+      - "customer_needs"
+
+  - name: "流量与竞品分析"
+    id: traffic_analysis
+    description: "分析流量来源、BSR排名变化和竞品动态（对应文章第4步）"
+    agents:
+      - "traffic_analyzer"
+    type: sequential
+    input_from:
+      - "product_collection.collected_products"
+      - "product_collection.product_map"
+    params:
+      track_bsr: true
+      compare_competitors: true
+      price_comparison: true
+    output_fields:
+      - "traffic_insights"
+      - "bsr_analysis"
+      - "competitor_comparison"
+      - "price_alerts"
+
+  - name: "市场机会评估"
+    id: opportunity_assessment
+    description: "AI 综合判断市场机会，评估选品潜力（对应文章第5步）"
+    agents:
+      - "opportunity_judge"
+    type: sequential
+    input_from:
+      - "keyword_expansion.keyword_groups"
+      - "product_collection.collection_stats"
+      - "review_analysis.review_insights"
+      - "review_analysis.customer_needs"
+      - "traffic_analysis.traffic_insights"
+      - "traffic_analysis.competitor_comparison"
+    params:
+      min_opportunity_score: 60
+      output_top_n: 10
+    output_fields:
+      - "opportunities"
+      - "market_report"
+      - "top_picks"
+
+  - name: "预警通知"
+    id: alert_notification
+    description: "价格变动、新品上架、差评预警通知"
+    agents:
+      - "opportunity_judge"
+    type: sequential
+    input_from:
+      - "traffic_analysis.price_alerts"
+      - "review_analysis.sentiment_summary"
+      - "opportunity_assessment.opportunities"
+    params:
+      alert_types:
+        - "price_drop"
+        - "new_competitor"
+        - "rating_drop"
+        - "bsr_change"
+    output_fields:
+      - "alerts"
+      - "alert_summary"

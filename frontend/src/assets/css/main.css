@@ -1,0 +1,149 @@
+/* 导入 Element Plus 样式（若使用自动按需导入，此步可省略） */
+@import 'element-plus/dist/index.css';
+
+/* 导入自定义变量 */
+@import './variables.css';
+
+/* 全局重置 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: var(--el-font-family);
+  font-size: var(--el-font-size-base);
+  color: var(--el-text-color-primary);
+  background-color: var(--el-bg-color-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--el-border-color-light);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--el-text-color-placeholder);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--el-text-color-secondary);
+}
+
+/* 全局链接样式 */
+a {
+  text-decoration: none;
+  color: var(--el-color-primary);
+  transition: color var(--el-transition-duration);
+}
+a:hover {
+  color: var(--el-color-primary-light-3);
+}
+
+/* 通用卡片样式（可覆盖 el-card 默认） */
+.el-card {
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+.el-card__header {
+  border-bottom: 1px solid var(--el-border-color);
+  padding: 16px 20px;
+  font-weight: 500;
+}
+
+/* 表格样式优化 */
+.el-table {
+  font-size: 13px;
+}
+.el-table th.el-table__cell {
+  background-color: var(--el-bg-color-page);
+  font-weight: 500;
+  color: var(--el-text-color-secondary);
+}
+
+/* 按钮圆角微调 */
+.el-button {
+  border-radius: 6px;
+}
+
+/* 对话框圆角 */
+.el-dialog {
+  border-radius: 12px;
+}
+.el-dialog__header {
+  border-bottom: 1px solid var(--el-border-color);
+  padding: 16px 20px;
+  margin: 0;
+}
+.el-dialog__body {
+  padding: 20px;
+}
+.el-dialog__footer {
+  border-top: 1px solid var(--el-border-color);
+  padding: 12px 20px;
+}
+
+/* 消息提示框圆角 */
+.el-message {
+  border-radius: 8px;
+}
+
+/* 表单样式 */
+.el-form-item__label {
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select .el-input__wrapper {
+  border-radius: 6px;
+}
+
+/* 标签页样式 */
+.el-tabs--border-card {
+  border-radius: 12px;
+  box-shadow: none;
+}
+.el-tabs--border-card > .el-tabs__header {
+  background-color: var(--el-bg-color-page);
+  border-radius: 12px 12px 0 0;
+}
+.el-tabs--border-card > .el-tabs__content {
+  padding: 20px;
+}
+
+/* 加载动画优化 */
+.el-loading-mask {
+  border-radius: 8px;
+}
+.el-loading-spinner .path {
+  stroke: var(--el-color-primary);
+}
+
+/* 工具类 */
+.text-center {
+  text-align: center;
+}
+.text-right {
+  text-align: right;
+}
+.mt-20 {
+  margin-top: 20px;
+}
+.mb-20 {
+  margin-bottom: 20px;
+}
+.p-20 {
+  padding: 20px;
+}

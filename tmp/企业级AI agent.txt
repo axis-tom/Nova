@@ -1,0 +1,62 @@
+真正的“企业级 Agent”长什么样？
+
+企业级不是一个模型，而是一套“约束体系”：
+
+1. Workflow / Graph（核心）
+
+比如：
+
+LangGraph
+Temporal + LLM
+自研 DAG
+
+特点：
+
+强流程控制
+有状态机
+可回滚 / 可重试
+
+👉 这是企业级的“骨架”
+
+2. Tool Layer（严格控制）
+
+企业不会让模型随便调用工具，而是：
+
+白名单 API
+参数 schema 强约束
+权限控制（RBAC）
+审计日志
+
+👉 这是“安全系统”
+
+3. Guardrails（防发疯系统）
+
+包括：
+
+内容过滤
+prompt injection 防护
+输出校验
+JSON schema 强约束
+
+👉 这是“防事故系统”
+
+4. Observability（监控系统）
+
+企业级一定有：
+
+trace（每一步调用记录）
+token cost tracking
+latency 分析
+failure rate
+
+👉 没这个就不是企业级，是玩具
+
+5. Human-in-the-loop（人类兜底）
+
+关键步骤：
+
+审批
+回滚
+人工确认
+
+👉 现实世界不会让 AI 全自动乱跑

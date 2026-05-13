@@ -1,0 +1,80 @@
+.
+├── DATA_SEMANTIC_LAYER_IMPLEMENTATION.md
+├── F5_COMPLETION_REPORT.md
+├── F5_STABLE_SYSTEM_SUMMARY.md
+├── F5_SYSTEM_BASELINE.md
+├── F6_STAGE_UPGRADE_SUMMARY.md
+├── Q&A.txt
+├── S5_COMPLETION_REPORT.md
+├── TRACE_SYSTEM_IMPLEMENTATION.md
+├── agent_contracts.md
+├── agent_registry.json
+├── backend.log
+├── backend_structure_audit_report.md
+├── backend_tree.txt
+├── backup_source.py
+├── debug_graph_execution.py
+├── demo_agent_responsibility_lock.py
+├── demo_collector_system.py
+├── demo_data_semantic_layer.py
+├── docker-compose.yml
+├── example_new_style_agent.py
+├── f5_acceptance_report.json
+├── f5_stability_test_suite.py
+├── f5_test_report.json
+├── final_acceptance_test.py
+├── final_f5_acceptance_test.py
+├── frontend_plan
+│   ├── 📘 Nova 前端系统分层切片规划（Slice Map）.md
+│   ├── 🧠 S3：Graph执行引擎（函数级施工 Prompt）.md
+│   ├── 🧠 S4｜VOE事件交互层（DeepSeek施工指令版）.md
+│   ├── 🧠 S5｜Result渲染系统（DeepSeek施工指令版）.md
+│   ├── 🧩 S2：组件层施工指令（可执行 Prompt规范）.md
+│   └── 🧱 S1：Workspace UI骨架层（施工级详细规范）.md
+├── frontend_tree.txt
+├── graph_schema.json
+├── other_files_structure.txt
+├── project_tree.txt
+├── root_tree.txt
+├── task_progress.md
+├── test
+│   ├── test_direct.py
+│   ├── test_email_agent.py
+│   ├── test_fetch.py
+│   ├── test_fetch2.py
+│   ├── test_fetch3.py
+│   ├── test_groq.py
+│   ├── test_llm.py
+│   └── test_login.py
+├── test_agent_responsibility_lock.py
+├── test_ai_analyzer_graph.py
+├── test_collector_scheduler.py
+├── test_console_access.js
+├── test_data_semantic_layer.py
+├── test_deterministic_graph.py
+├── test_ecommerce_closed_loop.py
+├── test_ecommerce_closed_loop_simple.py
+├── test_ecommerce_graph.py
+├── test_ecommerce_graph_fixed.py
+├── test_final_acceptance.py
+├── test_full_chain.py
+├── test_graph_api.py
+├── test_graph_canvas.html
+├── test_llm_minimal.py
+├── test_log_state.py
+├── test_log_state_integration.py
+├── test_log_state_simple.py
+├── test_new_agent_interface.py
+├── test_simple_ai_analyzer.py
+├── test_simple_chain.py
+├── test_state_patch.py
+├── test_state_patch_final.py
+├── test_state_patch_simple.py
+├── test_trace_functionality.py
+├── test_trace_simple.py
+├── test_trace_system.py
+├── test_trace_viewer_implementation.md
+├── test_ui_implementation.js
+└── validate_nova_graph_ai_stability.py
+
+3 directories, 75 files

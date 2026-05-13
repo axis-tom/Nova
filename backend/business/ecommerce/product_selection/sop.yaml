@@ -1,0 +1,86 @@
+# ============================================================
+# 电商选品分析 SOP 流程定义
+# ============================================================
+# 本 SOP 定义了电商选品分析的标准操作流程，
+# 从数据采集到选品简报生成的全链路自动化。
+# ============================================================
+
+sop_name: "电商选品分析流程"
+sop_id: "ecommerce_product_selection"
+version: "1.0.0"
+description: >
+  电商选品分析的标准操作流程，涵盖数据采集、市场分析、
+  竞品分析、盈利评估和选品简报生成五个步骤。
+  适用于电商运营团队进行新品选品决策。
+
+steps:
+  - name: "数据采集"
+    id: collect_data
+    description: "从指定数据源采集商品、竞品和市场趋势数据"
+    agents:
+      - "market_analyst"
+    type: sequential
+    input_from: null
+    params:
+      data_source: "product_selection_data"
+    output_fields:
+      - "products"
+      - "competitors"
+      - "market_trends"
+
+  - name: "市场分析"
+    id: market_analysis
+    description: "基于采集的数据进行市场趋势分析，识别机会点和风险点"
+    agents:
+      - "market_analyst"
+    type: sequential
+    input_from:
+      - "collect_data.products"
+      - "collect_data.market_trends"
+    params:
+      analysis_type: "market_trends"
+    output_fields:
+      - "market_analysis_result"
+
+  - name: "竞品分析"
+    id: competitor_analysis
+    description: "对竞品数据进行对比分析，评估竞争优势和差异化机会"
+    agents:
+      - "competitor_analyst"
+    type: sequential
+    input_from:
+      - "collect_data.competitors"
+      - "market_analysis.market_analysis_result"
+    params:
+      analysis_type: "competitor_benchmark"
+    output_fields:
+      - "competitor_analysis_result"
+
+  - name: "盈利评估"
+    id: profitability_assessment
+    description: "评估候选商品的盈利能力，计算 ROI 和盈亏平衡点"
+    agents:
+      - "market_analyst"
+    type: sequential
+    input_from:
+      - "collect_data.products"
+      - "competitor_analysis.competitor_analysis_result"
+    params:
+      assessment_type: "roi_analysis"
+    output_fields:
+      - "profitability_result"
+
+  - name: "选品简报生成"
+    id: briefing_generation
+    description: "汇总所有分析结果，生成结构化的 Markdown 格式选品简报"
+    agents:
+      - "briefing_generator"
+    type: sequential
+    input_from:
+      - "market_analysis.market_analysis_result"
+      - "competitor_analysis.competitor_analysis_result"
+      - "profitability_assessment.profitability_result"
+    params:
+      format: "markdown"
+    output_fields:
+      - "briefing"
