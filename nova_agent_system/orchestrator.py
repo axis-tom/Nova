@@ -10,11 +10,18 @@ Orchestrator — 核心调度引擎
 from typing import Dict, Any, List, Optional, TypedDict, Annotated, Sequence
 import json
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
+
+# 加载 .env 文件
+env_path = Path(__file__).resolve().parent.parent / "backend" / "config" / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 from nova_agent_system.web_tools import web_search, scrape_url
 from nova_agent_system.memory_store import MemoryStore
@@ -38,8 +45,8 @@ class AgentState(TypedDict):
 def _get_llm():
     """获取 LLM 实例，优先用环境变量配置"""
     api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ZHIPU_API_KEY")
-    base_url = os.getenv("OPENAI_BASE_URL", "")
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL", "")
+    model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
 
     if os.getenv("ZHIPU_API_KEY"):
         # 智谱
