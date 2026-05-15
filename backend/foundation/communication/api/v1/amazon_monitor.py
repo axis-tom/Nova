@@ -12,7 +12,7 @@ from datetime import datetime
 
 from backend.utils.logger import logger
 
-router = APIRouter(prefix="/amazon", tags=["Amazon 市场监控"])
+router = APIRouter(prefix="", tags=["Amazon 市场监控"])
 
 # ---- 请求/响应模型 ----
 
@@ -102,7 +102,8 @@ async def trigger_monitor(
             }
 
         scheduler = AmazonMonitorScheduler(config=config)
-        result = scheduler.trigger_now(task=request.task)
+        # 使用 async_trigger 避免 FastAPI 事件循环冲突
+        result = await scheduler.async_trigger(task=request.task)
 
         # 缓存结果
         global _last_results, _last_alerts, _last_report

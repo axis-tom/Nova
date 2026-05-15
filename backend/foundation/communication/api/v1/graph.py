@@ -225,7 +225,7 @@ SCENARIO_GRAPHS = {
                     "params": {
                         "task": "expand_keywords",
                         "expand_count": 20,
-                        "include_long_tail": true
+                        "include_long_tail": True
                     }
                 },
                 "next": "product_collection"
@@ -249,7 +249,7 @@ SCENARIO_GRAPHS = {
                     "agent": "review_analyzer",
                     "params": {
                         "task": "analyze_reviews",
-                        "sentiment_analysis": true
+                        "sentiment_analysis": True
                     }
                 },
                 "next": "traffic_analysis"
@@ -261,7 +261,7 @@ SCENARIO_GRAPHS = {
                     "agent": "traffic_analyzer",
                     "params": {
                         "task": "analyze_traffic",
-                        "include_bsr_trend": true
+                        "include_bsr_trend": True
                     }
                 },
                 "next": "opportunity_judgment"

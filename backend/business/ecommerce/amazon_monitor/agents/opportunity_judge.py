@@ -4,9 +4,15 @@
 
 职责：
 1. 综合关键词、商品、评论、流量数据
-2. 计算每个商品/品类的机会评分
+2. 计算每个商品/品类的机会评分（含 Keepa 历史趋势维度）
 3. 生成选品建议和市场报告
-4. 生成预警通知（价格/评分/竞品变动）
+4. 生成预警通知（价格/评分/竞品变动/BSR异动）
+
+评分维度升级（接入 Keepa 后）：
+  - BSR 趋势（improving/stable/declining）→ 判断销量走势
+  - 价格稳定性（90天价格波动率）→ 判断价格风险
+  - 月销量估算（monthlySold）→ 市场规模
+  - 卖家数量（seller_count）→ 竞争激烈程度
 """
 
 from typing import Any, Dict, List, Optional
@@ -17,14 +23,16 @@ from backend.common.core.state import State
 from backend.utils.logger import logger
 
 
-# 机会评分权重
+# 机会评分权重（含 Keepa 历史数据维度）
 SCORE_WEIGHTS = {
-    "bsr_rank": 0.25,       # BSR 排名（越低越好）
-    "rating": 0.20,          # 评分（越高越好）
-    "review_count": 0.15,    # 评论数（越多越好，说明市场验证）
-    "price_competitiveness": 0.15,  # 价格竞争力
-    "sentiment": 0.15,       # 评论情感（正面比例）
-    "demand": 0.10,          # 需求强度（关键词覆盖）
+    "bsr_rank": 0.20,           # BSR 当前排名（越低越好）
+    "bsr_trend": 0.15,          # BSR 趋势（improving > stable > declining）★ Keepa
+    "rating": 0.15,             # 评分（越高越好）
+    "review_count": 0.10,       # 评论数（市场验证度）
+    "monthly_sold": 0.15,       # 月销量估算（市场规模）★ Keepa
+    "price_stability": 0.10,    # 价格稳定性（波动率越低越好）★ Keepa
+    "competition": 0.10,        # 竞争程度（卖家数量）★ Keepa
+    "sentiment": 0.05,          # 评论情感（正面比例）
 }
 
 
@@ -145,27 +153,47 @@ class OpportunityJudgeAgent(Agent):
         sentiment_summary: Dict,
         competitor_comparison: Dict,
     ) -> Dict[str, Any]:
-        """计算单个商品的机会评分（0-100）"""
+        """
+        计算单个商品的机会评分（0-100）
+        
+        优先使用 Keepa 历史数据（bsr_trend / monthly_sold / price_history / seller_count）
+        兼容 PAAPI 纯快照数据（bsr_rank / rating / review_count）
+        """
         scores = {}
+        asin = product.get("asin", "")
 
-        # 1. BSR 评分（BSR 越低分越高）
-        bsr = product.get("bsr_rank")
+        # ── 1. BSR 当前排名评分 ──
+        # 优先用 Keepa 的 current_bsr，兼容 PAAPI 的 bsr_rank
+        bsr = product.get("current_bsr") or product.get("bsr_rank")
         if bsr:
             if bsr <= 100:
                 scores["bsr_rank"] = 100
             elif bsr <= 1000:
-                scores["bsr_rank"] = 80
-            elif bsr <= 10000:
-                scores["bsr_rank"] = 60
+                scores["bsr_rank"] = 85
+            elif bsr <= 5000:
+                scores["bsr_rank"] = 70
+            elif bsr <= 20000:
+                scores["bsr_rank"] = 55
             elif bsr <= 100000:
-                scores["bsr_rank"] = 40
+                scores["bsr_rank"] = 35
             else:
-                scores["bsr_rank"] = 20
+                scores["bsr_rank"] = 15
         else:
-            scores["bsr_rank"] = 30  # 无 BSR 数据给中等分
+            scores["bsr_rank"] = 30
 
-        # 2. 评分评分
-        rating = product.get("rating", 0)
+        # ── 2. BSR 趋势评分（★ Keepa 专属） ──
+        bsr_trend = product.get("bsr_trend", "unknown")
+        if bsr_trend == "improving":
+            scores["bsr_trend"] = 100   # BSR 持续下降 = 销量增长
+        elif bsr_trend == "stable":
+            scores["bsr_trend"] = 65    # 稳定
+        elif bsr_trend == "declining":
+            scores["bsr_trend"] = 20    # BSR 上升 = 销量下滑
+        else:
+            scores["bsr_trend"] = 50    # 无历史数据，中性
+
+        # ── 3. 评分评分 ──
+        rating = product.get("rating") or 0
         if rating >= 4.5:
             scores["rating"] = 100
         elif rating >= 4.0:
@@ -177,8 +205,8 @@ class OpportunityJudgeAgent(Agent):
         else:
             scores["rating"] = 20
 
-        # 3. 评论数评分（市场验证度）
-        review_count = product.get("review_count", 0)
+        # ── 4. 评论数评分（市场验证度） ──
+        review_count = product.get("review_count") or 0
         if review_count >= 10000:
             scores["review_count"] = 100
         elif review_count >= 1000:
@@ -190,47 +218,79 @@ class OpportunityJudgeAgent(Agent):
         else:
             scores["review_count"] = 20
 
-        # 4. 价格竞争力（相对市场均价）
-        price = product.get("price")
-        cat = product.get("category", "")
-        cat_data = competitor_comparison.get(cat, {})
-        avg_cat_price = cat_data.get("avg_price")
-        if price and avg_cat_price:
-            ratio = price / avg_cat_price
-            if 0.7 <= ratio <= 1.1:
-                scores["price_competitiveness"] = 90  # 价格合理
-            elif 0.5 <= ratio < 0.7:
-                scores["price_competitiveness"] = 70  # 价格偏低（可能质量问题）
-            elif 1.1 < ratio <= 1.3:
-                scores["price_competitiveness"] = 70  # 价格偏高（有溢价空间）
-            else:
-                scores["price_competitiveness"] = 50
+        # ── 5. 月销量估算评分（★ Keepa 专属） ──
+        monthly_sold = product.get("monthly_sold") or 0
+        if monthly_sold >= 5000:
+            scores["monthly_sold"] = 100
+        elif monthly_sold >= 1000:
+            scores["monthly_sold"] = 80
+        elif monthly_sold >= 300:
+            scores["monthly_sold"] = 60
+        elif monthly_sold >= 50:
+            scores["monthly_sold"] = 40
+        elif monthly_sold > 0:
+            scores["monthly_sold"] = 20
         else:
-            scores["price_competitiveness"] = 60
+            # 无 Keepa 数据，用 BSR 推算（BSR 越低，销量越高）
+            scores["monthly_sold"] = max(20, scores["bsr_rank"] * 0.6)
 
-        # 5. 情感评分
-        asin = product.get("asin", "")
+        # ── 6. 价格稳定性评分（★ Keepa 专属） ──
+        min_price = product.get("min_price_90d")
+        max_price = product.get("max_price_90d")
+        avg_price = product.get("avg_price_90d") or product.get("current_price")
+        
+        if min_price and max_price and avg_price and avg_price > 0:
+            # 价格波动率 = (max - min) / avg
+            volatility = (max_price - min_price) / avg_price
+            if volatility <= 0.05:
+                scores["price_stability"] = 100   # 极稳定（波动 <5%）
+            elif volatility <= 0.15:
+                scores["price_stability"] = 80    # 稳定（波动 <15%）
+            elif volatility <= 0.30:
+                scores["price_stability"] = 60    # 一般（波动 <30%）
+            elif volatility <= 0.50:
+                scores["price_stability"] = 40    # 不稳定
+            else:
+                scores["price_stability"] = 20    # 价格战激烈
+        else:
+            scores["price_stability"] = 60        # 无历史数据，中性
+
+        # ── 7. 竞争程度评分（★ Keepa 专属：卖家数量） ──
+        seller_count = product.get("seller_count") or 0
+        if seller_count == 0:
+            scores["competition"] = 60            # 无数据，中性
+        elif seller_count <= 3:
+            scores["competition"] = 90            # 竞争极少
+        elif seller_count <= 10:
+            scores["competition"] = 75            # 竞争较少
+        elif seller_count <= 30:
+            scores["competition"] = 55            # 竞争一般
+        elif seller_count <= 100:
+            scores["competition"] = 35            # 竞争激烈
+        else:
+            scores["competition"] = 15            # 红海市场
+
+        # ── 8. 情感评分 ──
         review_insight = review_map.get(asin)
         if review_insight:
             positive_pct = review_insight.get("sentiment_positive_pct", 0)
             scores["sentiment"] = min(100, positive_pct)
         else:
-            # 使用整体情感均值
             scores["sentiment"] = sentiment_summary.get("avg_positive_pct", 60)
 
-        # 6. 需求强度（基于评论数和 BSR 综合）
-        demand_score = (scores["review_count"] + scores["bsr_rank"]) / 2
-        scores["demand"] = demand_score
-
-        # 加权总分
+        # ── 加权总分 ──
         total_score = sum(
             scores.get(key, 0) * weight
             for key, weight in SCORE_WEIGHTS.items()
         )
 
+        # ── 生成评分说明 ──
+        highlights = self._score_highlights(product, scores)
+
         return {
             "total_score": round(total_score, 1),
             "score_detail": scores,
+            "score_highlights": highlights,
             "score_grade": (
                 "A" if total_score >= 80 else
                 "B" if total_score >= 70 else
@@ -238,6 +298,39 @@ class OpportunityJudgeAgent(Agent):
                 "D"
             ),
         }
+
+    def _score_highlights(self, product: Dict, scores: Dict) -> List[str]:
+        """生成评分亮点说明"""
+        highlights = []
+        
+        bsr_trend = product.get("bsr_trend", "unknown")
+        if bsr_trend == "improving":
+            highlights.append("📈 BSR持续改善（销量增长趋势）")
+        elif bsr_trend == "declining":
+            highlights.append("📉 BSR上升（销量下滑风险）")
+        
+        monthly_sold = product.get("monthly_sold") or 0
+        if monthly_sold >= 1000:
+            highlights.append(f"🔥 月销量约 {monthly_sold:,} 件")
+        
+        min_p = product.get("min_price_90d")
+        max_p = product.get("max_price_90d")
+        avg_p = product.get("avg_price_90d")
+        if min_p and max_p and avg_p and avg_p > 0:
+            vol = (max_p - min_p) / avg_p * 100
+            if vol <= 10:
+                highlights.append(f"💰 价格稳定（90天波动 {vol:.0f}%）")
+            elif vol >= 40:
+                highlights.append(f"⚠️ 价格波动大（90天波动 {vol:.0f}%）")
+        
+        seller_count = product.get("seller_count") or 0
+        if seller_count > 0:
+            if seller_count <= 5:
+                highlights.append(f"✅ 竞争少（仅 {seller_count} 个卖家）")
+            elif seller_count >= 50:
+                highlights.append(f"🔴 竞争激烈（{seller_count} 个卖家）")
+        
+        return highlights
 
     def _build_opportunities(
         self,

@@ -28,9 +28,9 @@ class AmazonReviewAnalyzerAgent(Agent):
     name = "review_analyzer"
     description = "Amazon 评论分析 Agent，提取用户需求和情感洞察"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         """
-        执行评论分析（同步入口）
+        执行评论分析（异步入口，与 product_collector 保持一致）
 
         输入（从 state 读取）：
           - collected_products: List[dict] 采集到的商品列表
@@ -43,19 +43,7 @@ class AmazonReviewAnalyzerAgent(Agent):
         """
         state.add_event("review_analyzer_start")
         logger.info("[ReviewAnalyzer] Starting review analysis")
-
-        try:
-            result = asyncio.get_event_loop().run_until_complete(
-                self._async_run(state)
-            )
-            return result
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(self._async_run(state))
-            finally:
-                loop.close()
+        return await self._async_run(state)
 
     async def _async_run(self, state: State) -> State:
         """异步执行评论分析"""

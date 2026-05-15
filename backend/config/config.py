@@ -43,6 +43,25 @@ class Settings(BaseSettings):
     # 本地模型缓存路径
     MODEL_STORAGE_PATH: str = "data/models"
 
+    # Amazon Product Advertising API 5.0
+    AMAZON_ACCESS_KEY: Optional[str] = None
+    AMAZON_SECRET_KEY: Optional[str] = None
+    AMAZON_ASSOCIATE_TAG: Optional[str] = None
+    AMAZON_PARTNER_TYPE: str = "Associates"
+    AMAZON_MARKETPLACE: str = "www.amazon.com"
+    AMAZON_MAX_RETRY: int = 3
+    AMAZON_CACHE_TTL_HOURS: int = 24
+
+    # Keepa API
+    KEEPA_API_KEY: Optional[str] = None
+
+    # Keepa Token 消耗控制
+    KEEPA_PRICE_MONITOR_INTERVAL_HOURS: int = 6    # 价格监控间隔（小时）
+    KEEPA_BSR_MONITOR_INTERVAL_HOURS: int = 24     # BSR 监控间隔（小时）
+    KEEPA_MAX_KEYWORDS_PER_RUN: int = 5            # 每次最多搜索关键词数
+    KEEPA_MAX_ASINS_PER_QUERY: int = 20            # 每次最多查询 ASIN 数
+    KEEPA_DEAL_MAX_RESULTS: int = 30               # Deal API 每次最多返回数量
+
     class Config:
         env_file = Path(__file__).resolve().parent / ".env"
         env_file_encoding = "utf-8"

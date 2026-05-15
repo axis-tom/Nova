@@ -49,3 +49,7 @@ bcrypt==3.2.2
 
 # 定时任务调度
 APScheduler==3.10.4
+
+# Keepa 亚马逊历史数据 SDK
+keepa>=2.0.0
+pandas>=2.0.0
