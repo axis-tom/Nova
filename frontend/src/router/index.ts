@@ -16,6 +16,7 @@ const Register = () => import('@/interface/views/Register.vue')
 const Console = () => import('@/interface/components/workspace/Console.vue')
 const TraceView = () => import('@/interface/views/TraceView.vue')
 const Workspace = () => import('@/interface/components/workspace/Workspace.vue')
+const AgentChat = () => import('@/interface/views/AgentChat.vue')
 
 const routes = [
   { path: '/', redirect: '/workspace' },
@@ -35,6 +36,7 @@ const routes = [
   { path: '/console', name: 'Console', component: Console, meta: { requiresAuth: true, title: 'AI控制台' } },
   { path: '/trace', name: 'TraceView', component: TraceView, meta: { requiresAuth: true, title: 'Trace查看器' } },
   { path: '/workspace', name: 'Workspace', component: Workspace, meta: { requiresAuth: true, title: 'AI工作台', layout: 'blank' } },
+  { path: '/agent-chat', name: 'AgentChat', component: AgentChat, meta: { requiresAuth: true, title: 'Agent 对话' } },
 ]
 
 const router = createRouter({

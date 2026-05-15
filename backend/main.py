@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from backend.foundation.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.foundation.communication.api.v1 import models, tree, amazon_monitor
+from backend.foundation.communication.api.v1 import models, tree, amazon_monitor, agent_chat
 from backend.foundation.communication.api.v1 import router as api_router
 from backend.config.config import settings
 from backend.foundation.communication.message_bus import message_bus
@@ -74,10 +74,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start data collection scheduler: {e}")
     
+    # 启动 Amazon 市场监控调度器
+    try:
+        from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
+        amazon_scheduler = get_monitor_scheduler()
+        amazon_scheduler.start()
+        logger.info("Amazon market monitor scheduler started")
+    except Exception as e:
+        logger.error(f"Failed to start Amazon monitor scheduler: {e}")
+    
     yield  # 应用运行期间
     
     # 关闭时
     logger.info("Shutting down Nova backend...")
+    
+    # 停止 Amazon 市场监控调度器
+    try:
+        from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
+        amazon_scheduler = get_monitor_scheduler()
+        amazon_scheduler.stop()
+        logger.info("Amazon market monitor scheduler stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Amazon monitor scheduler: {e}")
     
     # 停止数据采集调度器
     try:
@@ -136,6 +154,9 @@ app.include_router(trace.router, prefix=f"{settings.API_V1_PREFIX}/trace", tags=
 
 # 注册Amazon Monitor API路由 - 亚马逊市场监控
 app.include_router(amazon_monitor.router, prefix=f"{settings.API_V1_PREFIX}/amazon-monitor", tags=["Amazon 市场监控"])
+
+# 注册Agent Chat API路由 - 智能体对话（SSE流式）
+app.include_router(agent_chat.router, prefix=settings.API_V1_PREFIX, tags=["Agent 对话"])
 
 
 # 健康检查端点

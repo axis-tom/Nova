@@ -19,3 +19,18 @@ frontend/dist/
 __pycache__/
 *.pyc
 *.gif
+
+# Python venv & 本地工具
+.venv/
+.python-version
+
+# 本地 ChromaDB 嵌入数据（不进仓库）
+nova_memory/
+
+# 本地路线图与方案文档（本地保留）
+plan/
+docs/mvp_plan.md
+
+# 本地测试脚本与数据
+test/amazon_products.csv
+test/collect_amazon_products.py

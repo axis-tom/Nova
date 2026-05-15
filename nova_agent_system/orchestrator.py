@@ -8,8 +8,11 @@ Orchestrator — 核心调度引擎
 """
 
 from typing import Dict, Any, List, Optional, TypedDict, Annotated, Sequence
+from contextvars import ContextVar
 import json
 import os
+import uuid
+import asyncio
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -26,9 +29,14 @@ if env_path.exists():
 from nova_agent_system.web_tools import web_search, scrape_url
 from nova_agent_system.memory_store import MemoryStore
 from nova_agent_system.agent_wrapper import call_agent, list_agents
+from nova_agent_system.db_retriever import query_database as db_query
+from nova_agent_system.session_store import session_store
 
 # ── 全局记忆实例 ──
 memory = MemoryStore()
+
+# ── 会话上下文（同一 ReAct 循环内的 tool 通过此读取当前 conversation_id） ──
+conv_id_var: ContextVar[Optional[str]] = ContextVar("conv_id_var", default=None)
 
 # ── 状态定义 ──
 
@@ -81,48 +89,79 @@ async def search_web(query: str) -> str:
 
 @tool
 async def search_memory(query: str) -> str:
-    """搜索历史记忆。当你需要回忆之前的对话内容或之前搜索过的知识时使用。"""
-    results = memory.search_knowledge(query, k=3)
+    """搜索历史记忆。当你需要回忆之前的对话内容、Agent 分析结果或之前搜索过的知识时使用。"""
+    # 跨 collection 统一搜索
+    results = memory.search_all(query, k=5)
     if not results:
         return "未找到相关历史记录"
     lines = []
     for r in results:
-        lines.append(f"[{r['metadata'].get('timestamp', '')}] {r['content'][:500]}")
+        meta = r['metadata']
+        source_type = meta.get('type', meta.get('source', 'unknown'))
+        lines.append(f"[{meta.get('timestamp', '')}] ({source_type}) {r['content'][:500]}")
     return "\n\n".join(lines)
+
+
+@tool
+async def query_db(natural_query: str) -> str:
+    """
+    查询 Nova 数据库中的结构化数据。当你需要查看数据库中的表结构、用户数据、项目数据、对话记录等内部信息时使用。
+    
+    Args:
+        natural_query: 自然语言查询描述，例如 "列出所有表"、"查看 users 表的结构"、"查询 projects 表的前 10 条数据"
+    """
+    return await db_query(natural_query)
 
 
 @tool
 async def call_nova_agent(agent_name: str, params_json: str) -> str:
     """
     调用 Nova 的 Amazon 业务 Agent 执行特定分析任务。
-    
+
     Args:
-        agent_name: Agent 名称，可选值: product_collector, opportunity_judge, review_analyzer, 
-                   traffic_analyzer, keyword_expander, market_analyst, competitor_analyst, briefing_generator
-        params_json: JSON 格式的参数，例如 {"keywords": ["bluetooth earbuds"], "max_results": 10}
+        agent_name: Agent 名称，可选值: keyword_expander, product_collector, review_analyzer,
+                   traffic_analyzer, opportunity_judge, market_analyst, competitor_analyst, briefing_generator
+        params_json: JSON 格式的参数，例如 {"expanded_keywords": ["bluetooth earbuds"], "max_results_per_keyword": 10}
+                    下游 Agent（review_analyzer/traffic_analyzer/opportunity_judge）可传 {}，
+                    它们会从同一会话的 session state 中读取上游 Agent 产出的字段
     """
     try:
-        params = json.loads(params_json)
+        params = json.loads(params_json) if params_json.strip() else {}
     except json.JSONDecodeError:
         return f"参数格式错误，需要 JSON 格式: {params_json}"
-    
-    result = await call_agent(agent_name, params)
+
+    # 从 ContextVar 获取会话 id；没有就开一个 ephemeral session
+    conv_id = conv_id_var.get() or f"ephemeral-{uuid.uuid4()}"
+    state = session_store.get_or_create(conv_id)
+
+    result = await call_agent(agent_name, params, state=state)
+
     output = result.get("result", "")
     if isinstance(output, list):
-        # 结构化数据转文本
+        # 结构化数据转文本，截断防止 LLM 上下文爆炸
         if len(output) > 5:
             output = output[:5]
         output = json.dumps(output, ensure_ascii=False, indent=2)
     elif isinstance(output, dict):
         output = json.dumps(output, ensure_ascii=False, indent=2)
-    
-    return f"Agent [{agent_name}] 执行结果:\n{output}"
+
+    # 给 LLM 附加一段 session_state 摘要，便于它判断是否还需继续调用上游 Agent
+    state_keys = session_store.snapshot_keys(conv_id) or []
+    interesting_keys = [
+        k for k in state_keys
+        if k in ("expanded_keywords", "collected_products", "review_insights",
+                 "sentiment_summary", "customer_needs", "traffic_insights",
+                 "competitor_comparison", "keyword_groups", "market_report")
+    ]
+    state_hint = f"\n\n[会话 state 已有字段: {', '.join(interesting_keys) or '(空)'}]"
+
+    return f"Agent [{agent_name}] 执行结果:\n{output}{state_hint}"
 
 
 # ── 构建工具列表 ──
 
 def get_tools():
-    return [search_web, search_memory, call_nova_agent]
+    return [search_web, search_memory, query_db, call_nova_agent]
 
 
 # ── 图节点 ──
@@ -145,9 +184,33 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 
     # 构建系统提示
     agents_info = list_agents()
-    agents_desc = "\n".join(
-        f"  - {a['name']}: {a['description']}" for a in agents_info
-    )
+    agents_desc_lines = []
+    pipeline_lines = []
+    for a in agents_info:
+        ups = a.get("requires_upstream", [])
+        ups_str = f"  ← 依赖: {', '.join(ups)}" if ups else ""
+        agents_desc_lines.append(
+            f"  - {a['name']}: {a['description']}\n      input_example: {a['input_example']}{ups_str}"
+        )
+        if ups:
+            pipeline_lines.append(f"  - {a['name']} 之前必须先调: {' → '.join(ups)}")
+    agents_desc = "\n".join(agents_desc_lines)
+    pipeline_desc = "\n".join(pipeline_lines) if pipeline_lines else "  (无)"
+
+    # 注入相关历史记忆
+    memory_context = ""
+    try:
+        user_msg = state["messages"][0]["content"] if state["messages"] else ""
+        if user_msg:
+            relevant = memory.search_all(user_msg, k=3)
+            if relevant:
+                mem_lines = []
+                for r in relevant:
+                    meta = r['metadata']
+                    mem_lines.append(f"- [{meta.get('timestamp', '')}] {r['content'][:200]}")
+                memory_context = "\n相关历史记忆:\n" + "\n".join(mem_lines)
+    except Exception:
+        pass  # 记忆注入失败不影响主流程
 
     system_prompt = f"""你是一个 Amazon 电商智能助手，负责帮助用户分析市场、选品、监控竞品。
 
@@ -155,22 +218,36 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 
 1. search_web(query) — 搜索互联网获取最新行业信息、新闻、趋势
 2. search_memory(query) — 搜索历史记忆，回顾之前的分析结果
-3. call_nova_agent(agent_name, params_json) — 调用 Nova 的 Amazon 业务 Agent
+3. query_db(natural_query) — 查询 Nova 数据库中的结构化数据（表结构、用户数据等）
+4. call_nova_agent(agent_name, params_json) — 调用 Nova 的 Amazon 业务 Agent
 
-可调用的 Agent：
+可调用的 Agent（input_example 字段是真实需要传的 JSON 字段名，必须严格遵守）：
 {agents_desc}
+
+**关键：Agent 流水线依赖**（必须按顺序调用，下游 Agent 会从同一会话 state 自动读取上游产出）：
+{pipeline_desc}
+
+例：用户问"分析蓝牙耳机市场机会"，正确的调用顺序：
+  1. call_nova_agent("product_collector", '{{"expanded_keywords":["bluetooth earbuds"], "max_results_per_keyword":10}}')
+  2. call_nova_agent("review_analyzer", '{{}}')       # 从 state 自动拿 collected_products
+  3. call_nova_agent("traffic_analyzer", '{{}}')      # 同上
+  4. call_nova_agent("opportunity_judge", '{{}}')     # 从 state 自动拿全部上游产出
+错误示例：直接调 opportunity_judge 会拿不到数据。
 
 工作流程：
 1. 先理解用户意图
-2. 如果需要最新信息，先 search_web
-3. 如果需要分析 Amazon 商品数据，调 call_nova_agent
-4. 如果需要回顾历史，调 search_memory
-5. 汇总所有结果，给用户完整的回答
+2. 如果需要最新行业信息，先 search_web
+3. 如果需要查看数据库已有数据，调 query_db
+4. 如果需要分析 Amazon 商品数据，按上面的流水线依赖**依次**调 call_nova_agent
+5. 如果需要回顾历史，调 search_memory
+6. 汇总所有结果，给用户结构化的中文回答
 
 注意：
 - 搜索时用英文关键词效果更好
-- 调 Agent 时 params_json 必须是合法 JSON
-- 最终回答要结构化、清晰，用中文"""
+- 调 Agent 时 params_json 必须是合法 JSON，字段名严格按 input_example
+- 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
+- 最终回答要结构化、清晰，用中文，列出关键数据和建议
+{memory_context}"""
 
     # 转换消息格式
     langchain_messages = [SystemMessage(content=system_prompt)]
@@ -218,8 +295,21 @@ async def execute_tools(state: AgentState) -> Dict[str, Any]:
                 result = await search_web.ainvoke(tool_args)
             elif tool_name == "search_memory":
                 result = await search_memory.ainvoke(tool_args)
+            elif tool_name == "query_db":
+                result = await query_db.ainvoke(tool_args)
             elif tool_name == "call_nova_agent":
                 result = await call_nova_agent.ainvoke(tool_args)
+                # Agent 输出自动保存到记忆
+                try:
+                    agent_name = tool_args.get("agent_name", "unknown")
+                    memory.save_memory(
+                        content=f"Agent [{agent_name}] 分析结果:\n{result[:1000]}",
+                        importance=7,
+                        tags=f"agent_output,{agent_name}",
+                        source=agent_name,
+                    )
+                except Exception:
+                    pass
             else:
                 result = f"未知工具: {tool_name}"
         except Exception as e:
@@ -262,39 +352,127 @@ def build_graph():
     return workflow.compile()
 
 
-# ── 主入口 ──
+# ── 主入口（普通模式） ──
 
-async def run_orchestrator(user_input: str) -> str:
+async def run_orchestrator(user_input: str, conversation_id: Optional[str] = None) -> str:
     """
     运行 orchestrator，处理用户输入
 
     Args:
         user_input: 用户输入文本
+        conversation_id: 会话 id；同一 conv_id 的多次调用共享 SessionStore 中的 State，
+                         使 Nova 流水线 Agent 能正常串起来。未传则生成临时 uuid。
 
     Returns:
         最终回答
     """
-    graph = build_graph()
+    conv_id = conversation_id or f"ephemeral-{uuid.uuid4()}"
+    token = conv_id_var.set(conv_id)
+    try:
+        graph = build_graph()
 
-    initial_state: AgentState = {
-        "messages": [{"role": "user", "content": user_input}],
-        "user_input": user_input,
-        "final_response": None,
-        "tool_results": [],
-    }
+        initial_state: AgentState = {
+            "messages": [{"role": "user", "content": user_input}],
+            "user_input": user_input,
+            "final_response": None,
+            "tool_results": [],
+        }
 
-    # 执行图
-    final_state = await graph.ainvoke(initial_state)
+        final_state = await graph.ainvoke(initial_state)
 
-    # 提取最终回答
-    for msg in reversed(final_state["messages"]):
-        if msg["role"] == "assistant" and msg.get("content"):
-            final_response = msg["content"]
-            break
-    else:
+        # 提取最终回答
         final_response = "处理完成，但未能生成回答。"
+        for msg in reversed(final_state["messages"]):
+            if msg["role"] == "assistant" and msg.get("content"):
+                final_response = msg["content"]
+                break
 
-    # 保存到记忆
-    memory.save_chat(user_input, final_response)
+        # 保存到记忆（带重要性评分）
+        memory.save_chat(user_input, final_response, metadata={"importance": 6, "tags": "user_query", "conversation_id": conv_id})
 
-    return final_response
+        return final_response
+    finally:
+        conv_id_var.reset(token)
+
+
+# ── 主入口（流式模式，支持 SSE） ──
+
+
+async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str] = None):
+    """
+    流式运行 orchestrator，逐事件 yield 供 SSE 推送
+
+    Args:
+        user_input: 用户输入
+        conversation_id: 会话 id；同一会话内多次调用共享 SessionStore State
+
+    Yields:
+        dict: 事件对象，包含 type 和 data
+    """
+    conv_id = conversation_id or f"ephemeral-{uuid.uuid4()}"
+    token = conv_id_var.set(conv_id)
+    try:
+        graph = build_graph()
+
+        initial_state: AgentState = {
+            "messages": [{"role": "user", "content": user_input}],
+            "user_input": user_input,
+            "final_response": None,
+            "tool_results": [],
+        }
+
+        yield {"type": "status", "data": "🤖 开始分析..."}
+
+        # 单次 astream 既驱动执行又采集事件；最终回答从 agent 节点的最后一条 assistant 消息提取
+        final_response = ""
+        async for event in graph.astream(initial_state):
+            node_name = list(event.keys())[0]
+            state_data = event[node_name]
+
+            if node_name == "action":
+                # 工具执行阶段
+                for msg in state_data.get("messages", []):
+                    if isinstance(msg, dict) and msg.get("role") == "tool":
+                        tool_name = msg.get("name", "unknown")
+                        yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
+            elif node_name == "agent":
+                # LLM 返回阶段
+                for msg in state_data.get("messages", []):
+                    if not isinstance(msg, dict):
+                        continue
+                    if msg.get("tool_calls"):
+                        for tc in msg["tool_calls"]:
+                            yield {
+                                "type": "tool_call",
+                                "data": {
+                                    "name": tc["name"],
+                                    "args": tc["args"],
+                                    "id": tc.get("id", str(uuid.uuid4())),
+                                },
+                            }
+                    elif msg.get("role") == "assistant" and msg.get("content"):
+                        # 最后无 tool_calls 的 assistant content 即最终回答
+                        final_response = msg["content"]
+
+        if not final_response:
+            final_response = "处理完成，但未能生成回答。"
+
+        # 流式输出最终回答（按句/段分块）
+        yield {"type": "start_response", "data": ""}
+        import re
+        chunks = re.split(r'(?<=[。！？\n])', final_response)
+        for chunk in chunks:
+            if chunk.strip():
+                yield {"type": "response_chunk", "data": chunk}
+                await asyncio.sleep(0.02)
+
+        yield {"type": "done", "data": ""}
+
+        # 保存到记忆
+        memory.save_chat(
+            user_input,
+            final_response,
+            metadata={"importance": 6, "tags": "user_query", "conversation_id": conv_id},
+        )
+    finally:
+        conv_id_var.reset(token)

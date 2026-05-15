@@ -1,0 +1,713 @@
+<template>
+  <div class="agent-chat">
+    <el-container class="chat-layout">
+      <!-- 左侧：聊天区域 -->
+      <el-main class="chat-main">
+        <!-- 消息列表 -->
+        <div class="messages" ref="messagesRef" v-loading="isLoading">
+          <!-- 空状态 -->
+          <div v-if="messages.length === 0 && !isLoading" class="empty-state">
+            <el-empty description="开始与 Nova Agent 对话" />
+          </div>
+
+          <!-- 消息 -->
+          <div v-for="msg in messages" :key="msg.id" class="message-wrapper">
+            <!-- 用户消息 -->
+            <div v-if="msg.role === 'user'" class="message user">
+              <div class="avatar">👤</div>
+              <div class="bubble user-bubble">
+                <div class="content" v-html="renderMarkdown(msg.content)"></div>
+              </div>
+            </div>
+
+            <!-- Assistant 消息 -->
+            <div v-else-if="msg.role === 'assistant'" class="message assistant">
+              <div class="avatar">🤖</div>
+              <div class="bubble assistant-bubble">
+                <div class="content" v-html="renderMarkdown(msg.content)"></div>
+                <div class="message-meta">
+                  <span v-if="msg.tokenUsage" class="token-usage">
+                    ⚡ {{ msg.tokenUsage }} tokens
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 工具调用提示 -->
+            <div v-else-if="msg.role === 'tool'" class="message tool">
+              <div class="tool-badge">🔧 {{ msg.toolName || '工具' }}</div>
+              <div v-if="msg.content" class="tool-result">
+                <pre>{{ msg.content.slice(0, 300) }}{{ msg.content.length > 300 ? '...' : '' }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- 流式输出中的当前消息 -->
+          <div v-if="streamingContent" class="message assistant">
+            <div class="avatar">🤖</div>
+            <div class="bubble assistant-bubble streaming">
+              <div class="content" v-html="renderMarkdown(streamingContent)"></div>
+              <div class="cursor-blink">▍</div>
+            </div>
+          </div>
+
+          <!-- 状态提示 -->
+          <div v-if="currentStatus && !streamingContent" class="status-indicator">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            {{ currentStatus }}
+          </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="input-area">
+          <div class="input-wrapper">
+            <el-input
+              v-model="inputText"
+              type="textarea"
+              :rows="2"
+              placeholder="输入你的问题，例如：分析蓝牙耳机市场趋势..."
+              :disabled="isSending"
+              @keydown.enter.prevent="handleEnter"
+              @keydown.shift.enter="handleShiftEnter"
+            />
+            <div class="input-actions">
+              <el-button
+                v-if="isSending"
+                type="danger"
+                plain
+                :icon="Close"
+                @click="cancelStream"
+              >
+                停止
+              </el-button>
+              <el-button
+                v-else
+                type="primary"
+                :disabled="!inputText.trim()"
+                @click="sendMessage"
+              >
+                发送
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </el-main>
+
+      <!-- 右侧：工具轨迹面板 -->
+      <el-aside width="360px" class="trace-panel">
+        <div class="trace-header">
+          <h3><el-icon><Monitor /></el-icon> 工具执行轨迹</h3>
+          <el-button
+            v-if="traceLogs.length > 0"
+            link
+            size="small"
+            @click="clearTrace"
+          >
+            清空
+          </el-button>
+        </div>
+
+        <div class="trace-content">
+          <!-- 空状态 -->
+          <div v-if="traceLogs.length === 0" class="trace-empty">
+            <el-empty description="暂无工具调用记录" :image-size="60" />
+          </div>
+
+          <!-- 轨迹时间线 -->
+          <div v-else class="trace-timeline">
+            <div
+              v-for="(log, index) in traceLogs"
+              :key="index"
+              class="trace-item"
+              :class="log.type"
+            >
+              <div class="trace-dot">
+                <el-icon v-if="log.type === 'tool_call'"><Cpu /></el-icon>
+                <el-icon v-else-if="log.type === 'tool_result'"><Select /></el-icon>
+                <el-icon v-else-if="log.type === 'error'"><WarningFilled /></el-icon>
+                <el-icon v-else><InfoFilled /></el-icon>
+              </div>
+              <div class="trace-body">
+                <div class="trace-title">{{ log.title }}</div>
+                <div v-if="log.detail" class="trace-detail">
+                  <pre>{{ log.detail }}</pre>
+                </div>
+                <div v-if="log.args" class="trace-args">
+                  <el-collapse accordion>
+                    <el-collapse-item title="查看参数" name="1">
+                      <pre>{{ JSON.stringify(log.args, null, 2) }}</pre>
+                    </el-collapse-item>
+                  </el-collapse>
+                </div>
+                <div class="trace-time">{{ formatTime(log.timestamp) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-aside>
+    </el-container>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, nextTick, onBeforeUnmount } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Loading, Close, Monitor, Cpu, Select, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
+import { streamChat, type SSEEvent, type ToolCallData } from '@/api/agentChat'
+
+// ── 消息类型 ──
+
+interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'tool'
+  content: string
+  createdAt: string
+  toolName?: string
+  tokenUsage?: number
+}
+
+interface TraceLog {
+  type: 'status' | 'tool_call' | 'tool_result' | 'error'
+  title: string
+  detail?: string
+  args?: Record<string, unknown>
+  timestamp: number
+}
+
+// ── 状态 ──
+
+const messages = ref<ChatMessage[]>([])
+const inputText = ref('')
+const isSending = ref(false)
+const isLoading = ref(false)
+const streamingContent = ref('')
+const currentStatus = ref('')
+const traceLogs = ref<TraceLog[]>([])
+const conversationId = ref('')
+
+let abortController: AbortController | null = null
+let msgCounter = 0
+
+const messagesRef = ref<HTMLElement | null>(null)
+
+// ── 核心方法 ──
+
+function sendMessage() {
+  const content = inputText.value.trim()
+  if (!content || isSending.value) return
+
+  // 添加用户消息
+  messages.value.push({
+    id: `msg-${++msgCounter}`,
+    role: 'user',
+    content,
+    createdAt: new Date().toISOString(),
+  })
+  inputText.value = ''
+  isSending.value = true
+  streamingContent.value = ''
+  currentStatus.value = '🤖 开始分析...'
+
+  scrollToBottom()
+
+  // 发起 SSE 请求
+  abortController = streamChat(
+    content,
+    conversationId.value || undefined,
+    handleSSEEvent,
+  )
+}
+
+function handleSSEEvent(event: SSEEvent) {
+  const { type, data, conversation_id } = event
+  conversationId.value = conversation_id
+
+  switch (type) {
+    case 'status':
+      currentStatus.value = data as string
+      addTraceLog('status', data as string)
+      break
+
+    case 'tool_call': {
+      const tc = data as unknown as ToolCallData
+      currentStatus.value = `🔧 调用 ${tc.name}...`
+      addTraceLog('tool_call', `调用工具: ${tc.name}`, tc.args)
+      break
+    }
+
+    case 'tool_result':
+      currentStatus.value = data as string
+      addTraceLog('tool_result', data as string)
+      break
+
+    case 'start_response':
+      currentStatus.value = ''
+      streamingContent.value = ''
+      break
+
+    case 'response_chunk':
+      streamingContent.value += (data as string)
+      scrollToBottom()
+      break
+
+    case 'done':
+      // 完成，将流式内容转为正式消息
+      if (streamingContent.value) {
+        messages.value.push({
+          id: `msg-${++msgCounter}`,
+          role: 'assistant',
+          content: streamingContent.value,
+          createdAt: new Date().toISOString(),
+          tokenUsage: undefined,
+        })
+        streamingContent.value = ''
+      }
+      isSending.value = false
+      currentStatus.value = ''
+      abortController = null
+      scrollToBottom()
+      break
+
+    case 'error':
+      ElMessage.error(data as string)
+      isSending.value = false
+      currentStatus.value = ''
+      abortController = null
+      break
+  }
+}
+
+function cancelStream() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
+  isSending.value = false
+  currentStatus.value = '已取消'
+  streamingContent.value = ''
+}
+
+// ── 轨迹面板 ──
+
+function addTraceLog(type: TraceLog['type'], title: string, args?: Record<string, unknown>) {
+  traceLogs.value.push({
+    type,
+    title,
+    args,
+    timestamp: Date.now(),
+  })
+  // 最多保留 50 条
+  if (traceLogs.value.length > 50) {
+    traceLogs.value.splice(0, traceLogs.value.length - 50)
+  }
+}
+
+function clearTrace() {
+  traceLogs.value = []
+}
+
+// ── 工具函数 ──
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (messagesRef.value) {
+      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+    }
+  })
+}
+
+function handleEnter(e: KeyboardEvent) {
+  if (!e.shiftKey) {
+    e.preventDefault()
+    sendMessage()
+  }
+}
+
+function handleShiftEnter() {
+  // 默认换行
+}
+
+function formatTime(ts: number) {
+  const d = new Date(ts)
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function escapeHtml(text: string): string {
+  const map: Record<string, string> = {
+    '&': '&' + 'amp;',
+    '<': '&' + 'lt;',
+    '>': '&' + 'gt;',
+  }
+  return text.replace(/[&<>]/g, ch => map[ch])
+}
+
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  
+  // 第一步：先逃逸 HTML 特殊字符
+  let html = escapeHtml(text)
+  
+  // 代码块 (```code```) — 必须在逃逸后执行
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
+  
+  // 行内代码 (`code`)
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
+  
+  // 粗体 **text**
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  
+  // 无序列表
+  html = html.replace(/^- (.*)$/gm, '<li>$1</li>')
+  
+  // 有序列表
+  html = html.replace(/^\d+\.\s+(.*)$/gm, '<li>$1</li>')
+  
+  // 换行
+  html = html.replace(/\n/g, '<br>')
+  
+  return html
+}
+
+// ── 清理 ──
+
+onBeforeUnmount(() => {
+  if (abortController) {
+    abortController.abort()
+  }
+})
+</script>
+
+<style scoped>
+.agent-chat {
+  height: calc(100vh - 60px);
+  background-color: #f5f7fa;
+}
+
+.chat-layout {
+  height: 100%;
+}
+
+/* ── 聊天主区域 ── */
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  background: white;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.message-wrapper {
+  margin-bottom: 16px;
+}
+
+.message {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.message.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.bubble {
+  max-width: 70%;
+  padding: 12px 16px;
+  border-radius: 16px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.user-bubble {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.assistant-bubble {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-bottom-left-radius: 4px;
+  color: #1e293b;
+}
+
+.assistant-bubble.streaming {
+  border-color: #93c5fd;
+}
+
+.content {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.content :deep(pre.code-block) {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.content :deep(code) {
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+.content :deep(strong) {
+  font-weight: 600;
+}
+
+.content :deep(li) {
+  margin: 4px 0;
+  padding-left: 8px;
+}
+
+.cursor-blink {
+  display: inline;
+  animation: blink 1s step-end infinite;
+  color: #3b82f6;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.message-meta {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* 工具消息 */
+.message.tool {
+  justify-content: center;
+  gap: 8px;
+}
+
+.tool-badge {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tool-result {
+  max-width: 60%;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 auto;
+}
+
+.tool-result pre {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 状态指示器 */
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  color: #64748b;
+  font-size: 13px;
+  justify-content: center;
+}
+
+/* ── 输入区域 ── */
+
+.input-area {
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: white;
+}
+
+.input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── 轨迹面板 ── */
+
+.trace-panel {
+  background: #fafbfc;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.trace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.trace-header h3 {
+  margin: 0;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #334155;
+}
+
+.trace-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.trace-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.trace-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.trace-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 8px;
+  border-left: 2px solid #e2e8f0;
+  margin-left: 8px;
+  position: relative;
+}
+
+.trace-item:last-child {
+  border-left-color: transparent;
+}
+
+.trace-dot {
+  position: absolute;
+  left: -9px;
+  top: 14px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.trace-item.tool_call .trace-dot {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.trace-item.tool_result .trace-dot {
+  border-color: #22c55e;
+  color: #22c55e;
+}
+
+.trace-item.error .trace-dot {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.trace-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.trace-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.trace-detail {
+  margin-top: 4px;
+}
+
+.trace-detail pre {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.trace-args {
+  margin-top: 4px;
+}
+
+.trace-args :deep(.el-collapse-item__header) {
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.trace-args :deep(.el-collapse-item__content) {
+  padding: 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.trace-args pre {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.trace-time {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+}
+</style>

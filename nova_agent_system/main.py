@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from nova_agent_system.orchestrator import run_orchestrator
+from nova_agent_system.memory_scheduler import start_scheduler, stop_scheduler
 
 
 def print_banner():
@@ -32,6 +33,13 @@ def print_banner():
 
 async def main():
     """CLI 主循环"""
+    # 启动后台记忆调度器（每 1 小时整合，每 24 小时遗忘）
+    try:
+        scheduler = start_scheduler(consolidate_interval=3600, forget_interval=86400)
+        print("📀 记忆调度器已启动")
+    except Exception as e:
+        print(f"⚠️ 记忆调度器启动失败: {e}")
+
     print_banner()
 
     while True:
@@ -58,4 +66,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        stop_scheduler()
