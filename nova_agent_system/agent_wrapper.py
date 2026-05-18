@@ -169,7 +169,25 @@ async def call_agent(
     data = dict(result_state.data)
     events = list(result_state.events)
 
-    # 提取主要结果
+    # 错误优先：如果 state 含 error，整个工具结果以错误对象返回，
+    # 让 LLM 第一时间看到 status=error 而不是空 collected_products
+    if data.get("error"):
+        error_payload = {
+            "status": "error",
+            "error_type": data.get("error_type", "unknown"),
+            "error_message": data["error"],
+            "error_details": data.get("error_details") or {},
+        }
+        return {
+            "agent": name,
+            "status": "error",
+            "result": error_payload,
+            "data": data,
+            "events": events,
+            "result_state": result_state,
+        }
+
+    # 提取主要结果（成功路径）
     result = data.get("result") or data.get("market_report") or data.get("collected_products") or data
 
     # 自动保存到记忆系统
@@ -201,6 +219,7 @@ async def call_agent(
 
     return {
         "agent": name,
+        "status": "ok",
         "result": result,
         "data": data,
         "events": events,

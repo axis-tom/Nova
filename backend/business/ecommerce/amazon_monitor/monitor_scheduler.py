@@ -31,6 +31,13 @@ from backend.business.ecommerce.amazon_monitor.agents import (
     TrafficAnalyzerAgent,
     OpportunityJudgeAgent,
 )
+from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import (
+    KeepaError,
+    KeepaConfigError,
+    KeepaQuotaError,
+    KeepaRejectedError,
+    KeepaNetworkError,
+)
 from backend.utils.logger import logger
 
 
@@ -395,11 +402,19 @@ class AmazonMonitorScheduler:
                     })
             
             logger.info(f"[AmazonMonitorScheduler] Keepa Deal: {len(alerts)} price alerts")
-            
-        except ValueError:
+
+        except KeepaConfigError:
             logger.info("[AmazonMonitorScheduler] Keepa not configured, skipping Deal API")
-        except Exception as e:
+        except KeepaQuotaError as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa Deal API quota exhausted: {e}")
+        except KeepaRejectedError as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa Deal API rejected: {e}")
+        except KeepaNetworkError as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa Deal API network error: {e}")
+        except KeepaError as e:
             logger.warning(f"[AmazonMonitorScheduler] Keepa Deal API failed: {e}")
+        except Exception as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa Deal API unexpected: {e}")
         
         return alerts
 
@@ -471,11 +486,19 @@ class AmazonMonitorScheduler:
                     })
             
             logger.info(f"[AmazonMonitorScheduler] Keepa BSR: {len(alerts)} trend alerts for {len(asins)} ASINs")
-            
-        except ValueError:
+
+        except KeepaConfigError:
             logger.info("[AmazonMonitorScheduler] Keepa not configured, skipping BSR monitor")
-        except Exception as e:
+        except KeepaQuotaError as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa BSR monitor quota exhausted: {e}")
+        except KeepaRejectedError as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa BSR monitor rejected: {e}")
+        except KeepaNetworkError as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa BSR monitor network error: {e}")
+        except KeepaError as e:
             logger.warning(f"[AmazonMonitorScheduler] Keepa BSR monitor failed: {e}")
+        except Exception as e:
+            logger.warning(f"[AmazonMonitorScheduler] Keepa BSR monitor unexpected: {e}")
         
         return alerts
 

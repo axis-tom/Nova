@@ -20,6 +20,13 @@ from datetime import datetime
 from backend.common.core.agent import Agent
 from backend.common.core.state import State
 from backend.utils.logger import logger
+from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import (
+    KeepaError,
+    KeepaConfigError,
+    KeepaQuotaError,
+    KeepaRejectedError,
+    KeepaNetworkError,
+)
 
 # 无效修饰词列表（这些词加在关键词后面 Keepa 搜不到结果）
 _INVALID_SUFFIXES = {
@@ -49,6 +56,36 @@ def _filter_keywords(keywords: List[str]) -> List[str]:
             seen.add(kw)
             filtered.append(kw)
     return filtered
+
+
+def _set_error(
+    state: State,
+    error_type: str,
+    message: str,
+    details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    把 Keepa / 其他错误统一写到 state，供 agent_wrapper 暴露给 LLM。
+
+    Args:
+        state: Agent 共享的状态对象
+        error_type: keepa_config / keepa_quota / keepa_rejected / keepa_network /
+                    keepa_other / unexpected
+        message: 人类可读的错误消息（LLM 会用它生成回复）
+        details: 结构化字段，如 retry_after_minutes / status_code
+    """
+    state.set("error", message)
+    state.set("error_type", error_type)
+    state.set("error_details", details or {})
+    # 保持下游兼容：失败时仍写空集合
+    state.set("collected_products", [])
+    state.set("product_map", {})
+    state.set("collection_stats", {
+        "total": 0,
+        "error": message,
+        "error_type": error_type,
+    })
+    state.add_event(f"product_collector_error[{error_type}]: {message}")
 
 
 class ProductCollectorAgent(Agent):
@@ -105,6 +142,7 @@ class ProductCollectorAgent(Agent):
             all_asins: List[str] = []
             keyword_asin_map: Dict[str, List[str]] = {}
             failed_keywords: List[str] = []
+            last_keyword_error: Optional[KeepaError] = None  # 用于 "全 keyword 失败" 上抛分类
 
             keepa = self._get_keepa()
             if keepa:
@@ -120,12 +158,39 @@ class ProductCollectorAgent(Agent):
                         logger.info(f"[ProductCollector] Keepa '{kw}': {len(asins)} ASINs")
                         # 串行间隔 1.5 秒，避免 429
                         await asyncio.sleep(1.5)
-                    except Exception as e:
-                        logger.error(f"[ProductCollector] Keepa search '{kw}' failed: {e}")
+                    except (KeepaConfigError, KeepaQuotaError):
+                        # 配置错 / 配额耗尽 —— 继续搜也是徒劳，让 outer except 接管
+                        raise
+                    except (KeepaRejectedError, KeepaNetworkError, KeepaError) as e:
+                        # 该 keyword 失败，但其它 keyword 可能仍可用
+                        logger.warning(
+                            f"[ProductCollector] Keepa search '{kw}' failed "
+                            f"({type(e).__name__}): {e}"
+                        )
                         failed_keywords.append(kw)
                         keyword_asin_map[kw] = []
+                        last_keyword_error = e
+                    except Exception as e:
+                        logger.error(f"[ProductCollector] Keepa search '{kw}' unexpected: {e}")
+                        failed_keywords.append(kw)
+                        keyword_asin_map[kw] = []
+
+                # 全部 keyword 都失败且没拿到任何 ASIN —— 上抛分类错误而非默默返回空
+                if (
+                    filtered_keywords
+                    and len(failed_keywords) == len(filtered_keywords)
+                    and not all_asins
+                    and last_keyword_error is not None
+                ):
+                    raise last_keyword_error
             else:
-                logger.warning("[ProductCollector] Keepa not configured, no data source available")
+                # _get_keepa() 在 KEEPA_API_KEY 缺失时返回 None
+                _set_error(
+                    state,
+                    "keepa_config",
+                    "Keepa API 未配置：请在 backend/config/.env 中设置 KEEPA_API_KEY",
+                )
+                return state
 
             # ── Step 2: Keepa 批量查询历史数据 ──
             keepa_products: Dict[str, Dict] = {}
@@ -178,13 +243,37 @@ class ProductCollectorAgent(Agent):
             )
             state.add_event(f"product_collector_success: {len(products_list)} products")
 
+        except KeepaConfigError as e:
+            logger.error(f"[ProductCollector] Keepa config error: {e}")
+            _set_error(state, "keepa_config", str(e))
+        except KeepaQuotaError as e:
+            logger.warning(f"[ProductCollector] Keepa quota exhausted: {e}")
+            _set_error(
+                state,
+                "keepa_quota",
+                str(e),
+                {"retry_after_minutes": e.retry_after_minutes},
+            )
+        except KeepaRejectedError as e:
+            logger.error(f"[ProductCollector] Keepa rejected: {e}")
+            _set_error(
+                state,
+                "keepa_rejected",
+                str(e),
+                {
+                    "status_code": e.status_code,
+                    "body": (e.body or "")[:300],
+                },
+            )
+        except KeepaNetworkError as e:
+            logger.error(f"[ProductCollector] Keepa network error: {e}")
+            _set_error(state, "keepa_network", str(e))
+        except KeepaError as e:
+            logger.error(f"[ProductCollector] Keepa unspecified error: {e}")
+            _set_error(state, "keepa_other", str(e))
         except Exception as e:
-            logger.error(f"[ProductCollector] Error: {e}")
-            state.set("error", str(e))
-            state.set("collected_products", [])
-            state.set("product_map", {})
-            state.set("collection_stats", {"total": 0, "error": str(e)})
-            state.add_event(f"product_collector_error: {e}")
+            logger.error(f"[ProductCollector] Unexpected error: {e}")
+            _set_error(state, "unexpected", str(e))
 
         return state
 
@@ -195,7 +284,7 @@ class ProductCollectorAgent(Agent):
         try:
             from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import KeepaConnector
             return KeepaConnector()
-        except ValueError as e:
+        except KeepaConfigError as e:
             logger.warning(f"[ProductCollector] Keepa not configured: {e}")
             return None
         except Exception as e:

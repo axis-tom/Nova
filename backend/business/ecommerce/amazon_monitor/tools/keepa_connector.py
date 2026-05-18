@@ -38,6 +38,41 @@ _KEEPA_TIMEOUT = 30
 _KEEPA_EPOCH = datetime(2011, 1, 1, tzinfo=timezone.utc)
 
 
+# ── 异常体系 ─────────────────────────────────────────────────────────
+# 分四档让调用方能区分应对：配置错误、配额耗尽、被拒、网络层
+# 通用 except KeepaError 也能一把抓
+# ───────────────────────────────────────────────────────────────────
+
+
+class KeepaError(Exception):
+    """Keepa 调用的基类异常"""
+
+
+class KeepaConfigError(KeepaError):
+    """API key 缺失 / 不合法 — 调用前置阶段的错误"""
+
+
+class KeepaQuotaError(KeepaError):
+    """Token 配额相关 — HTTP 429 或 tokensLeft 极低导致拒绝"""
+
+    def __init__(self, message: str, retry_after_minutes: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after_minutes = retry_after_minutes
+
+
+class KeepaRejectedError(KeepaError):
+    """请求被服务器拒绝 — HTTP 400 invalidParameter / REQUEST_REJECTED / 403 套餐限制"""
+
+    def __init__(self, message: str, status_code: Optional[int] = None, body: Optional[str] = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body
+
+
+class KeepaNetworkError(KeepaError):
+    """网络层错误 — 超时 / DNS / 连接拒绝"""
+
+
 def _keepa_minutes_to_dt(minutes: int) -> str:
     """将 Keepa 时间戳（相对于2011-01-01的分钟数）转换为 ISO 字符串"""
     try:
@@ -96,7 +131,7 @@ class KeepaConnector:
             api_key = settings.KEEPA_API_KEY
 
         if not api_key:
-            raise ValueError(
+            raise KeepaConfigError(
                 "KEEPA_API_KEY 未配置。请在 backend/config/.env 中设置 KEEPA_API_KEY=your_key\n"
                 "获取 API Key: https://keepa.com/#!api"
             )
@@ -105,12 +140,99 @@ class KeepaConnector:
     # ── 内部：REST 调用 ──
 
     def _get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        """GET 调用 Keepa REST。失败时抛 requests 原生异常（Step 2 再细化错误类型）"""
+        """
+        GET 调用 Keepa REST。失败时抛 KeepaError 子类：
+          - 超时 / 连接拒绝 → KeepaNetworkError
+          - HTTP 429 → KeepaQuotaError(retry_after_minutes=...)
+          - HTTP 403 → KeepaRejectedError("套餐权限不足", ...)
+          - HTTP 400 → KeepaRejectedError(详细 body, ...)
+          - 其他 4xx/5xx → KeepaError
+          - JSON 解析失败 → KeepaError
+        """
         url = f"{_KEEPA_BASE_URL}/{path.lstrip('/')}"
         full_params = {"key": self.api_key, **params}
-        resp = requests.get(url, params=full_params, timeout=_KEEPA_TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()
+
+        try:
+            resp = requests.get(url, params=full_params, timeout=_KEEPA_TIMEOUT)
+        except requests.Timeout as e:
+            raise KeepaNetworkError(f"Keepa 请求超时（{_KEEPA_TIMEOUT}s）: {e}") from e
+        except requests.ConnectionError as e:
+            raise KeepaNetworkError(f"Keepa 连接失败: {e}") from e
+        except requests.RequestException as e:
+            raise KeepaNetworkError(f"Keepa 请求异常: {e}") from e
+
+        status = resp.status_code
+        body_text = resp.text or ""
+
+        if status == 200:
+            try:
+                return resp.json()
+            except ValueError as e:
+                raise KeepaError(f"Keepa 响应不是合法 JSON: {e}; body[:200]={body_text[:200]}") from e
+
+        # ── 错误状态码分流 ──
+
+        if status == 429:
+            retry_min = self._parse_retry_after_minutes(resp)
+            msg = "Keepa token 配额耗尽 (HTTP 429)"
+            if retry_min is not None:
+                msg += f"，约 {retry_min:.1f} 分钟后恢复"
+            raise KeepaQuotaError(msg, retry_after_minutes=retry_min)
+
+        if status == 403:
+            raise KeepaRejectedError(
+                f"Keepa 套餐权限不足或被拒 (HTTP 403): {body_text[:200]}",
+                status_code=status,
+                body=body_text,
+            )
+
+        if status == 400:
+            # Keepa 把参数错误 / REQUEST_REJECTED 都用 400 返回
+            detail = self._extract_error_detail(body_text)
+            raise KeepaRejectedError(
+                f"Keepa 拒绝请求 (HTTP 400): {detail}",
+                status_code=status,
+                body=body_text,
+            )
+
+        raise KeepaError(f"Keepa 返回非预期状态 HTTP {status}: {body_text[:200]}")
+
+    @staticmethod
+    def _parse_retry_after_minutes(resp: "requests.Response") -> Optional[float]:
+        """从 429 响应里抽出恢复等待时长（分钟）。
+        优先级：响应 body 的 refillIn(ms) > Retry-After 头(秒)"""
+        # 先试 JSON body
+        try:
+            data = resp.json()
+            refill_ms = data.get("refillIn")
+            if isinstance(refill_ms, (int, float)) and refill_ms > 0:
+                return refill_ms / 60000.0
+        except ValueError:
+            pass
+        # 再试 Retry-After 头
+        ra = resp.headers.get("Retry-After")
+        if ra:
+            try:
+                return float(ra) / 60.0
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _extract_error_detail(body_text: str) -> str:
+        """从 400 响应里抽出简要错误说明"""
+        if not body_text:
+            return "(空 body)"
+        try:
+            data = json.loads(body_text)
+            err = data.get("error") or {}
+            if isinstance(err, dict):
+                msg = err.get("message") or err.get("type") or ""
+                if msg:
+                    return msg
+            return body_text[:200]
+        except (ValueError, AttributeError):
+            return body_text[:200]
 
     # ── 关键词搜索（Keepa REST API /search 端点）──
 
@@ -141,29 +263,28 @@ class KeepaConnector:
             max_results: 最大返回数量
 
         Returns:
-            ASIN 列表
+            ASIN 列表（空列表表示「调用成功但无结果」；失败时抛 KeepaError 子类）
+
+        Raises:
+            KeepaError 子类 —— 调用方决定如何处理（捕获/降级/上抛）
         """
         domain_id = self._DOMAIN_MAP.get(domain.upper(), 1)
-        try:
-            logger.warning(
-                f"Keepa /search '{keyword}' (domain={domain}) — "
-                f"预计消耗 10 tokens，Pro 套餐常返空"
-            )
-            data = self._get("search", {
-                "domain": domain_id,
-                "type": "product",
-                "term": keyword,
-            })
-            asins = data.get("asinList", []) or []
-            result = list(asins[:max_results])
-            logger.info(
-                f"Keepa 搜索到 {len(result)} 个 ASIN "
-                f"(tokensLeft={data.get('tokensLeft')})"
-            )
-            return result
-        except Exception as e:
-            logger.error(f"Keepa 搜索失败: {e}")
-            return []
+        logger.warning(
+            f"Keepa /search '{keyword}' (domain={domain}) — "
+            f"预计消耗 10 tokens，Pro 套餐常返空"
+        )
+        data = self._get("search", {
+            "domain": domain_id,
+            "type": "product",
+            "term": keyword,
+        })
+        asins = data.get("asinList", []) or []
+        result = list(asins[:max_results])
+        logger.info(
+            f"Keepa 搜索到 {len(result)} 个 ASIN "
+            f"(tokensLeft={data.get('tokensLeft')})"
+        )
+        return result
 
     async def async_search_asins(
         self,
@@ -219,29 +340,24 @@ class KeepaConnector:
         if stats:
             params["stats"] = stats
 
-        try:
-            logger.info(
-                f"Keepa /product 查询 {len(asins)} 个 ASIN "
-                f"(domain={domain}, history={history}, stats={stats}, offers={offers})"
-            )
-            data = self._get("product", params)
-            raw_products = data.get("products", []) or []
-            results = []
-            for p in raw_products:
-                parsed = self._parse_product(p, stats)
-                if parsed:
-                    results.append(parsed)
+        logger.info(
+            f"Keepa /product 查询 {len(asins)} 个 ASIN "
+            f"(domain={domain}, history={history}, stats={stats}, offers={offers})"
+        )
+        data = self._get("product", params)
+        raw_products = data.get("products", []) or []
+        results = []
+        for p in raw_products:
+            parsed = self._parse_product(p, stats)
+            if parsed:
+                results.append(parsed)
 
-            logger.info(
-                f"Keepa 成功解析 {len(results)}/{len(raw_products)} 个商品 "
-                f"(tokensLeft={data.get('tokensLeft')}, "
-                f"tokensConsumed={data.get('tokensConsumed')})"
-            )
-            return results
-
-        except Exception as e:
-            logger.error(f"Keepa /product 查询失败: {e}")
-            return []
+        logger.info(
+            f"Keepa 成功解析 {len(results)}/{len(raw_products)} 个商品 "
+            f"(tokensLeft={data.get('tokensLeft')}, "
+            f"tokensConsumed={data.get('tokensConsumed')})"
+        )
+        return results
 
     async def async_query_products(
         self,
@@ -289,38 +405,33 @@ class KeepaConnector:
             "rating": {"min": min_rating, "max": 50},
             "reviewCount": {"min": min_reviews, "max": 999999},
         }
-        try:
-            logger.info(f"Keepa /deal 获取价格异动 (domain={domain})")
-            # /deal 端点：selection 用 URL-encoded JSON 传
-            data = self._get("deal", {"selection": json.dumps(deal_selection)})
-            deals = data.get("deals") or data  # Keepa 不同版本字段不一致
-            deal_rows = []
-            if isinstance(deals, dict):
-                deal_rows = deals.get("dr", []) or []
-            elif isinstance(deals, list):
-                deal_rows = deals
+        logger.info(f"Keepa /deal 获取价格异动 (domain={domain})")
+        # /deal 端点：selection 用 URL-encoded JSON 传
+        data = self._get("deal", {"selection": json.dumps(deal_selection)})
+        deals = data.get("deals") or data  # Keepa 不同版本字段不一致
+        deal_rows = []
+        if isinstance(deals, dict):
+            deal_rows = deals.get("dr", []) or []
+        elif isinstance(deals, list):
+            deal_rows = deals
 
-            results = []
-            for d in deal_rows[:max_results]:
-                results.append({
-                    "asin": d.get("asin", ""),
-                    "title": d.get("title", ""),
-                    "current_price": d.get("current", -1) / 100 if d.get("current", -1) > 0 else None,
-                    "avg_price": d.get("avg", -1) / 100 if d.get("avg", -1) > 0 else None,
-                    "delta_percent": d.get("deltaPercent", 0),
-                    "rating": d.get("rating", 0) / 10,
-                    "review_count": d.get("reviewCount", 0),
-                })
+        results = []
+        for d in deal_rows[:max_results]:
+            results.append({
+                "asin": d.get("asin", ""),
+                "title": d.get("title", ""),
+                "current_price": d.get("current", -1) / 100 if d.get("current", -1) > 0 else None,
+                "avg_price": d.get("avg", -1) / 100 if d.get("avg", -1) > 0 else None,
+                "delta_percent": d.get("deltaPercent", 0),
+                "rating": d.get("rating", 0) / 10,
+                "review_count": d.get("reviewCount", 0),
+            })
 
-            logger.info(
-                f"Keepa /deal 获取到 {len(results)} 个商品 "
-                f"(tokensLeft={data.get('tokensLeft')})"
-            )
-            return results
-
-        except Exception as e:
-            logger.error(f"Keepa /deal 失败: {e}")
-            return []
+        logger.info(
+            f"Keepa /deal 获取到 {len(results)} 个商品 "
+            f"(tokensLeft={data.get('tokensLeft')})"
+        )
+        return results
 
     async def async_get_deals(
         self,
