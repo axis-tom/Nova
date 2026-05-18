@@ -42,7 +42,11 @@ AGENT_REGISTRY = [
     },
     {
         "name": "review_analyzer",
-        "description": "Amazon 评论分析：分析商品评论，提取情感倾向、好评/差评关键词、客户需求。适合回答「这个产品有什么问题」「用户吐槽什么」类问题。**必须先调用 product_collector**，读取 state.collected_products",
+        "description": (
+            "Amazon 评分/评论洞察：基于 Keepa 真实数据分析评分定位、评论壁垒、情感倾向、"
+            "好评/差评推断、客户需求。适合回答「这个产品口碑怎么样」「用户吐槽什么」「评论壁垒高不高」类问题。"
+            "**必须先调用 product_collector**，读取 state.collected_products"
+        ),
         "input_example": '{"max_products_to_analyze": 20}  # 必须先有 product_collector 的 collected_products',
         "requires_upstream": ["product_collector"],
     },

@@ -1,127 +1,63 @@
 """
 评论分析 Agent - Amazon 监控场景
-对应文章第3步：评论情感分析
 
 职责：
-1. 接收采集到的商品列表
-2. 调用 AmazonReviewAnalyzer 分析评论
-3. 提取用户需求、痛点、好评/差评关键词
-4. 生成情感分析摘要
-5. 识别产品改进机会
+1. 读取 state.collected_products（Keepa 采集的真实商品数据）
+2. 基于评分、评论数、BSR 趋势、价格等数据做评论/评分洞察
+3. 生成情感分析摘要和客户需求推断
+4. 识别高口碑 / 低口碑 / 评论壁垒等特征
+
+数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
 """
 
-import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from datetime import datetime
 
-from backend.common.core.agent import Agent
+from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
 from backend.utils.logger import logger
 
 
 class AmazonReviewAnalyzerAgent(Agent):
-    """
-    评论分析 Agent
-    分析 Amazon 商品评论，提取用户洞察
-    """
+    """评论分析 Agent — 基于 Keepa 真实数据做评分洞察和用户需求推断"""
 
     name = "review_analyzer"
-    description = "Amazon 评论分析 Agent，提取用户需求和情感洞察"
+    description = "Amazon 评论分析 Agent，基于 Keepa 数据提取评分洞察"
 
-    async def run(self, state: State) -> State:
-        """
-        执行评论分析（异步入口，与 product_collector 保持一致）
-
-        输入（从 state 读取）：
-          - collected_products: List[dict] 采集到的商品列表
-          - max_products_to_analyze: int 最多分析商品数（默认20）
-
-        输出（写入 state）：
-          - review_insights: List[dict] 每个商品的评论洞察
-          - sentiment_summary: dict 整体情感摘要
-          - customer_needs: List[str] 提取的客户需求
-        """
+    def run(self, state: State) -> State:
         state.add_event("review_analyzer_start")
-        logger.info("[ReviewAnalyzer] Starting review analysis")
-        return await self._async_run(state)
 
-    async def _async_run(self, state: State) -> State:
-        """异步执行评论分析"""
         try:
-            products: List[Dict] = state.get("collected_products", [])
+            products: List[Dict] = state.get("collected_products", []) or []
             max_analyze: int = state.get("max_products_to_analyze", 20)
 
             if not products:
-                logger.warning("[ReviewAnalyzer] No products to analyze")
                 state.set("review_insights", [])
                 state.set("sentiment_summary", {})
                 state.set("customer_needs", [])
                 state.add_event("review_analyzer_no_products")
                 return state
 
-            # 选取评论数最多的商品进行分析（最多 max_analyze 个）
-            products_to_analyze = sorted(
-                [p for p in products if p.get("review_count", 0) > 0],
+            # 筛选有评论的商品，按评论数排序取 TOP N
+            products_with_reviews = sorted(
+                [p for p in products if (p.get("review_count") or 0) > 0],
                 key=lambda p: p.get("review_count", 0),
-                reverse=True
+                reverse=True,
             )[:max_analyze]
 
-            logger.info(f"[ReviewAnalyzer] Analyzing {len(products_to_analyze)} products")
+            if not products_with_reviews:
+                products_with_reviews = products[:max_analyze]
 
-            # 导入工具
-            from backend.business.ecommerce.amazon_monitor.tools.amazon_api import get_review_analyzer
-            analyzer = get_review_analyzer()
+            benchmark = self._compute_benchmark(products)
 
-            # 并发分析（限制并发数为3）
-            review_insights = []
-            semaphore = asyncio.Semaphore(3)
-
-            async def analyze_one(product: Dict):
-                async with semaphore:
-                    asin = product.get("asin", "")
-                    try:
-                        review = await analyzer.analyze_reviews(asin, use_cache=True)
-                        if review:
-                            insight = {
-                                "asin": asin,
-                                "title": product.get("title", ""),
-                                "rating": review.rating.overall_rating,
-                                "review_count": review.rating.total_reviews,
-                                "review_summary": review.review_summary,
-                                "sentiment_positive_pct": review.sentiment_positive_pct,
-                                "sentiment_negative_pct": review.sentiment_negative_pct,
-                                "sentiment_neutral_pct": review.sentiment_neutral_pct,
-                                "common_praise": review.common_praise,
-                                "common_complaints": review.common_complaints,
-                                "customer_needs": review.customer_needs,
-                                "analyzed_at": datetime.now().isoformat(),
-                            }
-                            review_insights.append(insight)
-                            logger.info(
-                                f"[ReviewAnalyzer] {asin}: {review.rating.overall_rating}/5 "
-                                f"({review.rating.total_reviews} reviews)"
-                            )
-                    except Exception as e:
-                        logger.error(f"[ReviewAnalyzer] Failed to analyze {asin}: {e}")
-
-            await asyncio.gather(*[analyze_one(p) for p in products_to_analyze])
-
-            # 生成整体情感摘要
-            sentiment_summary = self._build_sentiment_summary(review_insights)
-
-            # 提取客户需求（去重合并）
-            all_needs = []
-            for insight in review_insights:
-                all_needs.extend(insight.get("customer_needs", []))
-            # 统计频率
-            need_freq: Dict[str, int] = {}
-            for need in all_needs:
-                need_freq[need] = need_freq.get(need, 0) + 1
-            customer_needs = [
-                need for need, _ in sorted(need_freq.items(), key=lambda x: x[1], reverse=True)
+            review_insights = [
+                self._analyze_single(p, benchmark)
+                for p in products_with_reviews
             ]
 
-            # 写入结果
+            sentiment_summary = self._build_sentiment_summary(review_insights)
+            customer_needs = self._infer_customer_needs(review_insights, benchmark)
+
             state.set("review_insights", review_insights)
             state.set("sentiment_summary", sentiment_summary)
             state.set("customer_needs", customer_needs)
@@ -143,32 +79,205 @@ class AmazonReviewAnalyzerAgent(Agent):
 
         return state
 
+    # ── 基准值 ──
+
+    def _compute_benchmark(self, products: List[Dict]) -> Dict[str, Any]:
+        """计算品类基准值，供单品对比"""
+        ratings = [p["rating"] for p in products if p.get("rating")]
+        review_counts = [p["review_count"] for p in products if p.get("review_count")]
+        prices = [p["current_price"] for p in products if p.get("current_price")]
+        bsr_list = [p["current_bsr"] for p in products if p.get("current_bsr")]
+
+        return {
+            "avg_rating": sum(ratings) / len(ratings) if ratings else 0,
+            "median_review_count": sorted(review_counts)[len(review_counts) // 2] if review_counts else 0,
+            "avg_review_count": sum(review_counts) / len(review_counts) if review_counts else 0,
+            "avg_price": sum(prices) / len(prices) if prices else 0,
+            "avg_bsr": sum(bsr_list) / len(bsr_list) if bsr_list else 0,
+            "total_products": len(products),
+        }
+
+    # ── 单品分析 ──
+
+    def _analyze_single(self, product: Dict, benchmark: Dict) -> Dict[str, Any]:
+        rating = product.get("rating") or 0
+        review_count = product.get("review_count") or 0
+
+        sentiment = self._estimate_sentiment(rating)
+        praise = self._infer_praise(product, benchmark)
+        complaints = self._infer_complaints(product, benchmark)
+
+        avg_r = benchmark["avg_rating"]
+        if avg_r > 0:
+            if rating >= avg_r + 0.3:
+                rating_position = "高于品类均值"
+            elif rating <= avg_r - 0.3:
+                rating_position = "低于品类均值"
+            else:
+                rating_position = "接近品类均值"
+        else:
+            rating_position = "无对比数据"
+
+        if review_count >= 5000:
+            review_barrier = "极高"
+        elif review_count >= 1000:
+            review_barrier = "高"
+        elif review_count >= 200:
+            review_barrier = "中"
+        else:
+            review_barrier = "低"
+
+        return {
+            "asin": product.get("asin"),
+            "title": (product.get("title") or "")[:80],
+            "brand": product.get("brand") or "Unknown",
+            "rating": rating,
+            "review_count": review_count,
+            "rating_position": rating_position,
+            "review_barrier": review_barrier,
+            "sentiment_positive_pct": sentiment["positive"],
+            "sentiment_negative_pct": sentiment["negative"],
+            "sentiment_neutral_pct": sentiment["neutral"],
+            "common_praise": praise,
+            "common_complaints": complaints,
+            "customer_needs": self._infer_product_needs(product, benchmark),
+            "bsr_trend": product.get("bsr_trend", "unknown"),
+            "monthly_sold": product.get("monthly_sold") or 0,
+            "analyzed_at": datetime.now().isoformat(),
+        }
+
+    def _estimate_sentiment(self, rating: float) -> Dict[str, float]:
+        """基于评分估算情感分布（无评论文本时的合理近似）"""
+        if rating <= 0:
+            return {"positive": 0, "negative": 0, "neutral": 0}
+
+        positive = min(95, max(5, (rating / 5.0) ** 1.3 * 100))
+        negative = min(80, max(2, (1 - rating / 5.0) ** 0.8 * 100))
+        neutral = max(0, 100 - positive - negative)
+        return {
+            "positive": round(positive, 1),
+            "negative": round(negative, 1),
+            "neutral": round(neutral, 1),
+        }
+
+    # ── 数据驱动的好评/差评/需求推断 ──
+
+    def _infer_praise(self, product: Dict, benchmark: Dict) -> List[str]:
+        praise = []
+        rating = product.get("rating") or 0
+        price = product.get("current_price") or 0
+        review_count = product.get("review_count") or 0
+        bsr_trend = product.get("bsr_trend", "unknown")
+        monthly_sold = product.get("monthly_sold") or 0
+        avg_price = benchmark["avg_price"]
+        avg_rating = benchmark["avg_rating"]
+
+        if rating >= 4.5:
+            praise.append(f"用户满意度极高（评分 {rating}/5.0）")
+        elif rating >= 4.0:
+            praise.append(f"用户评价良好（评分 {rating}/5.0）")
+
+        if review_count >= 1000:
+            praise.append(f"市场验证充分（{review_count} 条评论）")
+
+        if avg_price > 0 and price < avg_price * 0.8:
+            praise.append(f"价格有竞争力（低于品类均价 {(1 - price / avg_price) * 100:.0f}%）")
+
+        if bsr_trend == "improving":
+            praise.append("需求上升中（BSR 持续改善）")
+
+        if monthly_sold and monthly_sold > 500:
+            praise.append(f"畅销品（月销 {monthly_sold}+）")
+
+        if avg_rating > 0 and rating > avg_rating + 0.3:
+            praise.append(f"评分领先品类均值（{rating} vs {avg_rating:.1f}）")
+
+        return praise
+
+    def _infer_complaints(self, product: Dict, benchmark: Dict) -> List[str]:
+        complaints = []
+        rating = product.get("rating") or 0
+        price = product.get("current_price") or 0
+        review_count = product.get("review_count") or 0
+        bsr_trend = product.get("bsr_trend", "unknown")
+        seller_count = product.get("seller_count") or 0
+        avg_price = benchmark["avg_price"]
+        avg_rating = benchmark["avg_rating"]
+
+        if 0 < rating < 3.5:
+            complaints.append(f"用户满意度偏低（评分仅 {rating}/5.0）")
+
+        if avg_rating > 0 and rating < avg_rating - 0.3:
+            complaints.append(f"评分低于品类均值（{rating} vs {avg_rating:.1f}）")
+
+        if avg_price > 0 and price > avg_price * 1.3:
+            complaints.append(f"定价偏高（高于品类均价 {(price / avg_price - 1) * 100:.0f}%）")
+
+        if bsr_trend == "declining":
+            complaints.append("需求下滑（BSR 走低）")
+
+        if seller_count > 20:
+            complaints.append(f"跟卖严重（{seller_count} 个卖家），品质可能参差不齐")
+
+        if 0 < rating < 4.0 and review_count > 500:
+            complaints.append("评论多但评分不高，存在明显产品痛点")
+
+        return complaints
+
+    def _infer_product_needs(self, product: Dict, benchmark: Dict) -> List[str]:
+        needs = []
+        rating = product.get("rating") or 0
+        price = product.get("current_price") or 0
+        monthly_sold = product.get("monthly_sold") or 0
+        bsr_trend = product.get("bsr_trend", "unknown")
+        avg_price = benchmark.get("avg_price", 0)
+
+        if monthly_sold > 300 and price < 30:
+            needs.append("高性价比需求")
+        elif monthly_sold > 100 and price > 100:
+            needs.append("品质优先型需求")
+
+        if bsr_trend == "improving" and rating >= 4.0:
+            needs.append("品质与口碑驱动购买")
+        elif bsr_trend == "improving" and avg_price > 0 and price < avg_price * 0.8:
+            needs.append("价格敏感型需求上升")
+
+        if 0 < rating < 3.8 and monthly_sold > 200:
+            needs.append("刚需品（即使评分一般仍有销量）")
+
+        return needs
+
+    # ── 汇总 ──
+
     def _build_sentiment_summary(self, insights: List[Dict]) -> Dict[str, Any]:
-        """构建整体情感摘要"""
         if not insights:
             return {}
 
         total = len(insights)
-        avg_rating = sum(i.get("rating", 0) for i in insights) / total
+        rated = [i for i in insights if i.get("rating")]
+        avg_rating = sum(i["rating"] for i in rated) / len(rated) if rated else 0
         avg_positive = sum(i.get("sentiment_positive_pct", 0) for i in insights) / total
         avg_negative = sum(i.get("sentiment_negative_pct", 0) for i in insights) / total
 
-        # 高评分商品（≥4.5）
-        high_rated = [i for i in insights if i.get("rating", 0) >= 4.5]
-        # 低评分商品（<3.5）
-        low_rated = [i for i in insights if i.get("rating", 0) < 3.5]
+        high_rated = [i for i in insights if (i.get("rating") or 0) >= 4.5]
+        low_rated = [i for i in insights if 0 < (i.get("rating") or 0) < 3.5]
 
-        # 汇总常见好评/差评
-        all_praise: Dict[str, int] = {}
-        all_complaints: Dict[str, int] = {}
+        praise_freq: Dict[str, int] = {}
+        complaint_freq: Dict[str, int] = {}
         for insight in insights:
             for p in insight.get("common_praise", []):
-                all_praise[p] = all_praise.get(p, 0) + 1
+                praise_freq[p] = praise_freq.get(p, 0) + 1
             for c in insight.get("common_complaints", []):
-                all_complaints[c] = all_complaints.get(c, 0) + 1
+                complaint_freq[c] = complaint_freq.get(c, 0) + 1
 
-        top_praise = [k for k, _ in sorted(all_praise.items(), key=lambda x: x[1], reverse=True)[:5]]
-        top_complaints = [k for k, _ in sorted(all_complaints.items(), key=lambda x: x[1], reverse=True)[:5]]
+        top_praise = [k for k, _ in sorted(praise_freq.items(), key=lambda x: x[1], reverse=True)[:5]]
+        top_complaints = [k for k, _ in sorted(complaint_freq.items(), key=lambda x: x[1], reverse=True)[:5]]
+
+        barrier_dist = {"极高": 0, "高": 0, "中": 0, "低": 0}
+        for i in insights:
+            b = i.get("review_barrier", "低")
+            if b in barrier_dist:
+                barrier_dist[b] += 1
 
         return {
             "total_analyzed": total,
@@ -179,6 +288,7 @@ class AmazonReviewAnalyzerAgent(Agent):
             "low_rated_count": len(low_rated),
             "top_praise_keywords": top_praise,
             "top_complaint_keywords": top_complaints,
+            "review_barrier_distribution": barrier_dist,
             "market_sentiment": (
                 "非常正面" if avg_positive >= 80 else
                 "正面" if avg_positive >= 60 else
@@ -187,3 +297,29 @@ class AmazonReviewAnalyzerAgent(Agent):
             ),
             "generated_at": datetime.now().isoformat(),
         }
+
+    def _infer_customer_needs(self, insights: List[Dict], benchmark: Dict) -> List[str]:
+        need_freq: Dict[str, int] = {}
+        for insight in insights:
+            for need in insight.get("customer_needs", []):
+                need_freq[need] = need_freq.get(need, 0) + 1
+
+        needs = [need for need, _ in sorted(need_freq.items(), key=lambda x: x[1], reverse=True)]
+
+        avg_rating = benchmark.get("avg_rating", 0)
+        avg_price = benchmark.get("avg_price", 0)
+
+        if avg_rating >= 4.2:
+            needs.append("品类整体满意度高，用户注重品质和体验")
+        elif 0 < avg_rating < 3.5:
+            needs.append("品类整体满意度偏低，存在产品改进空间")
+
+        if 0 < avg_price < 30:
+            needs.append("低客单价品类，价格竞争力是关键")
+        elif avg_price > 100:
+            needs.append("高客单价品类，用户对品质和服务要求更高")
+
+        return needs
+
+    async def execute(self, input_data: AgentInput) -> AgentOutput:
+        return await super().execute(input_data)
