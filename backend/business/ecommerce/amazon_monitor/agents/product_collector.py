@@ -102,14 +102,19 @@ class ProductCollectorAgent(Agent):
         执行商品采集
 
         输入（从 state 读取）：
-          - expanded_keywords: List[str] 扩展后的关键词
-          - max_results_per_keyword: int 每个关键词最大结果数（默认10）
+          - watchlist_asins: List[str]  **推荐**：用户/LLM 直接传 ASIN 列表，
+                                        跳过烧钱的 /search 端点（Pro 套餐 10 token/次还常返空）
+          - expanded_keywords: List[str] 关键词列表（兼容旧入口）
+          - allow_keyword_search: bool   显式允许走 keyword → /search 路径，默认 False。
+                                        仅在没有 ASIN 来源、且确认套餐 /search 有效时打开
+          - max_results_per_keyword: int 每个关键词最大结果数（默认10，仅 search 模式）
           - domain: str 市场（默认 US）
 
         输出（写入 state）：
           - collected_products: List[dict] 采集到的商品列表（含历史数据）
           - product_map: Dict[str, dict] ASIN → 商品详情映射
-          - collection_stats: dict 采集统计信息
+          - collection_stats: dict 采集统计信息 (含 asin_source: watchlist | keyword_search)
+          - error / error_type / error_details: 失败时填充
         """
         state.add_event("product_collector_start")
         logger.info("[ProductCollector] Starting product collection (Keepa only)")
@@ -119,72 +124,14 @@ class ProductCollectorAgent(Agent):
         """异步执行商品采集"""
         try:
             # 读取输入参数
-            keywords: List[str] = state.get("expanded_keywords", [])
+            watchlist_asins: List[str] = state.get("watchlist_asins", []) or []
+            keywords: List[str] = state.get("expanded_keywords", []) or []
+            allow_keyword_search: bool = bool(state.get("allow_keyword_search", False))
             max_results: int = state.get("max_results_per_keyword", 10)
             domain: str = state.get("domain", "US")
 
-            if not keywords:
-                logger.warning("[ProductCollector] No keywords provided")
-                state.set("collected_products", [])
-                state.set("product_map", {})
-                state.set("collection_stats", {"total": 0, "keywords_searched": 0})
-                state.add_event("product_collector_no_keywords")
-                return state
-
-            # 过滤无效关键词，最多取5个（节省 Keepa Token）
-            filtered_keywords = _filter_keywords(keywords)[:5]
-            logger.info(
-                f"[ProductCollector] Filtered {len(keywords)} → {len(filtered_keywords)} keywords: "
-                f"{filtered_keywords}"
-            )
-
-            # ── Step 1: Keepa 关键词搜索，串行执行（避免 429）──
-            all_asins: List[str] = []
-            keyword_asin_map: Dict[str, List[str]] = {}
-            failed_keywords: List[str] = []
-            last_keyword_error: Optional[KeepaError] = None  # 用于 "全 keyword 失败" 上抛分类
-
             keepa = self._get_keepa()
-            if keepa:
-                for kw in filtered_keywords:
-                    try:
-                        asins = await keepa.async_search_asins(
-                            kw, domain=domain, max_results=max_results
-                        )
-                        keyword_asin_map[kw] = asins
-                        for a in asins:
-                            if a not in all_asins:
-                                all_asins.append(a)
-                        logger.info(f"[ProductCollector] Keepa '{kw}': {len(asins)} ASINs")
-                        # 串行间隔 1.5 秒，避免 429
-                        await asyncio.sleep(1.5)
-                    except (KeepaConfigError, KeepaQuotaError):
-                        # 配置错 / 配额耗尽 —— 继续搜也是徒劳，让 outer except 接管
-                        raise
-                    except (KeepaRejectedError, KeepaNetworkError, KeepaError) as e:
-                        # 该 keyword 失败，但其它 keyword 可能仍可用
-                        logger.warning(
-                            f"[ProductCollector] Keepa search '{kw}' failed "
-                            f"({type(e).__name__}): {e}"
-                        )
-                        failed_keywords.append(kw)
-                        keyword_asin_map[kw] = []
-                        last_keyword_error = e
-                    except Exception as e:
-                        logger.error(f"[ProductCollector] Keepa search '{kw}' unexpected: {e}")
-                        failed_keywords.append(kw)
-                        keyword_asin_map[kw] = []
-
-                # 全部 keyword 都失败且没拿到任何 ASIN —— 上抛分类错误而非默默返回空
-                if (
-                    filtered_keywords
-                    and len(failed_keywords) == len(filtered_keywords)
-                    and not all_asins
-                    and last_keyword_error is not None
-                ):
-                    raise last_keyword_error
-            else:
-                # _get_keepa() 在 KEEPA_API_KEY 缺失时返回 None
+            if not keepa:
                 _set_error(
                     state,
                     "keepa_config",
@@ -192,21 +139,68 @@ class ProductCollectorAgent(Agent):
                 )
                 return state
 
-            # ── Step 2: Keepa 批量查询历史数据 ──
+            # ── 决定 ASIN 来源 ──
+            all_asins: List[str] = []
+            keyword_asin_map: Dict[str, List[str]] = {}
+            failed_keywords: List[str] = []
+            filtered_keywords: List[str] = []
+            asin_source: str  # "watchlist" | "keyword_search"
+
+            if watchlist_asins:
+                # 模式 A: 用户直接传 ASIN，跳过 /search 省 token
+                all_asins = [a.strip() for a in watchlist_asins if a and a.strip()]
+                asin_source = "watchlist"
+                logger.info(
+                    f"[ProductCollector] Using watchlist_asins: {len(all_asins)} ASINs "
+                    f"(直接走 /product，省 /search 的 10 token/次)"
+                )
+                if keywords:
+                    logger.warning(
+                        "[ProductCollector] 同时传入了 watchlist_asins 和 expanded_keywords; "
+                        "优先使用 watchlist_asins，忽略 keywords"
+                    )
+
+            elif allow_keyword_search and keywords:
+                # 模式 B: 显式允许走 keyword → /search（Pro 套餐烧 10 token/次，慎用）
+                asin_source = "keyword_search"
+                filtered_keywords = _filter_keywords(keywords)[:5]
+                logger.warning(
+                    f"[ProductCollector] keyword search 模式 "
+                    f"({len(filtered_keywords)} keywords × 10 token = ~{len(filtered_keywords)*10} token)"
+                )
+                all_asins, keyword_asin_map, failed_keywords = await self._search_by_keywords(
+                    keepa, filtered_keywords, domain, max_results,
+                )
+            else:
+                # 模式 C: 既没 ASIN 又没显式开搜词 → 给清楚的提示
+                _set_error(
+                    state,
+                    "no_input",
+                    (
+                        "ProductCollector 需要明确的 ASIN 来源：\n"
+                        "  - 推荐：在 state 设 watchlist_asins=['B0XXXXXXXX', ...] 直接查商品（每 ASIN 1 token）\n"
+                        "  - 或显式 allow_keyword_search=True + expanded_keywords 走 /search "
+                        "(Pro 套餐每次烧 10 token 且常返空，不推荐)"
+                    ),
+                )
+                return state
+
+            # ── 拉历史数据（/product 端点，最多 100/批）──
             keepa_products: Dict[str, Dict] = {}
-            if keepa and all_asins:
-                logger.info(f"[ProductCollector] Keepa querying {len(all_asins)} ASINs history")
+            if all_asins:
+                logger.info(f"[ProductCollector] Keepa /product querying {len(all_asins)} ASINs")
                 for i in range(0, len(all_asins), 100):
                     batch = all_asins[i:i + 100]
                     products = await keepa.async_query_products(batch, domain=domain, stats=180)
                     for p in products:
                         keepa_products[p["asin"]] = p
-                logger.info(f"[ProductCollector] Keepa returned {len(keepa_products)} products with history")
+                logger.info(
+                    f"[ProductCollector] Keepa returned {len(keepa_products)}/{len(all_asins)} products"
+                )
 
-            # ── Step 3: 整理商品列表 ──
+            # ── 整理商品列表 ──
             products_list = []
             product_map = {}
-
             for asin in all_asins:
                 product = keepa_products.get(asin)
                 if product:
@@ -215,14 +209,13 @@ class ProductCollectorAgent(Agent):
                     product_map[asin] = product
 
             # 按 BSR 排序（BSR 越小越好）
-            products_list.sort(
-                key=lambda p: p.get("current_bsr") or 999999
-            )
+            products_list.sort(key=lambda p: p.get("current_bsr") or 999999)
 
             # 统计信息
             collection_stats = {
                 "total": len(products_list),
                 "unique_asins": len(all_asins),
+                "asin_source": asin_source,
                 "keywords_searched": len(filtered_keywords),
                 "keywords_failed": len(failed_keywords),
                 "failed_keywords": failed_keywords,
@@ -239,9 +232,11 @@ class ProductCollectorAgent(Agent):
 
             logger.info(
                 f"[ProductCollector] Collected {len(products_list)} products "
-                f"(Keepa: {len(keepa_products)})"
+                f"(source={asin_source}, Keepa: {len(keepa_products)})"
             )
-            state.add_event(f"product_collector_success: {len(products_list)} products")
+            state.add_event(
+                f"product_collector_success: {len(products_list)} products from {asin_source}"
+            )
 
         except KeepaConfigError as e:
             logger.error(f"[ProductCollector] Keepa config error: {e}")
@@ -278,6 +273,67 @@ class ProductCollectorAgent(Agent):
         return state
 
     # ── 内部辅助方法 ──
+
+    async def _search_by_keywords(
+        self,
+        keepa,
+        filtered_keywords: List[str],
+        domain: str,
+        max_results: int,
+    ):
+        """
+        通过 keyword → /search 拿 ASIN 列表（兼容旧入口）。
+        ⚠️ Pro 套餐每次烧 10 token，且常返空，仅在 allow_keyword_search=True 时调。
+
+        Returns:
+            (all_asins, keyword_asin_map, failed_keywords)
+
+        Raises:
+            KeepaConfigError / KeepaQuotaError —— 致命错，让 outer except 接管
+            其它 KeepaError 子类 —— 仅在「全部 keyword 都失败且 0 ASIN」时上抛
+        """
+        all_asins: List[str] = []
+        keyword_asin_map: Dict[str, List[str]] = {}
+        failed_keywords: List[str] = []
+        last_keyword_error: Optional[KeepaError] = None
+
+        for kw in filtered_keywords:
+            try:
+                asins = await keepa.async_search_asins(
+                    kw, domain=domain, max_results=max_results
+                )
+                keyword_asin_map[kw] = asins
+                for a in asins:
+                    if a not in all_asins:
+                        all_asins.append(a)
+                logger.info(f"[ProductCollector] Keepa '{kw}': {len(asins)} ASINs")
+                # 串行间隔 1.5 秒，避免 429
+                await asyncio.sleep(1.5)
+            except (KeepaConfigError, KeepaQuotaError):
+                raise
+            except (KeepaRejectedError, KeepaNetworkError, KeepaError) as e:
+                logger.warning(
+                    f"[ProductCollector] Keepa search '{kw}' failed "
+                    f"({type(e).__name__}): {e}"
+                )
+                failed_keywords.append(kw)
+                keyword_asin_map[kw] = []
+                last_keyword_error = e
+            except Exception as e:
+                logger.error(f"[ProductCollector] Keepa search '{kw}' unexpected: {e}")
+                failed_keywords.append(kw)
+                keyword_asin_map[kw] = []
+
+        # 全部 keyword 都失败且没拿到任何 ASIN —— 上抛分类错误而非默默返回空
+        if (
+            filtered_keywords
+            and len(failed_keywords) == len(filtered_keywords)
+            and not all_asins
+            and last_keyword_error is not None
+        ):
+            raise last_keyword_error
+
+        return all_asins, keyword_asin_map, failed_keywords
 
     def _get_keepa(self):
         """获取 Keepa 连接器（如果未配置则返回 None）"""

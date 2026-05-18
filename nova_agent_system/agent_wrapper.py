@@ -27,8 +27,17 @@ AGENT_REGISTRY = [
     },
     {
         "name": "product_collector",
-        "description": "Amazon 商品采集（基于 Keepa）：用关键词搜索 ASIN 并拉取价格、BSR、评论、销量等历史数据。适合回答「蓝牙耳机 top50」「某品类商品列表」类问题。读取 state.expanded_keywords，因此可由 keyword_expander 提供，也可直接传入",
-        "input_example": '{"expanded_keywords": ["bluetooth earbuds", "wireless earbuds"], "max_results_per_keyword": 10, "domain": "US"}',
+        "description": (
+            "Amazon 商品采集（基于 Keepa）：拉取价格、BSR、评论、销量等历史数据。"
+            "**推荐用法**：传入 watchlist_asins=[\"B0XXX\",...] 直接查指定商品（每 ASIN 1 token，快且省）。"
+            "用户问「分析 B0XXX 这个商品」「对比这几个 ASIN」类问题时**首选**此入口。"
+            "兼容旧入口：可显式 allow_keyword_search=True + expanded_keywords 走关键词搜索"
+            "（但 Pro 套餐 /search 每次烧 10 token 且常返空，不推荐）。"
+        ),
+        "input_example": (
+            '{"watchlist_asins": ["B0BDHWDR12", "B0F9FP4MC4"], "domain": "US"}  '
+            '# 推荐：直接传 ASIN；或者 {"expanded_keywords":["bluetooth earbuds"], "allow_keyword_search": true}'
+        ),
         "requires_upstream": [],
     },
     {
