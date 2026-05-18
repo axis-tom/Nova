@@ -9,6 +9,7 @@ python-dotenv==1.0.0
 
 # HTTP 客户端
 httpx==0.25.2
+requests>=2.31.0
 
 # 异步数据库与消息队列
 redis==5.0.1
@@ -49,7 +50,3 @@ bcrypt==3.2.2
 
 # 定时任务调度
 APScheduler==3.10.4
-
-# Keepa 亚马逊历史数据 SDK
-keepa>=2.0.0
-pandas>=2.0.0

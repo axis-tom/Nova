@@ -1,24 +1,38 @@
 """
 Keepa 数据连接器
-基于 Keepa Python SDK，提供亚马逊商品历史数据查询
+直接调用 Keepa REST API（不经 Python SDK），提供亚马逊商品历史数据查询
+
+历史背景：
+  keepa Python SDK 1.4.4 调 /product 端点会被服务器返回 HTTP 400 (REQUEST_REJECTED)，
+  原因疑似 SDK 加了某些不被 Pro 套餐授权的参数。
+  原生 REST 调用同样的端点完全 OK，因此直接走 requests，少一份 SDK 依赖。
+  详见 plan/Phase2-P2-Keepa.md。
 
 功能：
-  - 关键词搜索 ASIN（Search API）
-  - 批量查询商品历史数据（Product API）：BSR历史、价格历史、评论历史、销量估算
-  - 获取价格异动商品（Deal API）
+  - 关键词搜索 ASIN（/search 端点 —— Pro 套餐烧 10 token/次且常返空，慎用）
+  - 批量查询商品历史数据（/product 端点）：BSR / 价格 / 评论 / 销量估算
+  - 获取价格异动商品（/deal 端点）
   - 数据解析与标准化
 
 使用前提：
   - 在 .env 中配置 KEEPA_API_KEY
-  - pip install keepa pandas
+  - requests（已在 requirements.txt）
 """
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 
+import requests
+
 logger = logging.getLogger(__name__)
+
+# Keepa REST 基础 URL
+_KEEPA_BASE_URL = "https://api.keepa.com"
+# 默认请求超时（秒）。/product 拉历史可能稍慢，给 30s
+_KEEPA_TIMEOUT = 30
 
 # Keepa 时间基准：2011-01-01 00:00 UTC（分钟数）
 _KEEPA_EPOCH = datetime(2011, 1, 1, tzinfo=timezone.utc)
@@ -34,11 +48,13 @@ def _keepa_minutes_to_dt(minutes: int) -> str:
         return ""
 
 
-def _decode_keepa_csv(csv_data: List[int]) -> List[Dict[str, Any]]:
+def _decode_keepa_csv(csv_data: List[int], is_price: bool = False) -> List[Dict[str, Any]]:
     """
     解码 Keepa 压缩的时间序列数据
     格式：[timestamp1, value1, timestamp2, value2, ...]
     value=-1 表示无数据
+
+    is_price=True 时把 value 视为美分并 / 100；否则保留原始整数（如 BSR / 评论数 / 评分×10）
     """
     if not csv_data or len(csv_data) < 2:
         return []
@@ -49,15 +65,26 @@ def _decode_keepa_csv(csv_data: List[int]) -> List[Dict[str, Any]]:
         if val != -1:
             result.append({
                 "timestamp": _keepa_minutes_to_dt(ts),
-                "value": val / 100 if val > 100 else val,  # 价格单位是美分*100
+                "value": val / 100 if is_price else val,
             })
     return result
 
 
+# Keepa CSV 索引常量（官方约定）
+_CSV_AMAZON = 0          # Amazon 直营价
+_CSV_NEW = 1             # 3P New Marketplace 最低价
+_CSV_USED = 2            # 二手
+_CSV_SALES = 3           # BSR（Sales Rank）
+_CSV_LISTPRICE = 4
+_CSV_COUNT_NEW = 11      # 新品 offer 数（不是 BSR！老代码这里写错了）
+_CSV_RATING = 16         # 评分 × 10（需 rating=1 参数）
+_CSV_COUNT_REVIEWS = 17  # 评论数（需 rating=1 参数）
+
+
 class KeepaConnector:
     """
-    Keepa 数据连接器
-    
+    Keepa 数据连接器（原生 REST）
+
     支持同步和异步两种调用方式：
     - 同步：KeepaConnector().search_asins(...)
     - 异步：await KeepaConnector().async_query_products(...)
@@ -67,24 +94,23 @@ class KeepaConnector:
         if api_key is None:
             from backend.config.config import settings
             api_key = settings.KEEPA_API_KEY
-        
+
         if not api_key:
             raise ValueError(
                 "KEEPA_API_KEY 未配置。请在 backend/config/.env 中设置 KEEPA_API_KEY=your_key\n"
                 "获取 API Key: https://keepa.com/#!api"
             )
         self.api_key = api_key
-        self._sync_api = None  # 懒加载
 
-    def _get_sync_api(self):
-        """懒加载同步 Keepa API 实例"""
-        if self._sync_api is None:
-            try:
-                import keepa
-                self._sync_api = keepa.Keepa(self.api_key)
-            except ImportError:
-                raise ImportError("请安装 keepa 库：pip install keepa pandas")
-        return self._sync_api
+    # ── 内部：REST 调用 ──
+
+    def _get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """GET 调用 Keepa REST。失败时抛 requests 原生异常（Step 2 再细化错误类型）"""
+        url = f"{_KEEPA_BASE_URL}/{path.lstrip('/')}"
+        full_params = {"key": self.api_key, **params}
+        resp = requests.get(url, params=full_params, timeout=_KEEPA_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()
 
     # ── 关键词搜索（Keepa REST API /search 端点）──
 
@@ -103,35 +129,37 @@ class KeepaConnector:
         max_results: int = 50,
     ) -> List[str]:
         """
-        通过关键词搜索 ASIN 列表（调用 Keepa REST API /search 端点）
-        
-        注意：Keepa Python SDK 不提供关键词搜索，需直接调用 REST API
-        
+        通过关键词搜索 ASIN 列表（Keepa REST /search 端点）
+
+        ⚠️ Token 消耗：Pro 套餐每次 /search 烧 **10 tokens**，且经常返空（asinList=[]）。
+                       优先用 watchlist ASIN，不要依赖 keyword → search 入口。
+                       详见 plan/Phase2-P2-Keepa.md。
+
         Args:
             keyword: 搜索关键词，如 "bluetooth earbuds"
             domain: 市场字符串，如 US/DE/JP
             max_results: 最大返回数量
-            
+
         Returns:
             ASIN 列表
         """
-        import requests
         domain_id = self._DOMAIN_MAP.get(domain.upper(), 1)
-        url = "https://api.keepa.com/search"
-        params = {
-            "key": self.api_key,
-            "domain": domain_id,
-            "type": "product",
-            "term": keyword,
-        }
         try:
-            logger.info(f"Keepa REST 关键词搜索: '{keyword}' (domain={domain})")
-            resp = requests.get(url, params=params, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
+            logger.warning(
+                f"Keepa /search '{keyword}' (domain={domain}) — "
+                f"预计消耗 10 tokens，Pro 套餐常返空"
+            )
+            data = self._get("search", {
+                "domain": domain_id,
+                "type": "product",
+                "term": keyword,
+            })
             asins = data.get("asinList", []) or []
             result = list(asins[:max_results])
-            logger.info(f"Keepa 搜索到 {len(result)} 个 ASIN")
+            logger.info(
+                f"Keepa 搜索到 {len(result)} 个 ASIN "
+                f"(tokensLeft={data.get('tokensLeft')})"
+            )
             return result
         except Exception as e:
             logger.error(f"Keepa 搜索失败: {e}")
@@ -156,49 +184,63 @@ class KeepaConnector:
         domain: str = "US",
         history: bool = True,
         stats: int = 180,
-        offers: int = 20,
+        offers: int = 0,
     ) -> List[Dict[str, Any]]:
         """
-        批量查询商品历史数据（最多100个ASIN）
-        
+        批量查询商品历史数据（Keepa REST /product 端点，最多 100 个 ASIN）
+
         Args:
-            asins: ASIN 列表（最多100个）
-            domain: 市场
-            history: 是否获取历史数据
-            stats: 统计周期（天），如 30/90/180
-            offers: 获取的 offer 数量
-            
+            asins: ASIN 列表（最多 100 个）
+            domain: 市场字符串（US/DE/JP 等），内部转 domain ID
+            history: 是否获取历史时间序列。False 时只拿当前快照
+            stats: 统计周期（天），如 30/90/180。控制 stats.avg/min/max 的窗口
+            offers: 获取的 offer 数量。
+                    ⚠️ Keepa 计费：每个 offer entry 多消耗 1 token，
+                    50 ASIN × offers=20 = 单次额外 1000 tokens。
+                    基础款用户保持 0；只有需要查 buy box / 多卖家详情时再调大。
+
         Returns:
-            标准化的商品数据列表
+            标准化的商品数据列表（_parse_product 输出格式）
         """
         if not asins:
             return []
-        
-        # Keepa 单次最多100个
+
+        # Keepa 单次最多 100 个
         asins = asins[:100]
-        api = self._get_sync_api()
-        
+        domain_id = self._DOMAIN_MAP.get(domain.upper(), 1)
+        params: Dict[str, Any] = {
+            "domain": domain_id,
+            "asin": ",".join(asins),
+            "history": 1 if history else 0,
+        }
+        # Keepa /product 拒绝 offers=0 —— 只在 >0 时传，等价于"不要 offer 数据"
+        if offers and offers > 0:
+            params["offers"] = offers
+        if stats:
+            params["stats"] = stats
+
         try:
-            logger.info(f"Keepa 查询 {len(asins)} 个商品历史数据")
-            raw_products = api.query(
-                asins,
-                domain=domain,
-                history=history,
-                stats=stats,
-                offers=offers,
+            logger.info(
+                f"Keepa /product 查询 {len(asins)} 个 ASIN "
+                f"(domain={domain}, history={history}, stats={stats}, offers={offers})"
             )
-            
+            data = self._get("product", params)
+            raw_products = data.get("products", []) or []
             results = []
             for p in raw_products:
                 parsed = self._parse_product(p, stats)
                 if parsed:
                     results.append(parsed)
-            
-            logger.info(f"Keepa 成功解析 {len(results)} 个商品")
+
+            logger.info(
+                f"Keepa 成功解析 {len(results)}/{len(raw_products)} 个商品 "
+                f"(tokensLeft={data.get('tokensLeft')}, "
+                f"tokensConsumed={data.get('tokensConsumed')})"
+            )
             return results
-            
+
         except Exception as e:
-            logger.error(f"Keepa 查询失败: {e}")
+            logger.error(f"Keepa /product 查询失败: {e}")
             return []
 
     async def async_query_products(
@@ -207,10 +249,11 @@ class KeepaConnector:
         domain: str = "US",
         history: bool = True,
         stats: int = 180,
+        offers: int = 0,
     ) -> List[Dict[str, Any]]:
-        """异步版商品历史查询"""
+        """异步版商品历史查询。offers 默认 0 节省 token，见 query_products 说明"""
         return await asyncio.to_thread(
-            self.query_products, asins, domain, history, stats
+            self.query_products, asins, domain, history, stats, offers
         )
 
     # ── 价格异动（Deal API） ──
@@ -223,53 +266,60 @@ class KeepaConnector:
         max_results: int = 50,
     ) -> List[Dict[str, Any]]:
         """
-        获取最近价格异动的商品（用于监控告警）
-        
+        获取最近价格异动的商品（Keepa REST /deal 端点，用于监控告警）
+
         Args:
             domain: 市场
-            min_rating: 最低评分（0-50，对应0-5星）
+            min_rating: 最低评分（0-50，对应 0-5 星）
             min_reviews: 最低评论数
             max_results: 最大返回数量
-            
+
         Returns:
             价格异动商品列表
         """
-        api = self._get_sync_api()
+        deal_selection = {
+            "page": 0,
+            "domainId": self._domain_to_id(domain),
+            "excludeCategories": [],
+            "includeCategories": [],
+            "priceTypes": [0, 1],  # 0=Amazon, 1=New
+            "deltaPercent": {"min": 10, "max": 100},  # 降价 10% 以上
+            "current": {"min": 1, "max": 99999},
+            "avg": {"min": 1, "max": 99999},
+            "rating": {"min": min_rating, "max": 50},
+            "reviewCount": {"min": min_reviews, "max": 999999},
+        }
         try:
-            logger.info(f"Keepa 获取价格异动商品 (domain={domain})")
-            # Deal API 参数
-            deal_params = {
-                "page": 0,
-                "domainId": self._domain_to_id(domain),
-                "excludeCategories": [],
-                "includeCategories": [],
-                "priceTypes": [0, 1],  # 0=Amazon, 1=New
-                "deltaPercent": {"min": 10, "max": 100},  # 降价10%以上
-                "current": {"min": 1, "max": 99999},
-                "avg": {"min": 1, "max": 99999},
-                "rating": {"min": min_rating, "max": 50},
-                "reviewCount": {"min": min_reviews, "max": 999999},
-            }
-            deals = api.deals(deal_params)
-            
+            logger.info(f"Keepa /deal 获取价格异动 (domain={domain})")
+            # /deal 端点：selection 用 URL-encoded JSON 传
+            data = self._get("deal", {"selection": json.dumps(deal_selection)})
+            deals = data.get("deals") or data  # Keepa 不同版本字段不一致
+            deal_rows = []
+            if isinstance(deals, dict):
+                deal_rows = deals.get("dr", []) or []
+            elif isinstance(deals, list):
+                deal_rows = deals
+
             results = []
-            if deals and "dr" in deals:
-                for d in deals["dr"][:max_results]:
-                    results.append({
-                        "asin": d.get("asin", ""),
-                        "title": d.get("title", ""),
-                        "current_price": d.get("current", -1) / 100 if d.get("current", -1) > 0 else None,
-                        "avg_price": d.get("avg", -1) / 100 if d.get("avg", -1) > 0 else None,
-                        "delta_percent": d.get("deltaPercent", 0),
-                        "rating": d.get("rating", 0) / 10,
-                        "review_count": d.get("reviewCount", 0),
-                    })
-            
-            logger.info(f"Keepa 获取到 {len(results)} 个价格异动商品")
+            for d in deal_rows[:max_results]:
+                results.append({
+                    "asin": d.get("asin", ""),
+                    "title": d.get("title", ""),
+                    "current_price": d.get("current", -1) / 100 if d.get("current", -1) > 0 else None,
+                    "avg_price": d.get("avg", -1) / 100 if d.get("avg", -1) > 0 else None,
+                    "delta_percent": d.get("deltaPercent", 0),
+                    "rating": d.get("rating", 0) / 10,
+                    "review_count": d.get("reviewCount", 0),
+                })
+
+            logger.info(
+                f"Keepa /deal 获取到 {len(results)} 个商品 "
+                f"(tokensLeft={data.get('tokensLeft')})"
+            )
             return results
-            
+
         except Exception as e:
-            logger.error(f"Keepa Deal API 失败: {e}")
+            logger.error(f"Keepa /deal 失败: {e}")
             return []
 
     async def async_get_deals(
@@ -288,124 +338,111 @@ class KeepaConnector:
 
     def _parse_product(self, p: Dict, stats_days: int = 180) -> Optional[Dict[str, Any]]:
         """
-        将 Keepa 原始商品数据解析为标准化格式
-        
+        将 Keepa 原生 REST /product 返回的单个商品对象解析为标准化格式
+
         标准化字段：
         - asin, title, brand, category
         - current_price, avg_price_30d, avg_price_90d, min_price_90d, max_price_90d
-        - current_bsr, avg_bsr_30d, avg_bsr_90d, bsr_trend（上升/下降/稳定）
+        - current_bsr, avg_bsr_30d, avg_bsr_90d, bsr_trend（improving/declining/stable/unknown）
         - monthly_sold（月销量估算）
-        - review_count, rating
+        - review_count, rating（仅当请求时传 rating=1 才有值）
         - new_offer_count（卖家数量）
-        - price_history, bsr_history（最近N条历史点）
+        - price_history, bsr_history（最近 N 条历史点）
+
+        关键格式说明（native REST 不经 SDK 规范化）：
+        - p["csv"][i] 是 [ts, val, ts, val, ...] 或 None
+        - p["stats"]["min"|"max"|"minInInterval"|"maxInInterval"][i] 是 [ts, val] 元组
+        - p["stats"]["avg"|"avg30"|"avg90"|"avg180"|"current"][i] 是平铺标量数组（按 CSV type 索引）
         """
         try:
             asin = p.get("asin", "")
             if not asin:
                 return None
 
-            # ── 基础信息 ──
-            title = p.get("title", "")
-            brand = p.get("brand", "")
-            
-            # 类目
-            categories = p.get("categories", [])
+            title = p.get("title", "") or ""
+            brand = p.get("brand", "") or ""
+
+            categories = p.get("categories") or []
             category = categories[0] if categories else 0
 
-            # ── 价格数据 ──
-            stats = p.get("stats", {}) or {}
-            
-            # 当前价格（Amazon 官方价，单位：美分）
-            current_price_raw = p.get("csv", [None] * 20)
-            amazon_csv = current_price_raw[0] if len(current_price_raw) > 0 else None
-            current_price = None
-            if amazon_csv and len(amazon_csv) >= 2:
-                last_price = amazon_csv[-1]
-                if last_price > 0:
-                    current_price = last_price / 100
+            csv = p.get("csv") or []
+            stats_obj = p.get("stats") or {}
 
-            # 统计摘要（stats 字段）
-            avg_price_30d = None
-            avg_price_90d = None
-            min_price_90d = None
-            max_price_90d = None
-            
-            if stats:
-                # stats 结构：{"avg": [30d_avg, 90d_avg, 180d_avg, ...], ...}
-                avg_list = stats.get("avg", [])
-                if len(avg_list) > 0 and avg_list[0] > 0:
-                    avg_price_30d = avg_list[0] / 100
-                if len(avg_list) > 1 and avg_list[1] > 0:
-                    avg_price_90d = avg_list[1] / 100
-                
-                min_list = stats.get("min", [])
-                max_list = stats.get("max", [])
-                if len(min_list) > 1 and min_list[1] > 0:
-                    min_price_90d = min_list[1] / 100
-                if len(max_list) > 1 and max_list[1] > 0:
-                    max_price_90d = max_list[1] / 100
+            def _csv(i: int):
+                """安全取 csv[i]；None / 越界返回 None"""
+                return csv[i] if i < len(csv) and csv[i] else None
 
-            # ── BSR（Best Seller Rank）数据 ──
-            # csv[11] = SALES (BSR)
-            csv_data = p.get("csv", [])
-            bsr_csv = csv_data[11] if len(csv_data) > 11 else None
-            
-            current_bsr = None
-            avg_bsr_30d = None
-            avg_bsr_90d = None
-            bsr_trend = "unknown"
-            
-            if bsr_csv and len(bsr_csv) >= 2:
-                # 当前 BSR（最后一个有效值）
-                for i in range(len(bsr_csv) - 1, -1, -2):
-                    if i >= 1 and bsr_csv[i] > 0:
-                        current_bsr = bsr_csv[i]
-                        break
-                
-                # BSR 趋势分析（比较最近30天均值 vs 前30天均值）
-                bsr_trend = self._calc_bsr_trend(bsr_csv)
-            
-            # BSR 统计摘要
-            if stats:
-                bsr_stats = stats.get("salesRankAvg", [])
-                if len(bsr_stats) > 0 and bsr_stats[0] > 0:
-                    avg_bsr_30d = bsr_stats[0]
-                if len(bsr_stats) > 1 and bsr_stats[1] > 0:
-                    avg_bsr_90d = bsr_stats[1]
+            def _last_csv_value(series):
+                """[ts, val, ts, val, ...] 中最后一个非 -1 的 val"""
+                if not series or len(series) < 2:
+                    return None
+                for k in range(len(series) - 1, 0, -2):
+                    v = series[k]
+                    if isinstance(v, (int, float)) and v != -1:
+                        return v
+                return None
+
+            def _stats_scalar(key: str, idx: int):
+                """读 stats[key][idx]。
+                兼容两种 shape：平铺 [val, val, ...] 和 2D [[ts, val], ...]。
+                返回原始整数（价格单位仍是美分），-1/None 视作无数据返回 None"""
+                arr = stats_obj.get(key)
+                if not isinstance(arr, list) or len(arr) <= idx:
+                    return None
+                entry = arr[idx]
+                if isinstance(entry, list):
+                    val = entry[1] if len(entry) >= 2 else None
+                else:
+                    val = entry
+                if isinstance(val, (int, float)) and val != -1:
+                    return val
+                return None
+
+            def _cents_to_usd(v):
+                return v / 100 if isinstance(v, (int, float)) and v > 0 else None
+
+            # ── 价格 ──
+            amazon_csv = _csv(_CSV_AMAZON)
+            current_price = _cents_to_usd(_last_csv_value(amazon_csv))
+            # Amazon 下架时回落到 3P New Marketplace 最低价
+            if current_price is None:
+                new_csv = _csv(_CSV_NEW)
+                current_price = _cents_to_usd(_last_csv_value(new_csv))
+
+            avg_price_30d = _cents_to_usd(_stats_scalar("avg30", _CSV_AMAZON))
+            avg_price_90d = _cents_to_usd(_stats_scalar("avg90", _CSV_AMAZON))
+            min_price_90d = _cents_to_usd(_stats_scalar("min", _CSV_AMAZON))
+            max_price_90d = _cents_to_usd(_stats_scalar("max", _CSV_AMAZON))
+
+            # ── BSR ──
+            bsr_csv = _csv(_CSV_SALES)
+            current_bsr = _last_csv_value(bsr_csv)
+            avg_bsr_30d = _stats_scalar("avg30", _CSV_SALES)
+            avg_bsr_90d = _stats_scalar("avg90", _CSV_SALES)
+            bsr_trend = self._calc_bsr_trend(bsr_csv) if bsr_csv else "unknown"
 
             # ── 销量估算 ──
-            monthly_sold = p.get("monthlySold", 0) or 0
+            monthly_sold = p.get("monthlySold") or 0
 
-            # ── 评论数据 ──
-            # csv[16] = RATING, csv[17] = COUNT_REVIEWS
-            rating_csv = csv_data[16] if len(csv_data) > 16 else None
-            review_csv = csv_data[17] if len(csv_data) > 17 else None
-            
-            current_rating = None
-            current_reviews = 0
-            
-            if rating_csv and len(rating_csv) >= 2:
-                last_rating = rating_csv[-1]
-                if last_rating > 0:
-                    current_rating = last_rating / 10  # Keepa 评分 * 10
-            
-            if review_csv and len(review_csv) >= 2:
-                last_reviews = review_csv[-1]
-                if last_reviews > 0:
-                    current_reviews = last_reviews
+            # ── 评论（需请求时传 rating=1，否则 csv[16/17] 为 None） ──
+            rating_csv = _csv(_CSV_RATING)
+            last_rating = _last_csv_value(rating_csv)
+            current_rating = last_rating / 10 if last_rating else None
+
+            review_csv = _csv(_CSV_COUNT_REVIEWS)
+            last_reviews = _last_csv_value(review_csv)
+            current_reviews = last_reviews or 0
 
             # ── 卖家数量 ──
-            # csv[11] 的 newOfferCount
-            new_offer_count = p.get("newOfferCount", 0) or 0
+            new_offer_count = p.get("newOfferCount") or 0
 
-            # ── 历史数据（最近50个点） ──
+            # ── 历史曲线（最近 50 个有效点） ──
             price_history = []
             bsr_history = []
-            
             if amazon_csv:
-                price_history = _decode_keepa_csv(amazon_csv[-100:])[-50:]
+                price_history = _decode_keepa_csv(amazon_csv[-100:], is_price=True)[-50:]
             if bsr_csv:
-                bsr_history = _decode_keepa_csv(bsr_csv[-100:])[-50:]
+                bsr_history = _decode_keepa_csv(bsr_csv[-100:], is_price=False)[-50:]
 
             return {
                 # 基础信息
@@ -413,38 +450,38 @@ class KeepaConnector:
                 "title": title,
                 "brand": brand,
                 "category_id": category,
-                
+
                 # 价格
                 "current_price": current_price,
                 "avg_price_30d": avg_price_30d,
                 "avg_price_90d": avg_price_90d,
                 "min_price_90d": min_price_90d,
                 "max_price_90d": max_price_90d,
-                
+
                 # BSR（排名越小越好）
                 "current_bsr": current_bsr,
                 "avg_bsr_30d": avg_bsr_30d,
                 "avg_bsr_90d": avg_bsr_90d,
-                "bsr_trend": bsr_trend,  # "improving" / "declining" / "stable" / "unknown"
-                
+                "bsr_trend": bsr_trend,  # improving / declining / stable / unknown
+
                 # 销量
                 "monthly_sold": monthly_sold,
-                
+
                 # 评论
                 "rating": current_rating,
                 "review_count": current_reviews,
-                
+
                 # 竞争
                 "seller_count": new_offer_count,
-                
-                # 历史曲线（用于图表展示）
+
+                # 历史曲线
                 "price_history": price_history,
                 "bsr_history": bsr_history,
-                
+
                 # 数据来源
                 "data_source": "keepa",
             }
-            
+
         except Exception as e:
             logger.warning(f"解析商品 {p.get('asin', '?')} 失败: {e}")
             return None

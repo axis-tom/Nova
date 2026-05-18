@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     KEEPA_MAX_ASINS_PER_QUERY: int = 20            # 每次最多查询 ASIN 数
     KEEPA_DEAL_MAX_RESULTS: int = 30               # Deal API 每次最多返回数量
 
+    # Amazon 监控调度器开关
+    # 默认关闭：避免每 6 小时自动跑 product_collector 偷烧 Keepa token
+    # 显式设为 1/true/yes 才会在启动时拉起后台定时任务
+    ENABLE_AMAZON_SCHEDULER: bool = False
+
     class Config:
         env_file = Path(__file__).resolve().parent / ".env"
         env_file_encoding = "utf-8"
