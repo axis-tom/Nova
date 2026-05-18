@@ -328,36 +328,67 @@ class KeepaConnector:
 
         # Keepa 单次最多 100 个
         asins = asins[:100]
+
+        # ── 缓存查询 ──
+        from nova_agent_system.keepa_cache import get_cache
+        cache = get_cache()
+        cached: Dict[str, Dict] = cache.get_many(asins, domain) if cache else {}
+        uncached = [a for a in asins if a not in cached]
+
+        if not uncached:
+            logger.info(
+                f"Keepa 缓存全部命中 {len(cached)}/{len(asins)} ASIN，跳过 API"
+            )
+            return [cached[a] for a in asins if a in cached]
+
+        if cached:
+            logger.info(
+                f"Keepa 缓存命中 {len(cached)}/{len(asins)}，"
+                f"API 查询剩余 {len(uncached)}"
+            )
+
+        # ── 调 API 查未命中的 ASIN ──
         domain_id = self._DOMAIN_MAP.get(domain.upper(), 1)
         params: Dict[str, Any] = {
             "domain": domain_id,
-            "asin": ",".join(asins),
+            "asin": ",".join(uncached),
             "history": 1 if history else 0,
         }
-        # Keepa /product 拒绝 offers=0 —— 只在 >0 时传，等价于"不要 offer 数据"
         if offers and offers > 0:
             params["offers"] = offers
         if stats:
             params["stats"] = stats
 
         logger.info(
-            f"Keepa /product 查询 {len(asins)} 个 ASIN "
+            f"Keepa /product 查询 {len(uncached)} 个 ASIN "
             f"(domain={domain}, history={history}, stats={stats}, offers={offers})"
         )
         data = self._get("product", params)
         raw_products = data.get("products", []) or []
-        results = []
+        new_results = []
         for p in raw_products:
             parsed = self._parse_product(p, stats)
             if parsed:
-                results.append(parsed)
+                new_results.append(parsed)
 
         logger.info(
-            f"Keepa 成功解析 {len(results)}/{len(raw_products)} 个商品 "
+            f"Keepa 成功解析 {len(new_results)}/{len(raw_products)} 个商品 "
             f"(tokensLeft={data.get('tokensLeft')}, "
             f"tokensConsumed={data.get('tokensConsumed')})"
         )
-        return results
+
+        # ── 写入缓存 ──
+        if cache and new_results:
+            try:
+                cache.put_many(new_results, domain)
+            except Exception as e:
+                logger.warning(f"Keepa 缓存写入失败: {e}")
+
+        # ── 合并（保持原 asins 顺序）──
+        merged = {**cached}
+        for p in new_results:
+            merged[p["asin"]] = p
+        return [merged[a] for a in asins if a in merged]
 
     async def async_query_products(
         self,

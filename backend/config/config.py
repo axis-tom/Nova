@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     KEEPA_MAX_KEYWORDS_PER_RUN: int = 5            # 每次最多搜索关键词数
     KEEPA_MAX_ASINS_PER_QUERY: int = 20            # 每次最多查询 ASIN 数
     KEEPA_DEAL_MAX_RESULTS: int = 30               # Deal API 每次最多返回数量
+    KEEPA_CACHE_TTL_HOURS: int = 6                 # ASIN 缓存 TTL（小时），0 = 禁用缓存
 
     # Amazon 监控调度器开关
     # 默认关闭：避免每 6 小时自动跑 product_collector 偷烧 Keepa token
