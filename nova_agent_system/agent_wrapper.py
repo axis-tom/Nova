@@ -60,9 +60,13 @@ AGENT_REGISTRY = [
     },
     {
         "name": "market_analyst",
-        "description": "Amazon 市场分析（product_selection 模块）：分析市场趋势、需求变化、新品机会。适合回答「这个市场趋势怎么样」类问题",
-        "input_example": '{"keywords": ["bluetooth earbuds"]}',
-        "requires_upstream": [],
+        "description": (
+            "Amazon 市场分析：基于 Keepa 真实数据分析市场趋势、品牌分布、价格带、机会/风险。"
+            "支持 analysis_type='market_trends'（默认）或 'roi_analysis'（盈利评估）。"
+            "**必须先调用 product_collector**，读取 state.collected_products"
+        ),
+        "input_example": '{"analysis_type": "market_trends"}  # 必须先有 product_collector 的 collected_products',
+        "requires_upstream": ["product_collector"],
     },
     {
         "name": "competitor_analyst",

@@ -2,98 +2,52 @@
 市场分析 Agent - 电商选品分析场景
 
 职责：
-1. 读取商品、市场趋势模拟数据
-2. 调用 foundation/cognition/ 的分析能力进行市场趋势分析
+1. 读取 state.collected_products（Keepa 采集的真实商品数据）
+2. 分析市场趋势：价格/BSR/品牌分布、趋势方向
 3. 识别市场机会点和风险点
-4. 进行盈利评估（ROI 分析）
+4. 进行盈利评估（基于 Keepa monthly_sold 估算）
 
-继承自 common/core/agent.py 的 Agent 基类
+数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
 """
 
-import json
-import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List
+from datetime import datetime
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
+from backend.utils.logger import logger
 
 
 class MarketAnalystAgent(Agent):
-    """市场分析 Agent - 负责市场趋势分析和盈利评估"""
+    """市场分析 Agent — 基于 Keepa 真实数据做市场趋势分析和盈利评估"""
 
     name = "market_analyst"
-    description = "电商选品市场分析 Agent，负责市场趋势分析和盈利评估"
-
-    def __init__(self):
-        """初始化市场分析 Agent"""
-        self._data_cache = {}
-
-    def _load_mock_data(self) -> Dict[str, Any]:
-        """
-        加载模拟数据
-        从 product_selection/data/ 目录读取 JSON 文件
-        
-        Returns:
-            Dict 包含 products, market_trends 等数据
-        """
-        if self._data_cache:
-            return self._data_cache
-
-        data_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data"
-        )
-
-        # 加载商品数据
-        products_path = os.path.join(data_dir, "mock_products.json")
-        if os.path.exists(products_path):
-            with open(products_path, "r", encoding="utf-8") as f:
-                self._data_cache["products"] = json.load(f).get("products", [])
-        else:
-            self._data_cache["products"] = []
-
-        # 加载市场趋势数据
-        trends_path = os.path.join(data_dir, "mock_market_trends.json")
-        if os.path.exists(trends_path):
-            with open(trends_path, "r", encoding="utf-8") as f:
-                self._data_cache["market_trends"] = json.load(f).get("market_trends", {})
-        else:
-            self._data_cache["market_trends"] = {}
-
-        return self._data_cache
+    description = "电商选品市场分析 Agent，基于 Keepa 数据做市场趋势和盈利评估"
 
     def run(self, state: State) -> State:
-        """
-        执行市场分析逻辑
-        
-        根据 state 中的 analysis_type 参数决定执行：
-        - "market_trends": 市场趋势分析
-        - "roi_analysis": 盈利评估（ROI 分析）
-        
-        Args:
-            state: 状态对象，包含 analysis_type 等参数
-            
-        Returns:
-            修改后的状态对象，包含分析结果
-        """
         state.add_event("market_analyst_start")
-
-        # 获取分析类型
         analysis_type = state.get("analysis_type", "market_trends")
         state.set_meta("analysis_type", analysis_type)
 
         try:
-            # 加载数据
-            data = self._load_mock_data()
+            products: List[Dict] = state.get("collected_products", []) or []
+            if not products:
+                state.set("result", {
+                    "analysis_type": analysis_type,
+                    "error": "无商品数据，请先调用 product_collector 采集商品",
+                })
+                state.add_event("market_analyst_no_products")
+                return state
 
             if analysis_type == "market_trends":
-                result = self._analyze_market_trends(data, state)
+                result = self._analyze_market_trends(products)
             elif analysis_type == "roi_analysis":
-                result = self._analyze_profitability(data, state)
+                profit_margin = state.get("profit_margin", 0.25)
+                result = self._analyze_profitability(products, profit_margin)
             else:
                 result = {
                     "error": f"未知的分析类型: {analysis_type}",
-                    "available_types": ["market_trends", "roi_analysis"]
+                    "available_types": ["market_trends", "roi_analysis"],
                 }
 
             state.set("result", result)
@@ -101,289 +55,298 @@ class MarketAnalystAgent(Agent):
             state.add_event("market_analyst_success")
 
         except Exception as e:
+            logger.error(f"[MarketAnalyst] Error: {e}")
             state.set("error", str(e))
             state.set_meta("analysis_completed", False)
-            state.add_event(f"market_analyst_error: {str(e)}")
+            state.add_event(f"market_analyst_error: {e}")
 
         return state
 
-    def _analyze_market_trends(self, data: Dict[str, Any], state: State) -> Dict[str, Any]:
-        """
-        市场趋势分析
-        
-        分析商品数据和市场趋势数据，识别：
-        - 市场总体概况
-        - 月度趋势变化
-        - 品类洞察
-        - 机会点
-        - 风险点
-        
-        Args:
-            data: 加载的模拟数据
-            state: 状态对象
-            
-        Returns:
-            市场分析结果
-        """
-        products = data.get("products", [])
-        market_trends = data.get("market_trends", {})
+    # ── 市场趋势分析 ──
 
-        # 1. 商品基础统计
-        total_products = len(products)
-        avg_price = sum(p["price"] for p in products) / total_products if total_products > 0 else 0
-        total_sales = sum(p["sales_volume"] for p in products)
-        avg_rating = sum(p["rating"] for p in products) / total_products if total_products > 0 else 0
+    def _analyze_market_trends(self, products: List[Dict]) -> Dict[str, Any]:
+        total = len(products)
 
-        # 2. 品类分布分析
-        category_stats = {}
+        # 基础统计
+        prices = [p["current_price"] for p in products if p.get("current_price")]
+        bsr_list = [p["current_bsr"] for p in products if p.get("current_bsr")]
+        ratings = [p["rating"] for p in products if p.get("rating")]
+        avg_price = sum(prices) / len(prices) if prices else 0
+        avg_bsr = sum(bsr_list) / len(bsr_list) if bsr_list else 0
+        avg_rating = sum(ratings) / len(ratings) if ratings else 0
+        total_monthly_sales = sum(p.get("monthly_sold", 0) for p in products)
+
+        # BSR 趋势分布
+        bsr_trend_dist = {"improving": 0, "declining": 0, "stable": 0, "unknown": 0}
         for p in products:
-            cat = p["category"]
-            if cat not in category_stats:
-                category_stats[cat] = {
-                    "product_count": 0,
-                    "total_sales": 0,
-                    "total_reviews": 0,
-                    "avg_price": 0,
-                    "avg_rating": 0,
-                    "products": []
-                }
-            stats = category_stats[cat]
-            stats["product_count"] += 1
-            stats["total_sales"] += p["sales_volume"]
-            stats["total_reviews"] += p["review_count"]
-            stats["avg_price"] = (stats["avg_price"] * (stats["product_count"] - 1) + p["price"]) / stats["product_count"]
-            stats["avg_rating"] = (stats["avg_rating"] * (stats["product_count"] - 1) + p["rating"]) / stats["product_count"]
-            stats["products"].append(p["name"])
+            trend = p.get("bsr_trend", "unknown")
+            if trend in bsr_trend_dist:
+                bsr_trend_dist[trend] += 1
+            else:
+                bsr_trend_dist["unknown"] += 1
 
-        # 3. 趋势分析
-        monthly_trends = market_trends.get("monthly_trends", [])
-        category_insights = market_trends.get("category_insights", [])
-        overview = market_trends.get("overview", {})
+        improving_pct = bsr_trend_dist["improving"] / total if total else 0
+        declining_pct = bsr_trend_dist["declining"] / total if total else 0
+        if improving_pct > 0.5:
+            market_trend = "上升"
+        elif declining_pct > 0.5:
+            market_trend = "下降"
+        else:
+            market_trend = "稳定"
 
-        # 计算搜索量趋势
-        search_volumes = [m["search_volume"] for m in monthly_trends]
-        avg_search_volume = sum(search_volumes) / len(search_volumes) if search_volumes else 0
-        peak_month = max(monthly_trends, key=lambda m: m["search_volume"]) if monthly_trends else {}
-        low_month = min(monthly_trends, key=lambda m: m["search_volume"]) if monthly_trends else {}
+        # 品牌分布
+        brand_distribution = self._aggregate_by_brand(products)
 
-        # 4. 识别机会点
-        opportunities = []
-        for insight in category_insights:
-            if insight["recommendation"] in ["重点关注", "持续投入"]:
-                opportunities.append({
-                    "category": insight["category"],
-                    "annual_growth": insight["annual_growth"],
-                    "avg_margin": insight["avg_margin"],
-                    "competition_level": insight["competition_level"],
-                    "reason": f"{insight['category']}品类年增长率{insight['annual_growth']*100:.0f}%，"
-                              f"平均利润率{insight['avg_margin']*100:.0f}%，"
-                              f"竞争{insight['competition_level']}，建议{insight['recommendation']}"
-                })
+        # 价格带分析
+        price_band_analysis = self._analyze_price_bands(products)
 
-        # 5. 识别风险点
-        risks = []
-        for insight in category_insights:
-            if insight["competition_level"] == "高":
-                risks.append({
-                    "category": insight["category"],
-                    "risk_type": "竞争激烈",
-                    "detail": f"{insight['category']}品类竞争程度高，需差异化策略"
-                })
-        # 低增长品类风险
-        for insight in category_insights:
-            if insight["annual_growth"] < 0.15:
-                risks.append({
-                    "category": insight["category"],
-                    "risk_type": "增长放缓",
-                    "detail": f"{insight['category']}品类年增长率仅{insight['annual_growth']*100:.0f}%，市场增长空间有限"
-                })
+        # 机会识别
+        opportunities = self._identify_opportunities(products, price_band_analysis)
 
-        # 6. 热门关键词提取
-        hot_keywords = []
-        for month in monthly_trends:
-            hot_keywords.extend(month.get("hot_keywords", []))
-        # 去重并统计频率
-        keyword_freq = {}
-        for kw in hot_keywords:
-            keyword_freq[kw] = keyword_freq.get(kw, 0) + 1
-        top_keywords = sorted(keyword_freq.items(), key=lambda x: x[1], reverse=True)[:10]
+        # 风险识别
+        risks = self._identify_risks(products, bsr_trend_dist, total)
 
         return {
             "analysis_type": "market_trends",
             "summary": {
-                "total_products_analyzed": total_products,
+                "total_products_analyzed": total,
                 "average_price": round(avg_price, 2),
-                "total_sales_volume": total_sales,
+                "total_monthly_sales": total_monthly_sales,
                 "average_rating": round(avg_rating, 2),
-                "market_size": overview.get("total_market_size", "未知"),
-                "market_growth_rate": overview.get("growth_rate", 0),
-                "active_buyers": overview.get("active_buyers", "未知")
+                "average_bsr": round(avg_bsr),
+                "market_trend": market_trend,
             },
-            "category_distribution": {
-                cat: {
-                    "product_count": stats["product_count"],
-                    "total_sales": stats["total_sales"],
-                    "avg_price": round(stats["avg_price"], 2),
-                    "avg_rating": round(stats["avg_rating"], 2)
-                }
-                for cat, stats in sorted(
-                    category_stats.items(),
-                    key=lambda x: x[1]["total_sales"],
-                    reverse=True
-                )
-            },
-            "trend_analysis": {
-                "avg_monthly_search_volume": int(avg_search_volume),
-                "peak_month": {
-                    "month": peak_month.get("month"),
-                    "search_volume": peak_month.get("search_volume"),
-                    "hot_keywords": peak_month.get("hot_keywords", [])
-                } if peak_month else {},
-                "low_month": {
-                    "month": low_month.get("month"),
-                    "search_volume": low_month.get("search_volume")
-                } if low_month else {},
-                "sales_index_trend": [
-                    {"month": m["month"], "sales_index": m["sales_index"]}
-                    for m in monthly_trends
-                ]
-            },
+            "brand_distribution": brand_distribution,
+            "price_band_analysis": price_band_analysis,
+            "bsr_trend_distribution": bsr_trend_dist,
             "opportunities": opportunities,
             "risks": risks,
-            "hot_keywords": [{"keyword": kw, "frequency": freq} for kw, freq in top_keywords],
-            "category_insights": category_insights
+            "generated_at": datetime.now().isoformat(),
         }
 
-    def _analyze_profitability(self, data: Dict[str, Any], state: State) -> Dict[str, Any]:
-        """
-        盈利评估（ROI 分析）
-        
-        基于商品数据和竞品分析结果，评估各商品的盈利能力
-        
-        Args:
-            data: 加载的模拟数据
-            state: 状态对象
-            
-        Returns:
-            盈利评估结果
-        """
-        products = data.get("products", [])
-
-        # 获取竞品分析结果（如果已存在）
-        competitor_result = state.get("competitor_analysis_result", {})
-
-        # 对每个商品进行盈利评估
-        profitability_results = []
+    def _aggregate_by_brand(self, products: List[Dict]) -> Dict[str, Any]:
+        brands: Dict[str, Dict] = {}
         for p in products:
-            # 计算月均收入
-            monthly_revenue = p["price"] * p["sales_volume"]
-            # 计算月均利润
-            monthly_profit = monthly_revenue * p["profit_margin"]
-            # 估算库存成本（假设库存周转周期为30天）
-            inventory_cost = p["stock"] * p["price"] * 0.02  # 2% 库存持有成本
-            # 净月利润
-            net_monthly_profit = monthly_profit - inventory_cost
-            # ROI（月化）
-            monthly_roi = net_monthly_profit / (p["stock"] * p["price"]) if p["stock"] > 0 else 0
+            brand = p.get("brand") or "Unknown"
+            if brand not in brands:
+                brands[brand] = {
+                    "count": 0,
+                    "total_sales": 0,
+                    "_prices": [],
+                    "_ratings": [],
+                    "_bsr": [],
+                    "best_bsr_asin": None,
+                    "best_bsr_val": 999999,
+                }
+            b = brands[brand]
+            b["count"] += 1
+            b["total_sales"] += p.get("monthly_sold", 0)
+            if p.get("current_price"):
+                b["_prices"].append(p["current_price"])
+            if p.get("rating"):
+                b["_ratings"].append(p["rating"])
+            if p.get("current_bsr"):
+                b["_bsr"].append(p["current_bsr"])
+                if p["current_bsr"] < b["best_bsr_val"]:
+                    b["best_bsr_val"] = p["current_bsr"]
+                    b["best_bsr_asin"] = p.get("asin")
 
-            profitability_results.append({
-                "product_id": p["id"],
-                "product_name": p["name"],
-                "category": p["category"],
-                "price": p["price"],
-                "monthly_sales": p["sales_volume"],
-                "monthly_revenue": round(monthly_revenue, 2),
-                "profit_margin": p["profit_margin"],
-                "monthly_profit": round(monthly_profit, 2),
-                "inventory_cost": round(inventory_cost, 2),
-                "net_monthly_profit": round(net_monthly_profit, 2),
-                "monthly_roi": round(monthly_roi, 4),
-                "annualized_roi": round(monthly_roi * 12, 4),
-                "rating": p["rating"],
-                "review_count": p["review_count"]
+        result = {}
+        for brand, b in sorted(brands.items(), key=lambda x: x[1]["total_sales"], reverse=True):
+            result[brand] = {
+                "count": b["count"],
+                "total_sales": b["total_sales"],
+                "avg_price": round(sum(b["_prices"]) / len(b["_prices"]), 2) if b["_prices"] else None,
+                "avg_rating": round(sum(b["_ratings"]) / len(b["_ratings"]), 2) if b["_ratings"] else None,
+                "avg_bsr": round(sum(b["_bsr"]) / len(b["_bsr"])) if b["_bsr"] else None,
+                "best_bsr_asin": b["best_bsr_asin"],
+            }
+        return result
+
+    def _analyze_price_bands(self, products: List[Dict]) -> Dict[str, Any]:
+        bands = {
+            "<$20": {"min": 0, "max": 20},
+            "$20-50": {"min": 20, "max": 50},
+            "$50-100": {"min": 50, "max": 100},
+            "$100-200": {"min": 100, "max": 200},
+            "$200+": {"min": 200, "max": float("inf")},
+        }
+        result = {}
+        for label, rng in bands.items():
+            in_band = [
+                p for p in products
+                if p.get("current_price") and rng["min"] <= p["current_price"] < rng["max"]
+            ]
+            if not in_band:
+                result[label] = {"count": 0, "avg_bsr": None, "avg_rating": None, "avg_monthly_sold": None}
+                continue
+            bsr_vals = [p["current_bsr"] for p in in_band if p.get("current_bsr")]
+            rating_vals = [p["rating"] for p in in_band if p.get("rating")]
+            result[label] = {
+                "count": len(in_band),
+                "avg_bsr": round(sum(bsr_vals) / len(bsr_vals)) if bsr_vals else None,
+                "avg_rating": round(sum(rating_vals) / len(rating_vals), 2) if rating_vals else None,
+                "avg_monthly_sold": round(sum(p.get("monthly_sold", 0) for p in in_band) / len(in_band)),
+            }
+        return result
+
+    def _identify_opportunities(self, products: List[Dict], price_bands: Dict) -> List[Dict]:
+        opportunities = []
+
+        # 上升期 + 高评分 + 低评论（竞争小的成长商品）
+        rising_low_competition = [
+            p for p in products
+            if p.get("bsr_trend") == "improving"
+            and (p.get("rating") or 0) >= 4.0
+            and (p.get("review_count") or 0) < 500
+        ]
+        if rising_low_competition:
+            opportunities.append({
+                "opportunity": "上升期低竞争商品",
+                "evidence": f"{len(rising_low_competition)} 个商品 BSR 改善中、评分≥4.0、评论<500",
+                "strength": "高" if len(rising_low_competition) >= 3 else "中",
+                "asins": [p["asin"] for p in rising_low_competition[:5]],
             })
 
-        # 按 ROI 排序
-        profitability_results.sort(key=lambda x: x["monthly_roi"], reverse=True)
+        # 月销高 + 卖家少（供给不足）
+        high_demand_low_supply = [
+            p for p in products
+            if (p.get("monthly_sold") or 0) > 100
+            and (p.get("seller_count") or 0) < 5
+        ]
+        if high_demand_low_supply:
+            opportunities.append({
+                "opportunity": "需求旺盛但供给不足",
+                "evidence": f"{len(high_demand_low_supply)} 个商品月销>100 但卖家<5",
+                "strength": "高" if len(high_demand_low_supply) >= 2 else "中",
+                "asins": [p["asin"] for p in high_demand_low_supply[:5]],
+            })
 
-        # 计算整体统计
-        total_revenue = sum(r["monthly_revenue"] for r in profitability_results)
-        total_profit = sum(r["net_monthly_profit"] for r in profitability_results)
-        avg_roi = sum(r["monthly_roi"] for r in profitability_results) / len(profitability_results) if profitability_results else 0
+        # 价格带空白
+        for band, stats in price_bands.items():
+            if stats["count"] == 0:
+                opportunities.append({
+                    "opportunity": f"价格带空白：{band}",
+                    "evidence": f"该价格区间无商品，可能是差异化切入点",
+                    "strength": "中",
+                })
 
-        # 按品类汇总
-        category_profitability = {}
-        for r in profitability_results:
-            cat = r["category"]
-            if cat not in category_profitability:
-                category_profitability[cat] = {
-                    "product_count": 0,
-                    "total_revenue": 0,
-                    "total_profit": 0,
-                    "avg_roi": 0,
-                    "avg_margin": 0
-                }
-            cp = category_profitability[cat]
-            cp["product_count"] += 1
-            cp["total_revenue"] += r["monthly_revenue"]
-            cp["total_profit"] += r["net_monthly_profit"]
-            cp["avg_roi"] = (cp["avg_roi"] * (cp["product_count"] - 1) + r["monthly_roi"]) / cp["product_count"]
-            cp["avg_margin"] = (cp["avg_margin"] * (cp["product_count"] - 1) + r["profit_margin"]) / cp["product_count"]
+        return opportunities
 
-        # 推荐 Top 5 选品
-        top_picks = profitability_results[:5]
+    def _identify_risks(self, products: List[Dict], bsr_trend_dist: Dict, total: int) -> List[Dict]:
+        risks = []
+
+        # 市场萎缩
+        declining_pct = bsr_trend_dist.get("declining", 0) / total if total else 0
+        if declining_pct > 0.5:
+            risks.append({
+                "risk_type": "市场萎缩",
+                "detail": f"{declining_pct*100:.0f}% 的商品 BSR 呈下降趋势，市场可能在收缩",
+                "severity": "高",
+            })
+
+        # 竞争激烈
+        seller_counts = [p.get("seller_count", 0) for p in products if p.get("seller_count")]
+        avg_sellers = sum(seller_counts) / len(seller_counts) if seller_counts else 0
+        if avg_sellers > 20:
+            risks.append({
+                "risk_type": "竞争激烈",
+                "detail": f"平均每个商品有 {avg_sellers:.0f} 个卖家，竞争密度高",
+                "severity": "高" if avg_sellers > 50 else "中",
+            })
+
+        # 评论壁垒
+        review_counts = [p.get("review_count", 0) for p in products if p.get("review_count")]
+        avg_reviews = sum(review_counts) / len(review_counts) if review_counts else 0
+        if avg_reviews > 1000:
+            risks.append({
+                "risk_type": "评论壁垒",
+                "detail": f"平均评论数 {avg_reviews:.0f}，新进入者难以快速建立信任",
+                "severity": "高" if avg_reviews > 5000 else "中",
+            })
+
+        return risks
+
+    # ── 盈利评估 ──
+
+    def _analyze_profitability(
+        self, products: List[Dict], profit_margin: float = 0.25
+    ) -> Dict[str, Any]:
+        results = []
+        for p in products:
+            price = p.get("current_price") or 0
+            monthly_sold = p.get("monthly_sold") or 0
+            monthly_revenue = price * monthly_sold
+            est_profit = monthly_revenue * profit_margin
+
+            results.append({
+                "asin": p.get("asin"),
+                "title": (p.get("title") or "")[:60],
+                "brand": p.get("brand") or "Unknown",
+                "price": price,
+                "monthly_sold": monthly_sold,
+                "monthly_revenue": round(monthly_revenue, 2),
+                "est_monthly_profit": round(est_profit, 2),
+                "rating": p.get("rating"),
+                "current_bsr": p.get("current_bsr"),
+                "bsr_trend": p.get("bsr_trend"),
+                "review_count": p.get("review_count", 0),
+            })
+
+        results.sort(key=lambda x: x["monthly_revenue"], reverse=True)
+
+        total_revenue = sum(r["monthly_revenue"] for r in results)
+        total_profit = sum(r["est_monthly_profit"] for r in results)
+
+        # 按品牌汇总
+        brand_profit: Dict[str, Dict] = {}
+        for r in results:
+            brand = r["brand"]
+            if brand not in brand_profit:
+                brand_profit[brand] = {"count": 0, "revenue": 0, "est_profit": 0}
+            bp = brand_profit[brand]
+            bp["count"] += 1
+            bp["revenue"] += r["monthly_revenue"]
+            bp["est_profit"] += r["est_monthly_profit"]
+
+        for bp in brand_profit.values():
+            bp["revenue"] = round(bp["revenue"], 2)
+            bp["est_profit"] = round(bp["est_profit"], 2)
+
+        top_picks = [
+            {
+                "rank": i + 1,
+                "asin": r["asin"],
+                "title": r["title"],
+                "price": r["price"],
+                "monthly_revenue": r["monthly_revenue"],
+                "est_monthly_profit": r["est_monthly_profit"],
+                "rating": r["rating"],
+                "reason": (
+                    f"月收入 ${r['monthly_revenue']:,.0f}，"
+                    f"估利 ${r['est_monthly_profit']:,.0f}（{profit_margin*100:.0f}% margin），"
+                    f"BSR {r.get('current_bsr') or 'N/A'}，"
+                    f"评分 {r.get('rating') or 'N/A'}"
+                ),
+            }
+            for i, r in enumerate(results[:5])
+        ]
 
         return {
             "analysis_type": "roi_analysis",
             "summary": {
-                "total_products_evaluated": len(profitability_results),
+                "total_products_evaluated": len(results),
                 "total_monthly_revenue": round(total_revenue, 2),
-                "total_monthly_profit": round(total_profit, 2),
-                "average_monthly_roi": round(avg_roi, 4),
-                "average_annualized_roi": round(avg_roi * 12, 4)
+                "estimated_monthly_profit": round(total_profit, 2),
+                "default_profit_margin": profit_margin,
             },
-            "category_profitability": {
-                cat: {
-                    "product_count": cp["product_count"],
-                    "total_revenue": round(cp["total_revenue"], 2),
-                    "total_profit": round(cp["total_profit"], 2),
-                    "avg_roi": round(cp["avg_roi"], 4),
-                    "avg_margin": round(cp["avg_margin"], 4)
-                }
-                for cat, cp in sorted(
-                    category_profitability.items(),
-                    key=lambda x: x[1]["total_profit"],
-                    reverse=True
-                )
-            },
-            "product_profitability": profitability_results,
-            "top_picks": [
-                {
-                    "rank": i + 1,
-                    "product_name": tp["product_name"],
-                    "category": tp["category"],
-                    "price": tp["price"],
-                    "monthly_roi": tp["monthly_roi"],
-                    "annualized_roi": tp["annualized_roi"],
-                    "net_monthly_profit": tp["net_monthly_profit"],
-                    "rating": tp["rating"],
-                    "reason": f"月化ROI {tp['monthly_roi']*100:.2f}%，"
-                              f"年化ROI {tp['annualized_roi']*100:.2f}%，"
-                              f"月净利 ¥{tp['net_monthly_profit']:.0f}，"
-                              f"评分 {tp['rating']}"
-                }
-                for i, tp in enumerate(top_picks)
-            ]
+            "brand_profitability": dict(
+                sorted(brand_profit.items(), key=lambda x: x[1]["revenue"], reverse=True)
+            ),
+            "product_profitability": results,
+            "top_picks": top_picks,
+            "generated_at": datetime.now().isoformat(),
         }
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
-        """
-        向后兼容的 execute 方法
-        
-        Args:
-            input_data: AgentInput 对象
-            
-        Returns:
-            AgentOutput 对象
-        """
         return await super().execute(input_data)
