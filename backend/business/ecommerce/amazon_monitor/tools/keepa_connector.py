@@ -404,6 +404,7 @@ class KeepaConnector:
             "domain": domain_id,
             "asin": ",".join(uncached),
             "history": 1 if history else 0,
+            "rating": 1,
         }
         if offers and offers > 0:
             params["offers"] = offers
