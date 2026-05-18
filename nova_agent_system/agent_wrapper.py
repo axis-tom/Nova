@@ -21,8 +21,12 @@ _memory = MemoryStore()
 AGENT_REGISTRY = [
     {
         "name": "keyword_expander",
-        "description": "Amazon 关键词拓词：基于种子关键词扩展相关搜索词。适合回答「帮我找更多相关关键词」类问题；也是 product_collector 的常见前置步骤",
-        "input_example": '{"seed_keywords": ["bluetooth earbuds"], "expand_count": 20, "include_long_tail": true}',
+        "description": (
+            "Amazon 关键词拓词：基于种子关键词扩展相关搜索词。"
+            "如果 state 中已有 collected_products，会从竞品标题提取真实市场关键词（更精准）。"
+            "适合回答「帮我找更多相关关键词」类问题；也是 product_collector 的常见前置步骤"
+        ),
+        "input_example": '{"seed_keywords": ["portable fan"], "expand_count": 20, "include_long_tail": true}',
         "requires_upstream": [],
     },
     {

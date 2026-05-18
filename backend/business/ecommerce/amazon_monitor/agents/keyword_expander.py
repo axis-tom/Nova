@@ -1,21 +1,25 @@
 """
 关键词扩展 Agent - Amazon 监控场景
-对应文章第1步：关键词研究与扩展
 
 职责：
-1. 接收种子关键词（来自配置或前端）
-2. 基于规则扩展长尾词、相关词、竞品词
-3. 对关键词分组（品类/功能/场景/竞品）
-4. 输出扩展后的关键词列表供后续采集使用
+1. 接收种子关键词（来自用户或 state）
+2. 如果有 collected_products，从竞品标题提取真实市场关键词
+3. 基于规则 + 标题提取扩展长尾词、相关词
+4. 对关键词分组（品类/功能/场景/标题提取）
+5. 输出扩展后的关键词列表供后续采集使用
+
+数据源：seed_keywords（必须）+ state.collected_products（可选增强）
 """
 
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Tuple
+from collections import Counter
+
 from backend.common.core.agent import Agent
 from backend.common.core.state import State
 from backend.utils.logger import logger
 
 
-# 关键词扩展规则库（基于跨境电商常见模式）
 KEYWORD_MODIFIERS = {
     "quality": ["best", "top", "premium", "high quality", "professional"],
     "price": ["cheap", "affordable", "budget", "under $20", "under $50"],
@@ -24,7 +28,6 @@ KEYWORD_MODIFIERS = {
     "action": ["buy", "review", "vs", "alternative", "replacement"],
 }
 
-# 常见跨境电商品类关键词扩展模板
 CATEGORY_EXPANSIONS = {
     "earbuds": ["wireless earbuds", "bluetooth earbuds", "true wireless earbuds",
                 "noise cancelling earbuds", "earbuds with mic", "sport earbuds"],
@@ -42,65 +45,62 @@ CATEGORY_EXPANSIONS = {
     "watch": ["smart watch", "fitness tracker", "sport watch", "apple watch band"],
 }
 
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
+    "this", "that", "not", "no", "so", "if", "up", "out", "all", "can",
+    "has", "had", "do", "does", "will", "just", "more", "also", "very",
+    "only", "into", "over", "such", "than", "its", "you", "your", "our",
+    "-", "--", "&", "+", "/", "|",
+})
+
+_WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9'-]*[a-zA-Z0-9]|[a-zA-Z]")
+
 
 class KeywordExpanderAgent(Agent):
-    """
-    关键词扩展 Agent
-    基于种子关键词生成扩展词列表，为商品采集提供搜索词
-    """
+    """关键词扩展 Agent — 规则引擎 + 竞品标题提取"""
 
     name = "keyword_expander"
-    description = "Amazon 关键词扩展 Agent，基于种子词生成长尾词和相关词"
+    description = "Amazon 关键词扩展 Agent，基于种子词和竞品标题生成长尾词"
 
     def run(self, state: State) -> State:
-        """
-        执行关键词扩展
-
-        输入（从 state 读取）：
-          - seed_keywords: List[str] 种子关键词
-          - expand_count: int 每个种子词扩展数量（默认20）
-          - include_long_tail: bool 是否包含长尾词（默认True）
-
-        输出（写入 state）：
-          - expanded_keywords: List[str] 扩展后的关键词列表
-          - keyword_groups: Dict[str, List[str]] 按类型分组的关键词
-        """
         state.add_event("keyword_expander_start")
-        logger.info("[KeywordExpander] Starting keyword expansion")
 
         try:
-            # 读取输入参数
             seed_keywords: List[str] = state.get("seed_keywords", [])
             expand_count: int = state.get("expand_count", 20)
             include_long_tail: bool = state.get("include_long_tail", True)
+            products: List[Dict] = state.get("collected_products", []) or []
 
-            # 如果没有种子词，使用默认词
+            title_kw = self._extract_from_titles(products) if products else {}
+
+            if not seed_keywords and title_kw:
+                seed_keywords = title_kw.get("core_terms", [])[:5]
+                logger.info(f"[KeywordExpander] 无种子词，从标题提取: {seed_keywords}")
+
             if not seed_keywords:
-                seed_keywords = [
-                    "wireless earbuds",
-                    "bluetooth speaker",
-                    "phone stand",
-                    "laptop stand",
-                    "usb hub",
-                ]
-                logger.info(f"[KeywordExpander] No seed keywords provided, using defaults: {seed_keywords}")
+                state.set("error", "请提供 seed_keywords 或先调用 product_collector 采集商品")
+                state.set("expanded_keywords", [])
+                state.set("keyword_groups", {})
+                state.add_event("keyword_expander_no_seeds")
+                return state
 
-            # 执行扩展
-            expanded_keywords, keyword_groups = self._expand_keywords(
-                seed_keywords, expand_count, include_long_tail
+            expanded, groups = self._expand_keywords(
+                seed_keywords, expand_count, include_long_tail, title_kw
             )
 
-            # 写入结果
-            state.set("expanded_keywords", expanded_keywords)
-            state.set("keyword_groups", keyword_groups)
-            state.set_meta("keyword_count", len(expanded_keywords))
+            state.set("expanded_keywords", expanded)
+            state.set("keyword_groups", groups)
+            state.set_meta("keyword_count", len(expanded))
             state.set_meta("seed_count", len(seed_keywords))
+            state.set_meta("title_extracted", bool(title_kw))
 
             logger.info(
-                f"[KeywordExpander] Expanded {len(seed_keywords)} seeds → "
-                f"{len(expanded_keywords)} keywords in {len(keyword_groups)} groups"
+                f"[KeywordExpander] {len(seed_keywords)} seeds → "
+                f"{len(expanded)} keywords in {len(groups)} groups"
+                f"{' (含标题提取)' if title_kw else ''}"
             )
-            state.add_event(f"keyword_expander_success: {len(expanded_keywords)} keywords")
+            state.add_event(f"keyword_expander_success: {len(expanded)} keywords")
 
         except Exception as e:
             logger.error(f"[KeywordExpander] Error: {e}")
@@ -111,74 +111,119 @@ class KeywordExpanderAgent(Agent):
 
         return state
 
+    # ── 标题关键词提取 ──
+
+    def _extract_from_titles(self, products: List[Dict]) -> Dict[str, Any]:
+        """从竞品标题提取高频关键词和短语"""
+        brands = {(p.get("brand") or "").lower() for p in products} - {"", "unknown", "generic"}
+
+        word_counter: Counter = Counter()
+        bigram_counter: Counter = Counter()
+        all_words_per_title: List[List[str]] = []
+
+        for p in products:
+            title = p.get("title") or ""
+            words = [w.lower() for w in _WORD_RE.findall(title)]
+            filtered = [
+                w for w in words
+                if w not in _STOP_WORDS
+                and w not in brands
+                and len(w) > 2
+                and not w.isdigit()
+            ]
+
+            word_counter.update(filtered)
+            all_words_per_title.append(filtered)
+
+            for i in range(len(filtered) - 1):
+                bigram_counter[(filtered[i], filtered[i + 1])] += 1
+
+        min_freq = max(2, len(products) // 4)
+
+        core_terms = [w for w, c in word_counter.most_common(30) if c >= min_freq]
+
+        phrases = [
+            f"{a} {b}"
+            for (a, b), c in bigram_counter.most_common(20)
+            if c >= min_freq
+        ]
+
+        return {
+            "core_terms": core_terms,
+            "phrases": phrases,
+            "brands": sorted(brands),
+        }
+
+    # ── 关键词扩展 ──
+
     def _expand_keywords(
         self,
         seeds: List[str],
         expand_count: int,
         include_long_tail: bool,
-    ) -> tuple:
-        """
-        扩展关键词
-
-        Returns:
-            (expanded_keywords, keyword_groups)
-        """
-        all_keywords = set(seeds)
-        keyword_groups: Dict[str, List[str]] = {
+        title_kw: Dict[str, Any],
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        all_keywords = set(s.lower() for s in seeds)
+        groups: Dict[str, List[str]] = {
             "seed": list(seeds),
-            "long_tail": [],
-            "feature_based": [],
-            "price_based": [],
-            "audience_based": [],
-            "competitor_related": [],
         }
 
+        def _add(kw: str, group: str):
+            kw_lower = kw.lower()
+            words = kw_lower.split()
+            if len(words) != len(set(words)):
+                return
+            if kw_lower not in all_keywords:
+                all_keywords.add(kw_lower)
+                groups.setdefault(group, []).append(kw)
+
+        # ── Phase 1: 标题提取词（如有） ──
+        if title_kw:
+            for phrase in title_kw.get("phrases", []):
+                _add(phrase, "title_extracted")
+
+            phrases_set = set(title_kw.get("phrases", []))
+            core = title_kw.get("core_terms", [])
+            for seed in seeds:
+                seed_lower = seed.lower()
+                for term in core[:15]:
+                    if term not in seed_lower:
+                        combo = f"{seed} {term}"
+                        if combo not in phrases_set:
+                            _add(combo, "title_cross")
+
+        # ── Phase 2: 规则引擎 ──
         for seed in seeds:
             seed_lower = seed.lower()
 
-            # 1. 基于品类模板扩展
-            for category_key, expansions in CATEGORY_EXPANSIONS.items():
-                if category_key in seed_lower:
-                    for exp in expansions[:5]:
-                        if exp not in all_keywords:
-                            all_keywords.add(exp)
-                            keyword_groups["long_tail"].append(exp)
+            if not title_kw:
+                for cat_key, expansions in CATEGORY_EXPANSIONS.items():
+                    if cat_key in seed_lower:
+                        for exp in expansions[:5]:
+                            _add(exp, "category")
 
-            # 2. 功能修饰词扩展
             if include_long_tail:
-                for modifier in KEYWORD_MODIFIERS["feature"][:3]:
-                    kw = f"{modifier} {seed}"
-                    if kw not in all_keywords:
-                        all_keywords.add(kw)
-                        keyword_groups["feature_based"].append(kw)
+                for mod in KEYWORD_MODIFIERS["feature"][:3]:
+                    _add(f"{mod} {seed}", "feature_based")
 
-            # 3. 价格修饰词扩展
-            for modifier in KEYWORD_MODIFIERS["price"][:2]:
-                kw = f"{modifier} {seed}"
-                if kw not in all_keywords:
-                    all_keywords.add(kw)
-                    keyword_groups["price_based"].append(kw)
+            for mod in KEYWORD_MODIFIERS["price"][:2]:
+                _add(f"{mod} {seed}", "price_based")
 
-            # 4. 受众修饰词扩展
-            for modifier in KEYWORD_MODIFIERS["audience"][:2]:
-                kw = f"{seed} {modifier}"
-                if kw not in all_keywords:
-                    all_keywords.add(kw)
-                    keyword_groups["audience_based"].append(kw)
+            for mod in KEYWORD_MODIFIERS["audience"][:2]:
+                _add(f"{seed} {mod}", "audience_based")
 
-            # 5. 竞品相关词
-            for modifier in KEYWORD_MODIFIERS["action"][:2]:
-                kw = f"{seed} {modifier}"
-                if kw not in all_keywords:
-                    all_keywords.add(kw)
-                    keyword_groups["competitor_related"].append(kw)
+            for mod in KEYWORD_MODIFIERS["action"][:2]:
+                _add(f"{seed} {mod}", "competitor_related")
 
-        # 限制总数量
-        expanded_list = list(all_keywords)
-        if len(expanded_list) > expand_count * len(seeds):
-            expanded_list = expanded_list[:expand_count * len(seeds)]
+        # ── Phase 3: 品牌词（如有） ──
+        if title_kw:
+            for brand in title_kw.get("brands", [])[:5]:
+                for seed in seeds[:3]:
+                    _add(f"{brand} {seed}", "brand_related")
 
-        # 清理空分组
-        keyword_groups = {k: v for k, v in keyword_groups.items() if v}
+        max_total = expand_count * len(seeds)
+        expanded = list(all_keywords)[:max_total]
 
-        return expanded_list, keyword_groups
+        groups = {k: v for k, v in groups.items() if v}
+
+        return expanded, groups
