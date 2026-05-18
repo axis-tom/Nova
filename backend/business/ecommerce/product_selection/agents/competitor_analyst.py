@@ -2,356 +2,274 @@
 竞品分析 Agent - 电商选品分析场景
 
 职责：
-1. 读取竞品模拟数据
-2. 进行竞品对比分析
-3. 评估竞争优势和劣势
-4. 提出差异化建议
+1. 读取 state.collected_products（Keepa 采集的真实商品数据）
+2. 按品牌聚合，计算市场份额、价格、BSR、评分等竞争力指标
+3. 分层竞争格局（梯队划分）
+4. 识别差异化机会（价格带空白、低竞争品牌、BSR 上升机会）
 
-继承自 common/core/agent.py 的 Agent 基类
+数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
 """
 
-import json
-import os
 from typing import Any, Dict, List
+from datetime import datetime
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
+from backend.utils.logger import logger
 
 
 class CompetitorAnalystAgent(Agent):
-    """竞品分析 Agent - 负责竞品对比分析和差异化策略建议"""
+    """竞品分析 Agent — 基于 Keepa 真实数据做品牌级竞品对比"""
 
     name = "competitor_analyst"
-    description = "电商竞品分析 Agent，负责竞品对比分析和差异化策略建议"
-
-    def __init__(self):
-        """初始化竞品分析 Agent"""
-        self._data_cache = {}
-
-    def _load_mock_data(self) -> Dict[str, Any]:
-        """
-        加载竞品模拟数据
-        
-        Returns:
-            Dict 包含 competitors 数据
-        """
-        if self._data_cache:
-            return self._data_cache
-
-        data_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data"
-        )
-
-        competitors_path = os.path.join(data_dir, "mock_competitors.json")
-        if os.path.exists(competitors_path):
-            with open(competitors_path, "r", encoding="utf-8") as f:
-                self._data_cache["competitors"] = json.load(f).get("competitors", [])
-        else:
-            self._data_cache["competitors"] = []
-
-        return self._data_cache
+    description = "电商竞品分析 Agent，基于 Keepa 数据做品牌对比和差异化分析"
 
     def run(self, state: State) -> State:
-        """
-        执行竞品分析逻辑
-        
-        Args:
-            state: 状态对象，包含 competitors 数据或 analysis_type 参数
-            
-        Returns:
-            修改后的状态对象，包含竞品分析结果
-        """
         state.add_event("competitor_analyst_start")
 
         try:
-            # 加载数据
-            data = self._load_mock_data()
-            competitors = data.get("competitors", [])
+            products: List[Dict] = state.get("collected_products", []) or []
+            if not products:
+                state.set("result", {
+                    "analysis_type": "competitor_benchmark",
+                    "error": "无商品数据，请先调用 product_collector 采集商品",
+                })
+                state.add_event("competitor_analyst_no_products")
+                return state
 
-            # 获取市场分析结果（如果已存在）
-            market_result = state.get("market_analysis_result", {})
-
-            # 执行竞品分析
-            result = self._analyze_competitors(competitors, market_result)
+            result = self._analyze_competitors(products)
 
             state.set("result", result)
             state.set_meta("analysis_completed", True)
             state.add_event("competitor_analyst_success")
 
         except Exception as e:
+            logger.error(f"[CompetitorAnalyst] Error: {e}")
             state.set("error", str(e))
             state.set_meta("analysis_completed", False)
-            state.add_event(f"competitor_analyst_error: {str(e)}")
+            state.add_event(f"competitor_analyst_error: {e}")
 
         return state
 
-    def _analyze_competitors(
-        self,
-        competitors: List[Dict[str, Any]],
-        market_result: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        竞品对比分析
-        
-        分析维度：
-        1. 市场份额分布
-        2. 价格区间对比
-        3. 品牌优劣势对比
-        4. 品类覆盖分析
-        5. 差异化机会识别
-        
-        Args:
-            competitors: 竞品列表
-            market_result: 市场分析结果（可选）
-            
-        Returns:
-            竞品分析结果
-        """
-        total_competitors = len(competitors)
+    def _analyze_competitors(self, products: List[Dict]) -> Dict[str, Any]:
+        # 按品牌聚合
+        brand_data = self._aggregate_brands(products)
+        total_sales = sum(b["total_sales"] for b in brand_data.values())
 
-        # 1. 市场份额分析
-        total_market_share = sum(c["market_share"] for c in competitors)
-        market_leaders = sorted(competitors, key=lambda c: c["market_share"], reverse=True)
-
-        # 2. 价格区间分析
-        price_ranges = []
-        for c in competitors:
-            price_ranges.append({
-                "brand": c["brand_name"],
-                "min_price": c["price_range"]["min"],
-                "max_price": c["price_range"]["max"],
-                "price_span": c["price_range"]["max"] - c["price_range"]["min"]
+        # 计算市场份额并排序
+        brand_list = []
+        for brand, b in brand_data.items():
+            share = b["total_sales"] / total_sales if total_sales > 0 else 0
+            brand_list.append({
+                "brand": brand,
+                "market_share": round(share, 4),
+                "product_count": b["count"],
+                "total_monthly_sales": b["total_sales"],
+                "avg_price": round(b["_price_sum"] / b["count"], 2) if b["count"] else 0,
+                "min_price": b["min_price"],
+                "max_price": b["max_price"],
+                "avg_bsr": round(b["_bsr_sum"] / b["_bsr_count"]) if b["_bsr_count"] else None,
+                "best_bsr": b["best_bsr"],
+                "best_bsr_asin": b["best_bsr_asin"],
+                "avg_rating": round(b["_rating_sum"] / b["_rating_count"], 2) if b["_rating_count"] else None,
+                "total_reviews": b["total_reviews"],
+                "avg_seller_count": round(b["_seller_sum"] / b["count"]) if b["count"] else 0,
+                "bsr_trends": b["bsr_trends"],
             })
 
-        # 3. 评分对比
+        brand_list.sort(key=lambda x: x["total_monthly_sales"], reverse=True)
+
+        # 竞争格局分层
+        landscape = self._analyze_landscape(brand_list)
+
+        # 差异化机会
+        differentiation = self._identify_differentiation(brand_list, products)
+
+        # 评分对比
         rating_comparison = sorted(
-            [{"brand": c["brand_name"], "avg_rating": c["avg_rating"]} for c in competitors],
+            [{"brand": b["brand"], "avg_rating": b["avg_rating"], "total_reviews": b["total_reviews"]}
+             for b in brand_list if b["avg_rating"] is not None],
             key=lambda x: x["avg_rating"],
-            reverse=True
+            reverse=True,
         )
 
-        # 4. 品类覆盖分析
-        category_coverage = {}
-        for c in competitors:
-            for cat in c["target_categories"]:
-                if cat not in category_coverage:
-                    category_coverage[cat] = []
-                category_coverage[cat].append(c["brand_name"])
+        # 价格区间对比
+        price_comparison = [
+            {
+                "brand": b["brand"],
+                "min_price": b["min_price"],
+                "max_price": b["max_price"],
+                "avg_price": b["avg_price"],
+                "price_span": round(b["max_price"] - b["min_price"], 2) if b["max_price"] and b["min_price"] else 0,
+            }
+            for b in brand_list
+        ]
 
-        # 5. 优劣势汇总
-        strengths_summary = {}
-        weaknesses_summary = {}
-        for c in competitors:
-            for s in c["strengths"]:
-                strengths_summary[s] = strengths_summary.get(s, 0) + 1
-            for w in c["weaknesses"]:
-                weaknesses_summary[w] = weaknesses_summary.get(w, 0) + 1
-
-        # 6. 差异化机会识别
-        differentiation_opportunities = self._identify_differentiation(
-            competitors, category_coverage, market_result
-        )
-
-        # 7. 竞争格局总结
-        competitive_landscape = self._analyze_competitive_landscape(
-            competitors, market_leaders
-        )
+        # 集中度
+        top3_share = sum(b["market_share"] for b in brand_list[:3])
+        leader_share = brand_list[0]["market_share"] if brand_list else 0
 
         return {
             "analysis_type": "competitor_benchmark",
             "summary": {
-                "total_competitors_analyzed": total_competitors,
-                "total_market_share_covered": total_market_share,
-                "market_concentration": "高" if market_leaders[0]["market_share"] > 0.2 else "中",
-                "top_3_market_share": round(
-                    sum(c["market_share"] for c in market_leaders[:3]), 4
-                )
+                "total_brands_analyzed": len(brand_list),
+                "total_products": len(products),
+                "total_monthly_sales": total_sales,
+                "market_concentration": "高" if leader_share > 0.3 else ("中" if top3_share > 0.5 else "低"),
+                "top_3_market_share": round(top3_share, 4),
             },
             "market_share_distribution": [
                 {
                     "rank": i + 1,
-                    "brand": c["brand_name"],
-                    "market_share": c["market_share"],
-                    "market_share_percent": f"{c['market_share']*100:.1f}%",
-                    "monthly_sales_estimate": c["monthly_sales_estimate"]
+                    "brand": b["brand"],
+                    "market_share": b["market_share"],
+                    "market_share_percent": f"{b['market_share']*100:.1f}%",
+                    "product_count": b["product_count"],
+                    "total_monthly_sales": b["total_monthly_sales"],
+                    "avg_price": b["avg_price"],
+                    "avg_bsr": b["avg_bsr"],
                 }
-                for i, c in enumerate(market_leaders)
+                for i, b in enumerate(brand_list)
             ],
-            "price_comparison": price_ranges,
+            "price_comparison": price_comparison,
             "rating_comparison": rating_comparison,
-            "category_coverage": {
-                cat: {
-                    "competitor_count": len(brands),
-                    "competitors": brands
+            "differentiation_opportunities": differentiation,
+            "competitive_landscape": landscape,
+            "generated_at": datetime.now().isoformat(),
+        }
+
+    def _aggregate_brands(self, products: List[Dict]) -> Dict[str, Dict]:
+        brands: Dict[str, Dict] = {}
+        for p in products:
+            brand = p.get("brand") or "Unknown"
+            if brand not in brands:
+                brands[brand] = {
+                    "count": 0,
+                    "total_sales": 0,
+                    "total_reviews": 0,
+                    "_price_sum": 0,
+                    "min_price": float("inf"),
+                    "max_price": 0,
+                    "_bsr_sum": 0,
+                    "_bsr_count": 0,
+                    "best_bsr": None,
+                    "best_bsr_asin": None,
+                    "_rating_sum": 0,
+                    "_rating_count": 0,
+                    "_seller_sum": 0,
+                    "bsr_trends": {"improving": 0, "declining": 0, "stable": 0, "unknown": 0},
                 }
-                for cat, brands in sorted(
-                    category_coverage.items(),
-                    key=lambda x: len(x[1]),
-                    reverse=True
-                )
-            },
-            "strengths_analysis": sorted(
-                [{"strength": k, "frequency": v} for k, v in strengths_summary.items()],
-                key=lambda x: x["frequency"],
-                reverse=True
-            ),
-            "weaknesses_analysis": sorted(
-                [{"weakness": k, "frequency": v} for k, v in weaknesses_summary.items()],
-                key=lambda x: x["frequency"],
-                reverse=True
-            ),
-            "differentiation_opportunities": differentiation_opportunities,
-            "competitive_landscape": competitive_landscape
+            b = brands[brand]
+            b["count"] += 1
+            b["total_sales"] += p.get("monthly_sold", 0)
+            b["total_reviews"] += p.get("review_count", 0)
+            b["_seller_sum"] += p.get("seller_count", 0)
+
+            price = p.get("current_price")
+            if price:
+                b["_price_sum"] += price
+                b["min_price"] = min(b["min_price"], price)
+                b["max_price"] = max(b["max_price"], price)
+
+            bsr = p.get("current_bsr")
+            if bsr:
+                b["_bsr_sum"] += bsr
+                b["_bsr_count"] += 1
+                if b["best_bsr"] is None or bsr < b["best_bsr"]:
+                    b["best_bsr"] = bsr
+                    b["best_bsr_asin"] = p.get("asin")
+
+            rating = p.get("rating")
+            if rating:
+                b["_rating_sum"] += rating
+                b["_rating_count"] += 1
+
+            trend = p.get("bsr_trend", "unknown")
+            if trend in b["bsr_trends"]:
+                b["bsr_trends"][trend] += 1
+
+        # 修正 inf
+        for b in brands.values():
+            if b["min_price"] == float("inf"):
+                b["min_price"] = None
+
+        return brands
+
+    def _analyze_landscape(self, brand_list: List[Dict]) -> Dict[str, Any]:
+        tiers = {"第一梯队": [], "第二梯队": [], "第三梯队": []}
+        for b in brand_list:
+            share = b["market_share"]
+            if share >= 0.2:
+                tiers["第一梯队"].append(b["brand"])
+            elif share >= 0.1:
+                tiers["第二梯队"].append(b["brand"])
+            else:
+                tiers["第三梯队"].append(b["brand"])
+
+        leader_count = len(tiers["第一梯队"])
+        if leader_count == 0:
+            entry_barrier = "低"
+            strategy = "市场分散，可直接进入并争夺份额"
+        elif leader_count <= 2:
+            entry_barrier = "中"
+            strategy = "差异化竞争，避免与头部品牌正面价格战，聚焦细分价格带"
+        else:
+            entry_barrier = "高"
+            strategy = "市场集中度高，建议寻找被忽略的细分需求或价格带切入"
+
+        return {
+            "tiers": tiers,
+            "market_leaders": [b["brand"] for b in brand_list[:3]],
+            "entry_barrier": entry_barrier,
+            "recommended_strategy": strategy,
         }
 
     def _identify_differentiation(
-        self,
-        competitors: List[Dict[str, Any]],
-        category_coverage: Dict[str, List[str]],
-        market_result: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """
-        识别差异化机会
-        
-        Args:
-            competitors: 竞品列表
-            category_coverage: 品类覆盖情况
-            market_result: 市场分析结果
-            
-        Returns:
-            差异化机会列表
-        """
+        self, brand_list: List[Dict], products: List[Dict]
+    ) -> List[Dict]:
         opportunities = []
 
-        # 1. 品类空白机会
-        all_categories = set()
-        for c in competitors:
-            all_categories.update(c["target_categories"])
-
-        # 检查市场分析中的推荐品类是否已有竞品覆盖
-        category_insights = market_result.get("category_insights", [])
-        for insight in category_insights:
-            cat = insight["category"]
-            if cat not in all_categories:
-                opportunities.append({
-                    "type": "品类空白",
-                    "category": cat,
-                    "description": f"{cat}品类尚无主要竞品覆盖，存在先发优势机会",
-                    "potential": "高",
-                    "action": f"优先布局{cat}品类，抢占市场空白"
-                })
-            elif len(category_coverage.get(cat, [])) <= 2:
-                opportunities.append({
-                    "type": "品类竞争不足",
-                    "category": cat,
-                    "description": f"{cat}品类仅有{len(category_coverage.get(cat, []))}家竞品，竞争格局尚未固化",
-                    "potential": "中高",
-                    "action": f"差异化进入{cat}品类，避免与头部竞品正面竞争"
-                })
-
-        # 2. 价格带空白机会
-        price_bands = [(0, 99), (100, 299), (300, 599), (600, 999), (1000, 1999), (2000, 5000)]
-        for band_min, band_max in price_bands:
-            brands_in_band = []
-            for c in competitors:
-                if c["price_range"]["min"] <= band_max and c["price_range"]["max"] >= band_min:
-                    brands_in_band.append(c["brand_name"])
-            if len(brands_in_band) <= 1:
+        # 1. 价格带空白
+        price_bands = [
+            ("<$20", 0, 20), ("$20-50", 20, 50), ("$50-100", 50, 100),
+            ("$100-200", 100, 200), ("$200+", 200, float("inf")),
+        ]
+        for label, lo, hi in price_bands:
+            in_band = [p for p in products if p.get("current_price") and lo <= p["current_price"] < hi]
+            if len(in_band) == 0:
                 opportunities.append({
                     "type": "价格带空白",
-                    "price_band": f"¥{band_min}-{band_max}",
-                    "competitors_in_band": brands_in_band,
-                    "description": f"¥{band_min}-{band_max} 价格带竞品较少，存在差异化定价机会",
+                    "detail": f"{label} 价格区间无商品覆盖，存在差异化定价机会",
                     "potential": "中",
-                    "action": f"针对 ¥{band_min}-{band_max} 价格带开发高性价比产品"
+                })
+            elif len(in_band) == 1:
+                opportunities.append({
+                    "type": "价格带低竞争",
+                    "detail": f"{label} 价格区间仅 1 个商品（{in_band[0].get('asin')}），竞争极低",
+                    "potential": "中高",
                 })
 
-        # 3. 竞品弱点利用
-        common_weaknesses = {}
-        for c in competitors:
-            for w in c["weaknesses"]:
-                if w not in common_weaknesses:
-                    common_weaknesses[w] = []
-                common_weaknesses[w].append(c["brand_name"])
-
-        for weakness, brands in common_weaknesses.items():
-            if len(brands) >= 2:
+        # 2. BSR 上升但品牌弱势（小品牌在起飞）
+        for b in brand_list:
+            improving = b["bsr_trends"].get("improving", 0)
+            total_trends = sum(b["bsr_trends"].values())
+            if total_trends > 0 and improving / total_trends > 0.5 and b["market_share"] < 0.1:
                 opportunities.append({
-                    "type": "竞品弱点利用",
-                    "weakness": weakness,
-                    "affected_brands": brands,
-                    "description": f"多家竞品({', '.join(brands)})存在「{weakness}」问题，可作为差异化突破口",
+                    "type": "上升中的小品牌",
+                    "detail": f"{b['brand']} 超过半数商品 BSR 改善中，份额仅 {b['market_share']*100:.1f}%，值得关注或对标",
                     "potential": "高",
-                    "action": f"在产品设计和营销中突出解决「{weakness}」问题"
+                })
+
+        # 3. 高评论壁垒品牌的弱点（评分低但评论多 = 锁定效应弱）
+        for b in brand_list:
+            if b["avg_rating"] and b["avg_rating"] < 3.8 and b["total_reviews"] > 500:
+                opportunities.append({
+                    "type": "评分低洼竞品",
+                    "detail": f"{b['brand']} 评分仅 {b['avg_rating']}（{b['total_reviews']} 条评论），用户满意度低，可切入",
+                    "potential": "高",
                 })
 
         return opportunities
 
-    def _analyze_competitive_landscape(
-        self,
-        competitors: List[Dict[str, Any]],
-        market_leaders: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        分析竞争格局
-        
-        Args:
-            competitors: 竞品列表
-            market_leaders: 按市场份额排序的竞品列表
-            
-        Returns:
-            竞争格局分析
-        """
-        # 分层分析
-        tiers = {"第一梯队": [], "第二梯队": [], "第三梯队": []}
-        for c in market_leaders:
-            if c["market_share"] >= 0.15:
-                tiers["第一梯队"].append(c["brand_name"])
-            elif c["market_share"] >= 0.08:
-                tiers["第二梯队"].append(c["brand_name"])
-            else:
-                tiers["第三梯队"].append(c["brand_name"])
-
-        # 竞争策略总结
-        strategies = []
-        for c in competitors:
-            if "性价比" in str(c["strengths"]) or "价格" in str(c["strengths"]):
-                strategies.append({
-                    "brand": c["brand_name"],
-                    "strategy": "性价比策略",
-                    "detail": "以价格优势获取市场份额"
-                })
-            if "品牌" in str(c["strengths"]) or "技术" in str(c["strengths"]):
-                strategies.append({
-                    "brand": c["brand_name"],
-                    "strategy": "品牌/技术驱动",
-                    "detail": "依靠品牌影响力和技术实力获取溢价"
-                })
-            if "渠道" in str(c["strengths"]) or "流量" in str(c["strengths"]):
-                strategies.append({
-                    "brand": c["brand_name"],
-                    "strategy": "渠道/流量驱动",
-                    "detail": "依托渠道优势和流量资源获取销量"
-                })
-
-        return {
-            "tiers": tiers,
-            "market_leaders": [c["brand_name"] for c in market_leaders[:3]],
-            "competitive_strategies": strategies,
-            "entry_barrier": "中",
-            "recommended_strategy": "差异化竞争，避免与头部品牌正面价格战，"
-                                    "聚焦细分品类和价格带空白"
-        }
-
     async def execute(self, input_data: AgentInput) -> AgentOutput:
-        """
-        向后兼容的 execute 方法
-        
-        Args:
-            input_data: AgentInput 对象
-            
-        Returns:
-            AgentOutput 对象
-        """
         return await super().execute(input_data)

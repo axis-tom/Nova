@@ -70,9 +70,13 @@ AGENT_REGISTRY = [
     },
     {
         "name": "competitor_analyst",
-        "description": "Amazon 竞品分析：对比多个商品/品牌的竞争力、优劣势。适合回答「对比这几个产品」「竞品分析」类问题",
-        "input_example": '{"asins": ["B0XXXXX", "B0YYYYY"]}',
-        "requires_upstream": [],
+        "description": (
+            "Amazon 竞品分析：基于 Keepa 真实数据，按品牌聚合做市场份额、价格区间、"
+            "评分对比、竞争格局分层和差异化机会识别。"
+            "**必须先调用 product_collector**，读取 state.collected_products"
+        ),
+        "input_example": '{}  # 必须先有 product_collector 的 collected_products',
+        "requires_upstream": ["product_collector"],
     },
     {
         "name": "briefing_generator",
