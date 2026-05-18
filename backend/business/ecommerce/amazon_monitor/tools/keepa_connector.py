@@ -244,6 +244,53 @@ class KeepaConnector:
         "BE": 17, "SG": 18, "AE": 19, "SA": 20, "TR": 21,
     }
 
+    # ── Token 余量查询 ──
+
+    def get_token_status(self) -> Dict[str, Any]:
+        """
+        查询 Keepa token 余量（/token 端点，免费，0 消耗）。
+
+        Returns:
+            {
+                "tokens_left": int,
+                "refill_rate": int,        # token/min
+                "refill_in_seconds": float, # 下次 refill 倒计时
+                "max_tokens": int,          # 桶上限 = refill_rate × 60
+            }
+        """
+        data = self._get("token", {})
+        refill_in_ms = data.get("refillIn", 0)
+        refill_rate = data.get("refillRate", 1)
+        return {
+            "tokens_left": data.get("tokensLeft", 0),
+            "refill_rate": refill_rate,
+            "refill_in_seconds": refill_in_ms / 1000.0,
+            "max_tokens": refill_rate * 60,
+        }
+
+    def _check_quota(self, tokens_needed: int) -> None:
+        """
+        调 API 前预检 token 余量。不足时抛 KeepaQuotaError 并告知等待时间。
+        /token 端点免费（0 消耗），所以多调一次不烧钱。
+        """
+        try:
+            status = self.get_token_status()
+        except KeepaError:
+            return  # 查余量本身失败不阻塞主流程
+
+        left = status["tokens_left"]
+        if left < tokens_needed:
+            refill_rate = status["refill_rate"] or 1
+            wait_minutes = (tokens_needed - left) / refill_rate
+            raise KeepaQuotaError(
+                f"Keepa token 不足：需要 {tokens_needed}，剩余 {left}，"
+                f"约 {wait_minutes:.0f} 分钟后可用 "
+                f"(refill {refill_rate} token/min, 桶上限 {status['max_tokens']})",
+                retry_after_minutes=wait_minutes,
+            )
+
+    # ── 关键词搜索（Keepa REST API /search 端点）──
+
     def search_asins(
         self,
         keyword: str,
@@ -269,6 +316,7 @@ class KeepaConnector:
             KeepaError 子类 —— 调用方决定如何处理（捕获/降级/上抛）
         """
         domain_id = self._DOMAIN_MAP.get(domain.upper(), 1)
+        self._check_quota(10)  # /search 每次 10 tokens
         logger.warning(
             f"Keepa /search '{keyword}' (domain={domain}) — "
             f"预计消耗 10 tokens，Pro 套餐常返空"
@@ -348,6 +396,9 @@ class KeepaConnector:
             )
 
         # ── 调 API 查未命中的 ASIN ──
+        tokens_needed = len(uncached) + (len(uncached) * offers if offers > 0 else 0)
+        self._check_quota(tokens_needed)
+
         domain_id = self._DOMAIN_MAP.get(domain.upper(), 1)
         params: Dict[str, Any] = {
             "domain": domain_id,
@@ -424,6 +475,8 @@ class KeepaConnector:
         Returns:
             价格异动商品列表
         """
+        self._check_quota(5)  # /deal 约 5 tokens
+
         deal_selection = {
             "page": 0,
             "domainId": self._domain_to_id(domain),
