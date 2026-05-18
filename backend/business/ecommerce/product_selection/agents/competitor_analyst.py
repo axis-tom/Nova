@@ -40,6 +40,7 @@ class CompetitorAnalystAgent(Agent):
             result = self._analyze_competitors(products)
 
             state.set("result", result)
+            state.set("competitor_analysis_result", result)
             state.set_meta("analysis_completed", True)
             state.add_event("competitor_analyst_success")
 

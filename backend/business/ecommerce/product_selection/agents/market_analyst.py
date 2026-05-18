@@ -51,6 +51,10 @@ class MarketAnalystAgent(Agent):
                 }
 
             state.set("result", result)
+            if analysis_type == "market_trends":
+                state.set("market_analysis_result", result)
+            elif analysis_type == "roi_analysis":
+                state.set("profitability_result", result)
             state.set_meta("analysis_completed", True)
             state.add_event("market_analyst_success")
 
