@@ -10,6 +10,7 @@
 数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
 """
 
+import json as _json
 from typing import Any, Dict, List
 from datetime import datetime
 
@@ -24,7 +25,7 @@ class AmazonReviewAnalyzerAgent(Agent):
     name = "review_analyzer"
     description = "Amazon 评论分析 Agent，基于 Keepa 数据提取评分洞察"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         state.add_event("review_analyzer_start")
 
         try:
@@ -58,10 +59,19 @@ class AmazonReviewAnalyzerAgent(Agent):
             sentiment_summary = self._build_sentiment_summary(review_insights)
             customer_needs = self._infer_customer_needs(review_insights, benchmark)
 
+            # LLM 增强：基于代码计算的数据让 LLM 做深度语义分析
+            ai_insights = await self._llm_analyze(
+                benchmark, review_insights, sentiment_summary, customer_needs
+            )
+            if ai_insights:
+                sentiment_summary["ai_insights"] = ai_insights
+                logger.info("[ReviewAnalyzer] LLM 深度洞察已注入")
+
             state.set("review_insights", review_insights)
             state.set("sentiment_summary", sentiment_summary)
             state.set("customer_needs", customer_needs)
             state.set_meta("reviews_analyzed", len(review_insights))
+            state.set_meta("llm_enhanced", bool(ai_insights))
 
             logger.info(
                 f"[ReviewAnalyzer] Analyzed {len(review_insights)} products, "
@@ -78,6 +88,81 @@ class AmazonReviewAnalyzerAgent(Agent):
             state.add_event(f"review_analyzer_error: {e}")
 
         return state
+
+    # ── LLM 深度洞察 ──
+
+    async def _llm_analyze(
+        self,
+        benchmark: Dict[str, Any],
+        review_insights: List[Dict],
+        sentiment_summary: Dict[str, Any],
+        customer_needs: List[str],
+    ) -> Dict[str, Any]:
+        """让 LLM 基于代码计算的数据做深度分析，失败返回空 dict"""
+        top_rated = sorted(
+            [i for i in review_insights if i.get("rating")],
+            key=lambda i: i["rating"], reverse=True,
+        )[:5]
+        low_rated = sorted(
+            [i for i in review_insights if i.get("rating")],
+            key=lambda i: i["rating"],
+        )[:5]
+
+        def _brief(item: Dict) -> Dict:
+            return {
+                "asin": item.get("asin"),
+                "title": item.get("title", "")[:60],
+                "rating": item.get("rating"),
+                "review_count": item.get("review_count"),
+                "review_barrier": item.get("review_barrier"),
+                "praise": item.get("common_praise", [])[:3],
+                "complaints": item.get("common_complaints", [])[:3],
+            }
+
+        prompt = _json.dumps({
+            "benchmark": {
+                "avg_rating": benchmark.get("avg_rating"),
+                "avg_price": benchmark.get("avg_price"),
+                "avg_review_count": benchmark.get("avg_review_count"),
+                "total_products": benchmark.get("total_products"),
+            },
+            "sentiment": {
+                "market_sentiment": sentiment_summary.get("market_sentiment"),
+                "avg_positive_pct": sentiment_summary.get("avg_positive_pct"),
+                "top_praise": sentiment_summary.get("top_praise_keywords", [])[:5],
+                "top_complaints": sentiment_summary.get("top_complaint_keywords", [])[:5],
+                "review_barrier_dist": sentiment_summary.get("review_barrier_distribution"),
+            },
+            "top_rated_products": [_brief(i) for i in top_rated],
+            "low_rated_products": [_brief(i) for i in low_rated],
+            "inferred_customer_needs": customer_needs[:5],
+        }, ensure_ascii=False, indent=2)
+
+        system = (
+            "You are an Amazon review data analyst. "
+            "Based on the product rating data below, provide deep insights in Chinese. "
+            "Return JSON with these fields:\n"
+            "- pain_points: list of user pain points that existing products ignore\n"
+            "- differentiation_advice: list of actionable suggestions for new sellers\n"
+            "- review_barrier_assessment: string, whether the review barrier is a real entry obstacle\n"
+            "- market_quality_verdict: string, one-sentence market quality judgment\n"
+            "Return valid JSON only, no markdown."
+        )
+
+        raw = await self.llm_invoke(prompt, system=system)
+        if not raw:
+            return {}
+
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+            result = _json.loads(cleaned)
+            if isinstance(result, dict):
+                return result
+        except (_json.JSONDecodeError, ValueError):
+            logger.warning("[ReviewAnalyzer] LLM returned invalid JSON, skipping")
+        return {}
 
     # ── 基准值 ──
 

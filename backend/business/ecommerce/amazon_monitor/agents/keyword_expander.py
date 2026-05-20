@@ -12,6 +12,7 @@
 """
 
 import re
+import json as _json
 from typing import Any, Dict, List, Tuple
 from collections import Counter
 
@@ -63,7 +64,7 @@ class KeywordExpanderAgent(Agent):
     name = "keyword_expander"
     description = "Amazon 关键词扩展 Agent，基于种子词和竞品标题生成长尾词"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         state.add_event("keyword_expander_start")
 
         try:
@@ -89,16 +90,32 @@ class KeywordExpanderAgent(Agent):
                 seed_keywords, expand_count, include_long_tail, title_kw
             )
 
+            # LLM 增强：基于规则引擎结果让 LLM 补充高价值关键词
+            llm_keywords = await self._llm_expand(seed_keywords, expanded, title_kw)
+            if llm_keywords:
+                existing = set(k.lower() for k in expanded)
+                added = 0
+                for kw in llm_keywords:
+                    if kw.lower() not in existing:
+                        expanded.append(kw)
+                        existing.add(kw.lower())
+                        groups.setdefault("llm_enhanced", []).append(kw)
+                        added += 1
+                if added:
+                    logger.info(f"[KeywordExpander] LLM 补充 {added} 个关键词")
+
             state.set("expanded_keywords", expanded)
             state.set("keyword_groups", groups)
             state.set_meta("keyword_count", len(expanded))
             state.set_meta("seed_count", len(seed_keywords))
             state.set_meta("title_extracted", bool(title_kw))
+            state.set_meta("llm_enhanced", "llm_enhanced" in groups)
 
             logger.info(
                 f"[KeywordExpander] {len(seed_keywords)} seeds → "
                 f"{len(expanded)} keywords in {len(groups)} groups"
                 f"{' (含标题提取)' if title_kw else ''}"
+                f"{' (含LLM增强)' if 'llm_enhanced' in groups else ''}"
             )
             state.add_event(f"keyword_expander_success: {len(expanded)} keywords")
 
@@ -110,6 +127,49 @@ class KeywordExpanderAgent(Agent):
             state.add_event(f"keyword_expander_error: {e}")
 
         return state
+
+    # ── LLM 增强扩词 ──
+
+    async def _llm_expand(
+        self,
+        seeds: List[str],
+        rule_keywords: List[str],
+        title_kw: Dict[str, Any],
+    ) -> List[str]:
+        """让 LLM 基于种子词和规则引擎结果补充高价值关键词，失败返回空列表"""
+        sample = rule_keywords[:15]
+        title_phrases = title_kw.get("phrases", [])[:10] if title_kw else []
+
+        prompt = (
+            f"Seeds: {seeds}\n"
+            f"Rule-based expansions (sample): {sample}\n"
+        )
+        if title_phrases:
+            prompt += f"Competitor title phrases: {title_phrases}\n"
+        prompt += (
+            "\nGenerate 15 additional high-value Amazon search keywords that are NOT in the lists above.\n"
+            "Consider: buyer intent (informational/transactional), long-tail phrases, "
+            "use-case scenarios, seasonal trends, and comparison queries.\n"
+            "Return ONLY a JSON array of strings, no explanation."
+        )
+
+        raw = await self.llm_invoke(
+            prompt,
+            system="You are an Amazon SEO expert. Output valid JSON only.",
+        )
+        if not raw:
+            return []
+
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+            result = _json.loads(cleaned)
+            if isinstance(result, list):
+                return [str(kw).strip() for kw in result if isinstance(kw, str) and kw.strip()]
+        except (_json.JSONDecodeError, ValueError):
+            logger.warning("[KeywordExpander] LLM returned invalid JSON, skipping")
+        return []
 
     # ── 标题关键词提取 ──
 
