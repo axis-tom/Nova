@@ -31,6 +31,7 @@ from nova_agent_system.memory_store import MemoryStore
 from nova_agent_system.agent_wrapper import call_agent, list_agents
 from nova_agent_system.db_retriever import query_database as db_query
 from nova_agent_system.session_store import session_store
+from nova_agent_system.durable_session import get_durable_session
 
 # ── 全局记忆实例 ──
 memory = MemoryStore()
@@ -135,6 +136,9 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     state = session_store.get_or_create(conv_id)
 
     result = await call_agent(agent_name, params, state=state)
+
+    # 持久化 State 到 SQLite（Phase 3）
+    session_store.save(conv_id)
 
     output = result.get("result", "")
     if isinstance(output, list):
@@ -380,6 +384,9 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
 
         final_state = await graph.ainvoke(initial_state)
 
+        # 持久化最终 State 到 SQLite（Phase 3）
+        session_store.save(conv_id)
+
         # 提取最终回答
         final_response = "处理完成，但未能生成回答。"
         for msg in reversed(final_state["messages"]):
@@ -467,6 +474,9 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                 await asyncio.sleep(0.02)
 
         yield {"type": "done", "data": ""}
+
+        # 持久化最终 State 到 SQLite（Phase 3）
+        session_store.save(conv_id)
 
         # 保存到记忆
         memory.save_chat(
