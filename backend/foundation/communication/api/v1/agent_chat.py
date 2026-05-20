@@ -149,6 +149,30 @@ async def delete_conversation(
     await db.commit()
 
 
+# ── 成本监控 ──
+
+@router.get("/cost-report")
+async def get_cost_report_endpoint(
+    current_user=Depends(get_current_user),
+):
+    """获取 Agent LLM 调用成本报告"""
+    from nova_agent_system.llm_config import get_cost_report, get_usage_stats
+    return {
+        "cost_report": get_cost_report(),
+        "instance_stats": get_usage_stats(),
+    }
+
+
+@router.post("/cost-report/reset")
+async def reset_cost_report_endpoint(
+    current_user=Depends(get_current_user),
+):
+    """重置成本计数器"""
+    from nova_agent_system.llm_config import reset_usage
+    reset_usage()
+    return {"ok": True}
+
+
 # ── 内部辅助 ──
 
 async def _ensure_conversation(db: AsyncSession, conv_id: str, user_id: int, first_message: str) -> str:

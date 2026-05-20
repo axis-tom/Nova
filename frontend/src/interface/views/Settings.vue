@@ -37,6 +37,9 @@
           </el-form>
         </el-card>
       </el-tab-pane>
+      <el-tab-pane label="AI 成本" name="cost">
+        <CostPanel />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -46,6 +49,7 @@ import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import ProfileForm from '@/interface/components/common/ProfileForm.vue';
 import DataSourceConfig from '@/interface/components/common/DataSourceConfig.vue';
+import CostPanel from '@/interface/components/common/CostPanel.vue';
 import { useUserStore } from '@/state/user';
 import { useDataSourceStore } from '@/state/dataSources';
 import { getNotificationPreferences, updateNotificationPreferences } from '@/api/settings';
