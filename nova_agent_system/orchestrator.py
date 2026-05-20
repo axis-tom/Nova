@@ -32,6 +32,7 @@ from nova_agent_system.agent_wrapper import call_agent, list_agents
 from nova_agent_system.db_retriever import query_database as db_query
 from nova_agent_system.session_store import session_store
 from nova_agent_system.durable_session import get_durable_session
+from nova_agent_system.summarizer import summarize_conversation
 
 # ── 全局记忆实例 ──
 memory = MemoryStore()
@@ -447,6 +448,17 @@ def build_graph():
     return workflow.compile()
 
 
+# ── 知识摘要（Step 4） ──
+
+async def _try_summarize(conv_id: str) -> None:
+    """尝试对会话生成摘要，失败静默"""
+    try:
+        await summarize_conversation(conv_id, memory=memory)
+    except Exception as e:
+        logger = __import__("logging").getLogger(__name__)
+        logger.debug(f"[Summarizer] Skipped for {conv_id}: {e}")
+
+
 # ── 主入口（普通模式） ──
 
 async def run_orchestrator(user_input: str, conversation_id: Optional[str] = None) -> str:
@@ -499,6 +511,9 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
 
         # 保存到记忆（带重要性评分）
         memory.save_chat(user_input, final_response, metadata={"importance": 6, "tags": "user_query", "conversation_id": conv_id})
+
+        # Step 4: 异步触发知识摘要（不阻塞返回）
+        asyncio.create_task(_try_summarize(conv_id))
 
         return final_response
     finally:
@@ -597,5 +612,8 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
             final_response,
             metadata={"importance": 6, "tags": "user_query", "conversation_id": conv_id},
         )
+
+        # Step 4: 异步触发知识摘要（不阻塞返回）
+        asyncio.create_task(_try_summarize(conv_id))
     finally:
         conv_id_var.reset(token)
