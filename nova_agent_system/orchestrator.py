@@ -560,6 +560,15 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                             elapsed = round(time.time() - _agent_timers.pop(tool_name), 2)
                         yield {"type": "agent_end", "data": {"name": tool_name, "elapsed_s": elapsed}}
                         yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
+                        # 如果是 briefing_generator，额外发送结构化数据供前端图表渲染
+                        if tool_name == "briefing_generator":
+                            try:
+                                tool_content = json.loads(msg.get("content", "{}"))
+                                briefing_data = tool_content.get("data", {})
+                                if briefing_data:
+                                    yield {"type": "briefing_data", "data": briefing_data}
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                         # Step 2: 持久化工具结果
                         await durable.append_message(
                             conv_id, "tool", msg["content"][:3000], tool_name=tool_name

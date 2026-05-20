@@ -31,7 +31,7 @@ export interface ToolResult {
 // ── SSE 事件类型 ──
 
 export interface SSEEvent {
-  type: 'status' | 'tool_call' | 'tool_result' | 'start_response' | 'response_chunk' | 'done' | 'error' | 'agent_start' | 'agent_end'
+  type: 'status' | 'tool_call' | 'tool_result' | 'start_response' | 'response_chunk' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'briefing_data'
   data: string | ToolCallData
   conversation_id: string
 }

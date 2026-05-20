@@ -87,6 +87,9 @@
             </div>
           </div>
 
+          <!-- 简报可视化图表 -->
+          <BriefingCard v-if="briefingData" :data="briefingData" />
+
           <!-- 状态提示 -->
           <div v-if="currentStatus && !streamingContent" class="status-indicator">
             <el-icon class="is-loading"><Loading /></el-icon>
@@ -191,6 +194,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, Close, Monitor, Cpu, Select, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import { streamChat, type SSEEvent, type ToolCallData } from '@/api/agentChat'
 import { useAgentChatStore } from '@/state/agentChat'
+import BriefingCard from '@/interface/components/charts/BriefingCard.vue'
 
 const store = useAgentChatStore()
 
@@ -223,6 +227,7 @@ const streamingContent = ref('')
 const currentStatus = ref('')
 const traceLogs = ref<TraceLog[]>([])
 const conversationId = ref('')
+const briefingData = ref<Record<string, any> | null>(null)
 
 let abortController: AbortController | null = null
 let msgCounter = 0
@@ -289,6 +294,10 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'tool_result':
       currentStatus.value = data as string
+      break
+
+    case 'briefing_data':
+      briefingData.value = data as unknown as Record<string, any>
       break
 
     case 'start_response':
@@ -434,6 +443,7 @@ function handleNewChat() {
   messages.value = []
   conversationId.value = ''
   traceLogs.value = []
+  briefingData.value = null
 }
 
 async function handleSelectConversation(convId: string) {
