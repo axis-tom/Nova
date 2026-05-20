@@ -104,6 +104,24 @@ class UserScene(Base):
     installed_at = Column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint('user_id', 'scene_id', name='uq_user_scene'),)
 
+class AgentConversation(Base):
+    __tablename__ = "agent_conversations"
+    id = Column(String(36), primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(200), nullable=False, default="新对话")
+    message_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class AgentMessage(Base):
+    __tablename__ = "agent_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(String(36), ForeignKey("agent_conversations.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    metadata_ = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 class RawEmail(Base):
     __tablename__ = "raw_emails"
     id = Column(Integer, primary_key=True, index=True)

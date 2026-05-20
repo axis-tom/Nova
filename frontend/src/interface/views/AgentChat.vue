@@ -1,7 +1,43 @@
 <template>
   <div class="agent-chat">
     <el-container class="chat-layout">
-      <!-- 左侧：聊天区域 -->
+      <!-- 左侧：会话列表 -->
+      <el-aside width="260px" class="conversation-sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">对话</span>
+          <el-button size="small" type="primary" plain @click="handleNewChat">
+            + 新对话
+          </el-button>
+        </div>
+        <div class="conversation-list">
+          <div
+            v-for="conv in store.conversations"
+            :key="conv.id"
+            class="conversation-item"
+            :class="{ active: conv.id === store.currentConversationId }"
+            @click="handleSelectConversation(conv.id)"
+          >
+            <div class="conv-title">{{ conv.title }}</div>
+            <div class="conv-meta">
+              <span>{{ conv.message_count }} 条消息</span>
+              <el-dropdown trigger="click" @command="(cmd: string) => handleConvAction(cmd, conv)">
+                <span class="conv-more" @click.stop>...</span>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </div>
+          <div v-if="store.conversations.length === 0" class="no-conversations">
+            暂无对话记录
+          </div>
+        </div>
+      </el-aside>
+
+      <!-- 中间：聊天区域 -->
       <el-main class="chat-main">
         <!-- 消息列表 -->
         <div class="messages" ref="messagesRef" v-loading="isLoading">
@@ -150,10 +186,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onBeforeUnmount } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, Close, Monitor, Cpu, Select, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import { streamChat, type SSEEvent, type ToolCallData } from '@/api/agentChat'
+import { useAgentChatStore } from '@/state/agentChat'
+
+const store = useAgentChatStore()
 
 // ── 消息类型 ──
 
@@ -265,6 +304,8 @@ function handleSSEEvent(event: SSEEvent) {
       isSending.value = false
       currentStatus.value = ''
       abortController = null
+      store.setCurrentConversationId(conversationId.value)
+      store.loadConversations()
       scrollToBottom()
       break
 
@@ -368,6 +409,57 @@ function renderMarkdown(text: string): string {
   return html
 }
 
+// ── 生命周期 ──
+
+onMounted(() => {
+  store.loadConversations()
+})
+
+// ── 会话管理 ──
+
+function handleNewChat() {
+  store.newConversation()
+  messages.value = []
+  conversationId.value = ''
+  traceLogs.value = []
+}
+
+async function handleSelectConversation(convId: string) {
+  await store.selectConversation(convId)
+  conversationId.value = convId
+  messages.value = store.messages.map((m, i) => ({
+    id: `msg-${i}`,
+    role: m.role as ChatMessage['role'],
+    content: m.content,
+    createdAt: m.createdAt,
+  }))
+  traceLogs.value = []
+  scrollToBottom()
+}
+
+function handleConvAction(cmd: string, conv: { id: string; title: string }) {
+  if (cmd === 'rename') {
+    ElMessageBox.prompt('输入新标题', '重命名', {
+      inputValue: conv.title,
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+    }).then(({ value }) => {
+      if (value?.trim()) {
+        store.renameConversation(conv.id, value.trim())
+      }
+    }).catch(() => {})
+  } else if (cmd === 'delete') {
+    ElMessageBox.confirm('确定删除该对话？', '删除', {
+      type: 'warning',
+    }).then(() => {
+      store.removeConversation(conv.id)
+      if (conversationId.value === conv.id) {
+        handleNewChat()
+      }
+    }).catch(() => {})
+  }
+}
+
 // ── 清理 ──
 
 onBeforeUnmount(() => {
@@ -385,6 +477,91 @@ onBeforeUnmount(() => {
 
 .chat-layout {
   height: 100%;
+}
+
+/* ── 会话侧边栏 ── */
+
+.conversation-sidebar {
+  background: #fff;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.sidebar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.conversation-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.15s;
+}
+
+.conversation-item:hover {
+  background: #f1f5f9;
+}
+
+.conversation-item.active {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.conv-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.conv-more {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.conv-more:hover {
+  background: #e2e8f0;
+}
+
+.no-conversations {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  padding: 24px 0;
 }
 
 /* ── 聊天主区域 ── */

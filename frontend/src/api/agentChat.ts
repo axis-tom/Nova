@@ -1,6 +1,6 @@
 /**
  * Agent Chat API — 智能体对话接口
- * 支持 SSE 流式对话和普通 JSON 对话
+ * 支持 SSE 流式对话、普通 JSON 对话、会话管理
  */
 
 import client from './client';
@@ -148,4 +148,44 @@ export async function sendChat(content: string, conversationId?: string): Promis
     conversation_id: conversationId || null,
   });
   return res as unknown as ChatResponse;
+}
+
+// ── 会话管理 ──
+
+export interface ConversationItem {
+  id: string
+  title: string
+  message_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationMessages {
+  conversation_id: string
+  title: string
+  messages: Array<{
+    id: number
+    role: string
+    content: string
+    metadata: Record<string, unknown> | null
+    created_at: string
+  }>
+}
+
+export async function getConversations(): Promise<ConversationItem[]> {
+  const res = await client.get('/agent/conversations');
+  return res as unknown as ConversationItem[];
+}
+
+export async function getConversationMessages(convId: string): Promise<ConversationMessages> {
+  const res = await client.get(`/agent/conversations/${convId}/messages`);
+  return res as unknown as ConversationMessages;
+}
+
+export async function renameConversation(convId: string, title: string): Promise<void> {
+  await client.put(`/agent/conversations/${convId}`, { title });
+}
+
+export async function deleteConversation(convId: string): Promise<void> {
+  await client.delete(`/agent/conversations/${convId}`);
 }
