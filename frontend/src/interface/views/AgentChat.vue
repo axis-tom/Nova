@@ -41,9 +41,23 @@
       <el-main class="chat-main">
         <!-- 消息列表 -->
         <div class="messages" ref="messagesRef" v-loading="isLoading">
-          <!-- 空状态 -->
+          <!-- 空状态：推荐问题 -->
           <div v-if="messages.length === 0 && !isLoading" class="empty-state">
-            <el-empty description="开始与 Nova Agent 对话" />
+            <div class="welcome-section">
+              <h2 class="welcome-title">Nova Agent</h2>
+              <p class="welcome-desc">电商选品分析助手，试试以下问题：</p>
+              <div class="quick-actions">
+                <div
+                  v-for="action in quickActions"
+                  :key="action.text"
+                  class="quick-action-card"
+                  @click="handleQuickAction(action.text)"
+                >
+                  <span class="action-icon">{{ action.icon }}</span>
+                  <span class="action-text">{{ action.label }}</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- 消息 -->
@@ -99,15 +113,28 @@
 
         <!-- 输入区域 -->
         <div class="input-area">
+          <!-- 快捷指令菜单 -->
+          <div v-if="showCommandMenu" class="command-menu">
+            <div
+              v-for="opt in commandOptions"
+              :key="opt.command"
+              class="command-item"
+              @click="selectCommand(opt.command)"
+            >
+              <span class="cmd-name">{{ opt.command }}</span>
+              <span class="cmd-desc">{{ opt.desc }}</span>
+            </div>
+          </div>
           <div class="input-wrapper">
             <el-input
               v-model="inputText"
               type="textarea"
               :rows="2"
-              placeholder="输入你的问题，例如：分析蓝牙耳机市场趋势..."
+              placeholder="输入你的问题，或输入 / 查看快捷指令..."
               :disabled="isSending"
               @keydown.enter.prevent="handleEnter"
               @keydown.shift.enter="handleShiftEnter"
+              @input="handleInputChange"
             />
             <div class="input-actions">
               <el-button
@@ -233,6 +260,37 @@ let abortController: AbortController | null = null
 let msgCounter = 0
 
 const messagesRef = ref<HTMLElement | null>(null)
+
+const quickActions = [
+  { icon: '🎧', label: '分析蓝牙耳机市场趋势', text: '分析蓝牙耳机市场趋势' },
+  { icon: '📊', label: '对比 Top 5 竞品品牌', text: '帮我对比蓝牙耳机类目 Top 5 竞品品牌的市场份额和定价策略' },
+  { icon: '💰', label: '评估选品盈利空间', text: '评估蓝牙耳机选品的盈利空间，包括月收入和利润率' },
+  { icon: '🔍', label: '寻找低竞争高需求机会', text: '帮我寻找低竞争高需求的电商选品机会' },
+]
+
+function handleQuickAction(text: string) {
+  inputText.value = text
+  sendMessage()
+}
+
+// ── 快捷指令菜单 ──
+
+const showCommandMenu = ref(false)
+const commandOptions = [
+  { command: '/选品', label: '选品分析', desc: '输入关键词开始选品' },
+  { command: '/竞品', label: '竞品对比', desc: '分析竞品品牌格局' },
+  { command: '/报告', label: '生成报告', desc: '生成完整选品简报' },
+  { command: '/成本', label: '查看成本', desc: '查看 AI 调用成本' },
+]
+
+function handleInputChange() {
+  showCommandMenu.value = inputText.value === '/'
+}
+
+function selectCommand(cmd: string) {
+  inputText.value = cmd + ' '
+  showCommandMenu.value = false
+}
 
 // ── 核心方法 ──
 
@@ -753,6 +811,7 @@ onBeforeUnmount(() => {
 /* ── 输入区域 ── */
 
 .input-area {
+  position: relative;
   padding: 16px 24px;
   border-top: 1px solid #e2e8f0;
   background: white;
@@ -908,5 +967,109 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: #94a3b8;
   margin-top: 4px;
+}
+
+/* ── 推荐问题卡片 ── */
+
+.welcome-section {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.welcome-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 8px;
+}
+
+.welcome-desc {
+  color: #64748b;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.quick-action-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.quick-action-card:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  transform: translateY(-1px);
+}
+
+.action-icon {
+  font-size: 20px;
+}
+
+.action-text {
+  font-size: 13px;
+  color: #334155;
+  text-align: left;
+}
+
+/* ── 快捷指令菜单 ── */
+
+.command-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  margin-bottom: 8px;
+  z-index: 10;
+}
+
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.command-item:hover {
+  background: #f1f5f9;
+}
+
+.command-item:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.command-item:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
+.cmd-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: #3b82f6;
+  min-width: 50px;
+}
+
+.cmd-desc {
+  font-size: 12px;
+  color: #64748b;
 }
 </style>
