@@ -37,6 +37,12 @@ from nova_agent_system.summarizer import summarize_conversation
 # ── 全局记忆实例 ──
 memory = MemoryStore()
 
+# Step 5: 启动时执行一次全量清理（TTL + 整合 + SQLite 过期）
+try:
+    _cleanup_stats = memory.cleanup_all()
+except Exception:
+    pass
+
 # ── 会话上下文（同一 ReAct 循环内的 tool 通过此读取当前 conversation_id） ──
 conv_id_var: ContextVar[Optional[str]] = ContextVar("conv_id_var", default=None)
 

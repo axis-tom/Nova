@@ -303,6 +303,28 @@ class DurableSession:
 
         return len(expired_ids)
 
+    def _cleanup_expired_sync(self, max_age_days: int = 30) -> int:
+        """同步版 cleanup_expired，供启动时非 async 上下文调用"""
+        cutoff = time.time() - (max_age_days * 86400)
+
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT DISTINCT conv_id FROM conversations WHERE updated_at < ?",
+            (cutoff,)
+        )
+        expired_ids = [row[0] for row in cursor.fetchall()]
+
+        for conv_id in expired_ids:
+            cursor.execute("DELETE FROM conversations WHERE conv_id = ?", (conv_id,))
+            cursor.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
+
+        conn.commit()
+        conn.close()
+
+        return len(expired_ids)
+
 
 # 全局单例
 _durable_session: Optional[DurableSession] = None

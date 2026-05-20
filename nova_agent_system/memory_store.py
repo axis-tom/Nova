@@ -9,9 +9,10 @@
   agent_memory    ← Agent 记忆（持久化业务记忆）
 
 增强功能：
-  - 跨 collection 统一搜索
+  - 跨 collection 统一搜索 + 时间衰减评分
   - 重要性评分（importance 1-10）
   - 标签分类（tags）
+  - TTL 自动清理（按 collection 配置）
   - 短期 → 长期整合（consolidate）
   - 时间衰减遗忘（forget）
   - 记忆统计
@@ -25,6 +26,19 @@ from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ── TTL 配置（天） ──
+TTL_CONFIG = {
+    "chat_history": 7,       # 7 天
+    "knowledge_cache": 90,   # 90 天
+    "agent_memory": 30,      # 30 天
+}
+
+# ── 检索评分权重 ──
+WEIGHT_SEMANTIC = 0.6
+WEIGHT_RECENCY = 0.3
+WEIGHT_IMPORTANCE = 0.1
+RECENCY_DECAY_DAYS = 30  # 超过此天数 recency_score = 0
 
 
 class MemoryStore:
@@ -178,10 +192,38 @@ class MemoryStore:
         )
         return self._format_get_results(results)
 
-    # ── 跨 collection 统一搜索 ──
+    # ── 跨 collection 统一搜索（时间衰减评分） ──
+
+    @staticmethod
+    def _compute_ranked_score(item: Dict[str, Any]) -> float:
+        """综合评分 = 语义相似度 * 0.6 + 时间新鲜度 * 0.3 + 重要性 * 0.1"""
+        # 语义相似度：ChromaDB distance 越小越好，转为 0-1 分数
+        distance = item.get("distance") or 1.0
+        semantic_score = max(0.0, 1.0 - distance)
+
+        # 时间新鲜度
+        recency_score = 0.0
+        ts = item.get("metadata", {}).get("timestamp", "")
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts)
+                age_days = (datetime.now() - dt).total_seconds() / 86400
+                recency_score = max(0.0, 1.0 - age_days / RECENCY_DECAY_DAYS)
+            except (ValueError, TypeError):
+                pass
+
+        # 重要性：归一化到 0-1
+        importance = int(item.get("metadata", {}).get("importance", 5))
+        importance_score = min(importance / 10.0, 1.0)
+
+        return (
+            WEIGHT_SEMANTIC * semantic_score
+            + WEIGHT_RECENCY * recency_score
+            + WEIGHT_IMPORTANCE * importance_score
+        )
 
     def search_all(self, query: str, k: int = 3) -> List[Dict[str, Any]]:
-        """跨所有 collection 统一语义搜索"""
+        """跨所有 collection 统一语义搜索（时间衰减 + 重要性加权排序）"""
         results = []
         # 搜索对话
         chat_results = self._chat_collection.query(query_texts=[query], n_results=k)
@@ -192,8 +234,10 @@ class MemoryStore:
         # 搜索 Agent 记忆
         agent_results = self._agent_collection.query(query_texts=[query], n_results=k)
         results.extend(self._format_results(agent_results))
-        # 按 distance 排序
-        results.sort(key=lambda x: x.get("distance", 1.0) if x.get("distance") is not None else 1.0)
+        # 按综合评分排序（高 → 低）
+        for item in results:
+            item["_ranked_score"] = self._compute_ranked_score(item)
+        results.sort(key=lambda x: x["_ranked_score"], reverse=True)
         return results[:k]
 
     # ── 记忆整合（短期 → 长期） ──
@@ -279,25 +323,29 @@ class MemoryStore:
 
         return stats
 
-    # ── 记忆遗忘（时间衰减） ──
+    # ── 记忆遗忘（TTL 驱动） ──
 
-    def forget(self, max_age_days: int = 30, min_importance: int = 3) -> Dict[str, int]:
-        """遗忘低价值记忆
+    def forget(self, min_importance: int = 3) -> Dict[str, int]:
+        """按 TTL_CONFIG 清理过期低价值记忆
 
         策略：
-        - 删除 knowledge_cache 中 age > max_age_days 且 importance < min_importance 的条目
-        - 删除 agent_memory 中 age > max_age_days 且 importance < min_importance 的条目
+        - 每个 collection 按各自 TTL 判断是否过期
+        - 过期且 importance < min_importance 的条目删除
+        - chat_history 也纳入清理（TTL 7 天）
 
         Returns:
             统计信息
         """
-        stats = {"knowledge_deleted": 0, "agent_deleted": 0, "errors": 0}
-        cutoff = datetime.now() - timedelta(days=max_age_days)
+        stats = {"chat_deleted": 0, "knowledge_deleted": 0, "agent_deleted": 0, "errors": 0}
 
         for collection_name, collection, stats_key in [
+            ("chat_history", self._chat_collection, "chat_deleted"),
             ("knowledge_cache", self._knowledge_collection, "knowledge_deleted"),
             ("agent_memory", self._agent_collection, "agent_deleted"),
         ]:
+            ttl_days = TTL_CONFIG.get(collection_name, 30)
+            cutoff = datetime.now() - timedelta(days=ttl_days)
+
             try:
                 all_items = collection.get()
                 if not all_items["ids"]:
@@ -311,13 +359,13 @@ class MemoryStore:
                         ts = meta.get("timestamp", "")
 
                         if imp >= min_importance:
-                            continue  # 高重要性保留
+                            continue
 
                         if ts:
                             try:
                                 dt = datetime.fromisoformat(ts)
                                 if dt > cutoff:
-                                    continue  # 未超期
+                                    continue
                             except ValueError:
                                 pass
 
@@ -328,7 +376,6 @@ class MemoryStore:
                         stats["errors"] += 1
 
                 if to_delete:
-                    # ChromaDB delete 分批处理
                     batch_size = 100
                     for batch_start in range(0, len(to_delete), batch_size):
                         batch = to_delete[batch_start:batch_start + batch_size]
@@ -340,6 +387,39 @@ class MemoryStore:
                 stats["errors"] += 1
 
         return stats
+
+    # ── 全量清理（启动时调用） ──
+
+    def cleanup_all(self) -> Dict[str, Any]:
+        """执行全量清理：TTL 遗忘 + 高重要性整合 + SQLite 过期会话清理
+
+        适合在应用启动时调用一次。
+
+        Returns:
+            各阶段统计
+        """
+        results = {}
+
+        # 1. TTL 遗忘
+        results["forget"] = self.forget()
+        logger.info(f"[MemoryStore] cleanup forget: {results['forget']}")
+
+        # 2. 高重要性 chat → knowledge
+        results["consolidate"] = self.consolidate()
+        logger.info(f"[MemoryStore] cleanup consolidate: {results['consolidate']}")
+
+        # 3. SQLite 过期会话
+        try:
+            from nova_agent_system.durable_session import get_durable_session
+            durable = get_durable_session()
+            expired_count = durable._cleanup_expired_sync(max_age_days=30)
+            results["sqlite_expired"] = expired_count
+        except Exception as e:
+            logger.warning(f"[MemoryStore] SQLite cleanup failed: {e}")
+            results["sqlite_expired"] = 0
+
+        logger.info(f"[MemoryStore] cleanup_all complete: {results}")
+        return results
 
     # ── 记忆统计 ──
 
