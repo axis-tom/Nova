@@ -13,6 +13,7 @@ import json
 import os
 import uuid
 import asyncio
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -544,6 +545,7 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         yield {"type": "status", "data": "🤖 开始分析..."}
 
         final_response = ""
+        _agent_timers: dict = {}
         async for event in graph.astream(initial_state):
             node_name = list(event.keys())[0]
             state_data = event[node_name]
@@ -552,6 +554,11 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                 for msg in state_data.get("messages", []):
                     if isinstance(msg, dict) and msg.get("role") == "tool":
                         tool_name = msg.get("name", "unknown")
+                        # 计算耗时
+                        elapsed = None
+                        if tool_name in _agent_timers:
+                            elapsed = round(time.time() - _agent_timers.pop(tool_name), 2)
+                        yield {"type": "agent_end", "data": {"name": tool_name, "elapsed_s": elapsed}}
                         yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
                         # Step 2: 持久化工具结果
                         await durable.append_message(
@@ -563,6 +570,8 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                         continue
                     if msg.get("tool_calls"):
                         for tc in msg["tool_calls"]:
+                            _agent_timers[tc["name"]] = time.time()
+                            yield {"type": "agent_start", "data": {"name": tc["name"], "args": tc["args"]}}
                             yield {
                                 "type": "tool_call",
                                 "data": {

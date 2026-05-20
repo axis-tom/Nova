@@ -267,16 +267,28 @@ function handleSSEEvent(event: SSEEvent) {
       addTraceLog('status', data as string)
       break
 
+    case 'agent_start': {
+      const info = data as unknown as { name: string; args: Record<string, unknown> }
+      currentStatus.value = `⚙️ ${info.name} 执行中...`
+      addTraceLog('tool_call', `▶ ${info.name} 开始执行`, info.args)
+      break
+    }
+
+    case 'agent_end': {
+      const info = data as unknown as { name: string; elapsed_s: number | null }
+      const elapsed = info.elapsed_s != null ? ` (${info.elapsed_s}s)` : ''
+      addTraceLog('tool_result', `✓ ${info.name} 完成${elapsed}`)
+      break
+    }
+
     case 'tool_call': {
       const tc = data as unknown as ToolCallData
       currentStatus.value = `🔧 调用 ${tc.name}...`
-      addTraceLog('tool_call', `调用工具: ${tc.name}`, tc.args)
       break
     }
 
     case 'tool_result':
       currentStatus.value = data as string
-      addTraceLog('tool_result', data as string)
       break
 
     case 'start_response':
