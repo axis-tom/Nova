@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import asyncio
+import logging
 from pydantic import BaseModel, Field
 from backend.common.core.state import State
+
+logger = logging.getLogger(__name__)
 
 class AgentInput(BaseModel):
     """智能体输入模型（向后兼容）"""
@@ -24,6 +27,23 @@ class Agent(ABC):
     """智能体抽象基类，所有智能体必须继承并实现 run 方法"""
     name: str = "base_agent"
     description: str = "Base agent for all agents"
+    llm: Optional[Any] = None
+
+    async def llm_invoke(self, prompt: str, system: str = "") -> Optional[str]:
+        """调用内嵌 LLM，失败返回 None（调用方自行 fallback 到规则引擎）"""
+        if not self.llm:
+            return None
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages: List[Any] = []
+            if system:
+                messages.append(SystemMessage(content=system))
+            messages.append(HumanMessage(content=prompt))
+            response = await self.llm.ainvoke(messages)
+            return response.content
+        except Exception as e:
+            logger.warning(f"[{self.name}] LLM invoke failed, falling back to rules: {e}")
+            return None
 
     @abstractmethod
     def run(self, state: State) -> State:

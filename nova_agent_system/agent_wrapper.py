@@ -8,6 +8,7 @@ import inspect
 from typing import Dict, Any, List, Optional
 from backend.common.core.state import State
 from nova_agent_system.memory_store import MemoryStore
+from nova_agent_system.llm_config import get_llm_for_agent
 import json
 
 # ── 全局记忆实例 ──
@@ -98,49 +99,55 @@ AGENT_REGISTRY = [
 
 
 def _load_agent(name: str):
-    """延迟导入 Agent 类，避免启动时加载所有依赖"""
+    """延迟导入 Agent 类，避免启动时加载所有依赖；自动注入模型路由的 LLM"""
     if name == "product_collector":
         from backend.business.ecommerce.amazon_monitor.agents.product_collector import (
             ProductCollectorAgent,
         )
-        return ProductCollectorAgent()
+        agent = ProductCollectorAgent()
     elif name == "opportunity_judge":
         from backend.business.ecommerce.amazon_monitor.agents.opportunity_judge import (
             OpportunityJudgeAgent,
         )
-        return OpportunityJudgeAgent()
+        agent = OpportunityJudgeAgent()
     elif name == "review_analyzer":
         from backend.business.ecommerce.amazon_monitor.agents.review_analyzer import (
             AmazonReviewAnalyzerAgent,
         )
-        return AmazonReviewAnalyzerAgent()
+        agent = AmazonReviewAnalyzerAgent()
     elif name == "traffic_analyzer":
         from backend.business.ecommerce.amazon_monitor.agents.traffic_analyzer import (
             TrafficAnalyzerAgent,
         )
-        return TrafficAnalyzerAgent()
+        agent = TrafficAnalyzerAgent()
     elif name == "keyword_expander":
         from backend.business.ecommerce.amazon_monitor.agents.keyword_expander import (
             KeywordExpanderAgent,
         )
-        return KeywordExpanderAgent()
+        agent = KeywordExpanderAgent()
     elif name == "market_analyst":
         from backend.business.ecommerce.product_selection.agents.market_analyst import (
             MarketAnalystAgent,
         )
-        return MarketAnalystAgent()
+        agent = MarketAnalystAgent()
     elif name == "competitor_analyst":
         from backend.business.ecommerce.product_selection.agents.competitor_analyst import (
             CompetitorAnalystAgent,
         )
-        return CompetitorAnalystAgent()
+        agent = CompetitorAnalystAgent()
     elif name == "briefing_generator":
         from backend.business.ecommerce.product_selection.agents.briefing_generator import (
             BriefingGeneratorAgent,
         )
-        return BriefingGeneratorAgent()
+        agent = BriefingGeneratorAgent()
     else:
         raise ValueError(f"未知 Agent: {name}")
+
+    llm = get_llm_for_agent(name)
+    if llm is not None:
+        agent.llm = llm
+
+    return agent
 
 
 async def call_agent(
