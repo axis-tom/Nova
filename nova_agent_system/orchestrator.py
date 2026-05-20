@@ -39,6 +39,11 @@ memory = MemoryStore()
 # ── 会话上下文（同一 ReAct 循环内的 tool 通过此读取当前 conversation_id） ──
 conv_id_var: ContextVar[Optional[str]] = ContextVar("conv_id_var", default=None)
 
+# ── 多轮上下文配置 ──
+HISTORY_FULL_ROUNDS = 5     # 最近 N 轮保留完整内容（user + assistant + tool）
+HISTORY_BRIEF_ROUNDS = 10   # 更早的只保留 user + assistant（省 token）
+HISTORY_MAX_MESSAGES = 50   # 从 SQLite 拉取的最大消息数
+
 # ── 状态定义 ──
 
 
@@ -170,6 +175,82 @@ def get_tools():
 
 # ── 图节点 ──
 
+async def _build_history_messages(conv_id: str, current_input: str) -> List[Dict[str, Any]]:
+    """从 SQLite 加载历史消息，构建多轮上下文（不含当前 user_input）
+
+    策略：
+    - 最近 HISTORY_FULL_ROUNDS 轮：完整保留 user + assistant + tool
+    - 更早的轮次：只保留 user + assistant（省 token）
+    - 当前 user_input 已在历史最末（刚 append 的），需排除
+    """
+    durable = get_durable_session()
+    messages = await durable.get_messages(conv_id, limit=HISTORY_MAX_MESSAGES)
+
+    if not messages:
+        return []
+
+    # 排除最后一条（就是刚 append 的当前 user_input）
+    if messages and messages[-1]["role"] == "user" and messages[-1]["content"] == current_input:
+        messages = messages[:-1]
+
+    if not messages:
+        return []
+
+    # 按轮次分组：一轮 = user + (tool*) + assistant
+    rounds = []
+    current_round = []
+    for msg in messages:
+        current_round.append(msg)
+        if msg["role"] == "assistant":
+            rounds.append(current_round)
+            current_round = []
+    if current_round:
+        rounds.append(current_round)
+
+    # 分层：最近 N 轮完整，更早的只保留 user + assistant
+    history = []
+    total_rounds = len(rounds)
+    for i, round_msgs in enumerate(rounds):
+        is_recent = (total_rounds - i) <= HISTORY_FULL_ROUNDS
+        for msg in round_msgs:
+            if is_recent:
+                history.append({"role": msg["role"], "content": msg["content"]})
+            else:
+                if msg["role"] in ("user", "assistant"):
+                    content = msg["content"]
+                    if len(content) > 500:
+                        content = content[:500] + "..."
+                    history.append({"role": msg["role"], "content": content})
+
+    return history
+
+
+def _build_state_summary(conv_id: str) -> str:
+    """生成当前会话 State 的摘要，注入 system_prompt 帮助 LLM 感知已有数据"""
+    state = session_store.get_or_create(conv_id)
+    if not state.data:
+        return ""
+
+    lines = []
+    for key, value in state.data.items():
+        if key.startswith("_"):
+            continue
+        if isinstance(value, list):
+            lines.append(f"- {key}: {len(value)} 条记录")
+        elif isinstance(value, dict):
+            summary_keys = list(value.keys())[:5]
+            lines.append(f"- {key}: dict({', '.join(summary_keys)})")
+        elif isinstance(value, str) and len(value) > 100:
+            lines.append(f"- {key}: {value[:100]}...")
+        else:
+            lines.append(f"- {key}: {value}")
+
+    if not lines:
+        return ""
+
+    return "\n\n当前会话已有数据（来自之前的 Agent 调用，可直接引用）:\n" + "\n".join(lines)
+
+
 def should_continue(state: AgentState) -> str:
     """判断是否继续循环"""
     messages = state["messages"]
@@ -204,7 +285,12 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
     # 注入相关历史记忆
     memory_context = ""
     try:
-        user_msg = state["messages"][0]["content"] if state["messages"] else ""
+        # 取最后一条 user 消息作为检索 query
+        user_msg = ""
+        for msg in reversed(state["messages"]):
+            if msg.get("role") == "user":
+                user_msg = msg["content"]
+                break
         if user_msg:
             relevant = memory.search_all(user_msg, k=3)
             if relevant:
@@ -215,6 +301,10 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
                 memory_context = "\n相关历史记忆:\n" + "\n".join(mem_lines)
     except Exception:
         pass  # 记忆注入失败不影响主流程
+
+    # Step 3: 注入 State 摘要
+    conv_id = conv_id_var.get()
+    state_summary = _build_state_summary(conv_id) if conv_id else ""
 
     system_prompt = f"""你是一个 Amazon 电商智能助手，负责帮助用户分析市场、选品、监控竞品。
 
@@ -250,8 +340,9 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 - 搜索时用英文关键词效果更好
 - 调 Agent 时 params_json 必须是合法 JSON，字段名严格按 input_example
 - 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
+- 如果当前会话已有数据（下方列出），说明用户之前已执行过 Agent，优先利用现有数据，不要重复调用
 - 最终回答要结构化、清晰，用中文，列出关键数据和建议
-{memory_context}"""
+{memory_context}{state_summary}"""
 
     # 转换消息格式
     langchain_messages = [SystemMessage(content=system_prompt)]
@@ -377,10 +468,13 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
         # Step 2: 持久化用户消息
         await durable.append_message(conv_id, "user", user_input)
 
+        # Step 3: 加载历史消息构建多轮上下文
+        history = await _build_history_messages(conv_id, user_input)
+
         graph = build_graph()
 
         initial_state: AgentState = {
-            "messages": [{"role": "user", "content": user_input}],
+            "messages": history + [{"role": "user", "content": user_input}],
             "user_input": user_input,
             "final_response": None,
             "tool_results": [],
@@ -432,10 +526,13 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         # Step 2: 持久化用户消息
         await durable.append_message(conv_id, "user", user_input)
 
+        # Step 3: 加载历史消息构建多轮上下文
+        history = await _build_history_messages(conv_id, user_input)
+
         graph = build_graph()
 
         initial_state: AgentState = {
-            "messages": [{"role": "user", "content": user_input}],
+            "messages": history + [{"role": "user", "content": user_input}],
             "user_input": user_input,
             "final_response": None,
             "tool_results": [],
