@@ -40,10 +40,28 @@ class Agent(ABC):
                 messages.append(SystemMessage(content=system))
             messages.append(HumanMessage(content=prompt))
             response = await self.llm.ainvoke(messages)
+            # 记录 token 用量
+            self._record_usage(response)
             return response.content
         except Exception as e:
             logger.warning(f"[{self.name}] LLM invoke failed, falling back to rules: {e}")
             return None
+
+    def _record_usage(self, response: Any):
+        """从 LLM response 中提取 token 用量并记录"""
+        try:
+            usage = getattr(response, "usage_metadata", None) or {}
+            if isinstance(usage, dict):
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+            else:
+                input_tokens = getattr(usage, "input_tokens", 0)
+                output_tokens = getattr(usage, "output_tokens", 0)
+            if input_tokens or output_tokens:
+                from nova_agent_system.llm_config import record_token_usage
+                record_token_usage(self.name, input_tokens, output_tokens)
+        except Exception:
+            pass
 
     @abstractmethod
     def run(self, state: State) -> State:
