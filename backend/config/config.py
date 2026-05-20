@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     # 模型与外部服务
     OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_BASE: Optional[str] = None
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "qwen2.5:3b-instruct-q4_K_M"
     GROQ_API_KEY: Optional[str] = None

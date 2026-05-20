@@ -17,7 +17,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
@@ -33,6 +32,7 @@ from nova_agent_system.db_retriever import query_database as db_query
 from nova_agent_system.session_store import session_store
 from nova_agent_system.durable_session import get_durable_session
 from nova_agent_system.summarizer import summarize_conversation
+from nova_agent_system.llm_config import get_llm_for_agent
 
 # ── 全局记忆实例 ──
 memory = MemoryStore()
@@ -64,26 +64,8 @@ class AgentState(TypedDict):
 # ── LLM 初始化 ──
 
 def _get_llm():
-    """获取 LLM 实例，优先用环境变量配置"""
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ZHIPU_API_KEY")
-    base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL", "")
-    model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
-
-    if os.getenv("ZHIPU_API_KEY"):
-        # 智谱
-        return ChatOpenAI(
-            model=model or "glm-4-flash",
-            api_key=api_key,
-            base_url=base_url or "https://open.bigmodel.cn/api/paas/v4/",
-            temperature=0.3,
-        )
-    else:
-        return ChatOpenAI(
-            model=model,
-            api_key=api_key,
-            base_url=base_url or "",
-            temperature=0.3,
-        )
+    """获取 orchestrator 的 LLM 实例（通过模型路由配置）"""
+    return get_llm_for_agent("orchestrator")
 
 
 # ── 工具定义 ──
