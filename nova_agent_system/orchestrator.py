@@ -325,7 +325,7 @@ async def execute_tools(state: AgentState) -> Dict[str, Any]:
             "tool_call_id": tool_id,
             "name": tool_name,
         })
-    
+
     return {"messages": results, "tool_results": results}
 
 
@@ -372,7 +372,11 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
     """
     conv_id = conversation_id or f"ephemeral-{uuid.uuid4()}"
     token = conv_id_var.set(conv_id)
+    durable = get_durable_session()
     try:
+        # Step 2: 持久化用户消息
+        await durable.append_message(conv_id, "user", user_input)
+
         graph = build_graph()
 
         initial_state: AgentState = {
@@ -384,15 +388,20 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
 
         final_state = await graph.ainvoke(initial_state)
 
-        # 持久化最终 State 到 SQLite（Phase 3）
+        # 持久化最终 State 到 SQLite
         session_store.save(conv_id)
 
-        # 提取最终回答
+        # Step 2: 持久化所有 tool 和 assistant 消息
         final_response = "处理完成，但未能生成回答。"
-        for msg in reversed(final_state["messages"]):
-            if msg["role"] == "assistant" and msg.get("content"):
+        for msg in final_state["messages"]:
+            if msg["role"] == "tool":
+                await durable.append_message(
+                    conv_id, "tool", msg["content"][:3000], tool_name=msg.get("name")
+                )
+            elif msg["role"] == "assistant" and msg.get("content") and not msg.get("tool_calls"):
                 final_response = msg["content"]
-                break
+
+        await durable.append_message(conv_id, "assistant", final_response)
 
         # 保存到记忆（带重要性评分）
         memory.save_chat(user_input, final_response, metadata={"importance": 6, "tags": "user_query", "conversation_id": conv_id})
@@ -418,7 +427,11 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
     """
     conv_id = conversation_id or f"ephemeral-{uuid.uuid4()}"
     token = conv_id_var.set(conv_id)
+    durable = get_durable_session()
     try:
+        # Step 2: 持久化用户消息
+        await durable.append_message(conv_id, "user", user_input)
+
         graph = build_graph()
 
         initial_state: AgentState = {
@@ -430,20 +443,21 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
 
         yield {"type": "status", "data": "🤖 开始分析..."}
 
-        # 单次 astream 既驱动执行又采集事件；最终回答从 agent 节点的最后一条 assistant 消息提取
         final_response = ""
         async for event in graph.astream(initial_state):
             node_name = list(event.keys())[0]
             state_data = event[node_name]
 
             if node_name == "action":
-                # 工具执行阶段
                 for msg in state_data.get("messages", []):
                     if isinstance(msg, dict) and msg.get("role") == "tool":
                         tool_name = msg.get("name", "unknown")
                         yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
+                        # Step 2: 持久化工具结果
+                        await durable.append_message(
+                            conv_id, "tool", msg["content"][:3000], tool_name=tool_name
+                        )
             elif node_name == "agent":
-                # LLM 返回阶段
                 for msg in state_data.get("messages", []):
                     if not isinstance(msg, dict):
                         continue
@@ -458,7 +472,6 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                                 },
                             }
                     elif msg.get("role") == "assistant" and msg.get("content"):
-                        # 最后无 tool_calls 的 assistant content 即最终回答
                         final_response = msg["content"]
 
         if not final_response:
@@ -475,7 +488,10 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
 
         yield {"type": "done", "data": ""}
 
-        # 持久化最终 State 到 SQLite（Phase 3）
+        # Step 2: 持久化 assistant 回答
+        await durable.append_message(conv_id, "assistant", final_response)
+
+        # 持久化最终 State 到 SQLite
         session_store.save(conv_id)
 
         # 保存到记忆
