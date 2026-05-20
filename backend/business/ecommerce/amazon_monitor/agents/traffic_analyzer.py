@@ -11,6 +11,7 @@
 """
 
 import asyncio
+import json as _json
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -28,7 +29,7 @@ class TrafficAnalyzerAgent(Agent):
     name = "traffic_analyzer"
     description = "Amazon 流量与竞品分析 Agent，分析 BSR 排名和价格竞争"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         """
         执行流量与竞品分析
 
@@ -75,12 +76,22 @@ class TrafficAnalyzerAgent(Agent):
                 products, bsr_analysis, price_analysis, competitor_comparison
             )
 
+            # LLM 增强：基于计算数据生成战略洞察
+            ai_result = await self._llm_analyze_traffic(
+                traffic_insights, bsr_analysis, price_analysis,
+                competitor_comparison, price_alerts
+            )
+            if ai_result:
+                traffic_insights["ai_insights"] = ai_result
+                logger.info("[TrafficAnalyzer] LLM 战略洞察已注入")
+
             # 写入结果
             state.set("traffic_insights", traffic_insights)
             state.set("bsr_analysis", bsr_analysis)
             state.set("competitor_comparison", competitor_comparison)
             state.set("price_alerts", price_alerts)
             state.set_meta("traffic_analyzed", len(products))
+            state.set_meta("llm_enhanced", bool(ai_result))
 
             logger.info(
                 f"[TrafficAnalyzer] Analyzed {len(products)} products, "
@@ -98,6 +109,79 @@ class TrafficAnalyzerAgent(Agent):
             state.add_event(f"traffic_analyzer_error: {e}")
 
         return state
+
+    # ── LLM 增强分析 ──
+
+    async def _llm_analyze_traffic(
+        self,
+        traffic_insights: Dict[str, Any],
+        bsr_analysis: Dict[str, Any],
+        price_analysis: Dict[str, Any],
+        competitor_comparison: Dict[str, Any],
+        price_alerts: List[Dict],
+    ) -> Dict[str, Any]:
+        """让 LLM 基于计算数据生成战略洞察，失败返回空 dict"""
+        prompt = _json.dumps({
+            "traffic_summary": {
+                "total_products": traffic_insights.get("total_products"),
+                "competition_level": traffic_insights.get("competition_level"),
+                "avg_market_rating": traffic_insights.get("avg_market_rating"),
+                "high_potential_count": traffic_insights.get("high_potential_count"),
+                "market_summary": traffic_insights.get("market_summary"),
+            },
+            "bsr": {
+                "avg_bsr": bsr_analysis.get("avg_bsr"),
+                "distribution": bsr_analysis.get("distribution"),
+                "category_avg_bsr": bsr_analysis.get("category_avg_bsr"),
+            },
+            "price": {
+                "avg_price": price_analysis.get("avg_price"),
+                "min_price": price_analysis.get("min_price"),
+                "max_price": price_analysis.get("max_price"),
+                "price_distribution": price_analysis.get("price_distribution"),
+                "prime_ratio": price_analysis.get("prime_ratio"),
+            },
+            "competitor_categories": {
+                cat: {
+                    "product_count": info.get("product_count"),
+                    "avg_price": info.get("avg_price"),
+                    "avg_rating": info.get("avg_rating"),
+                    "competition_level": info.get("competition_level"),
+                }
+                for cat, info in list(competitor_comparison.items())[:5]
+            },
+            "price_alerts_count": len(price_alerts),
+            "price_alerts_sample": [
+                {"asin": a.get("asin"), "alert_type": a.get("alert_type"), "deviation_pct": a.get("deviation_pct")}
+                for a in price_alerts[:3]
+            ],
+        }, ensure_ascii=False, indent=2)
+
+        system = (
+            "You are an Amazon traffic and competition analyst. "
+            "Based on the data below, provide strategic insights in Chinese.\n"
+            "Return JSON with these fields:\n"
+            "- trend_interpretation: string, 对当前市场流量趋势的解读\n"
+            "- competition_strategy: string, 竞争策略建议\n"
+            "- pricing_advice: string, 定价策略建议\n"
+            "- risk_warnings: list of strings, 风险预警列表\n"
+            "Return valid JSON only, no markdown."
+        )
+
+        raw = await self.llm_invoke(prompt, system=system)
+        if not raw:
+            return {}
+
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+            result = _json.loads(cleaned)
+            if isinstance(result, dict):
+                return result
+        except (_json.JSONDecodeError, ValueError):
+            logger.warning("[TrafficAnalyzer] LLM returned invalid JSON, skipping")
+        return {}
 
     def _analyze_bsr(self, products: List[Dict]) -> Dict[str, Any]:
         """分析 BSR 排名分布"""

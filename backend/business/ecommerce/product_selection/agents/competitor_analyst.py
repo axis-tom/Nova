@@ -10,6 +10,7 @@
 数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
 """
 
+import json as _json
 from typing import Any, Dict, List
 from datetime import datetime
 
@@ -24,7 +25,7 @@ class CompetitorAnalystAgent(Agent):
     name = "competitor_analyst"
     description = "电商竞品分析 Agent，基于 Keepa 数据做品牌对比和差异化分析"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         state.add_event("competitor_analyst_start")
 
         try:
@@ -39,9 +40,16 @@ class CompetitorAnalystAgent(Agent):
 
             result = self._analyze_competitors(products)
 
+            # LLM 增强：基于竞品数据生成竞争策略
+            ai_result = await self._llm_analyze_competitors(result)
+            if ai_result:
+                result["ai_insights"] = ai_result
+                logger.info("[CompetitorAnalyst] LLM 竞争策略已注入")
+
             state.set("result", result)
             state.set("competitor_analysis_result", result)
             state.set_meta("analysis_completed", True)
+            state.set_meta("llm_enhanced", bool(result.get("ai_insights")))
             state.add_event("competitor_analyst_success")
 
         except Exception as e:
@@ -51,6 +59,52 @@ class CompetitorAnalystAgent(Agent):
             state.add_event(f"competitor_analyst_error: {e}")
 
         return state
+
+    # ── LLM 增强分析 ──
+
+    async def _llm_analyze_competitors(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """让 LLM 基于竞品数据生成竞争策略，失败返回空 dict"""
+        summary = result.get("summary", {})
+        landscape = result.get("competitive_landscape", {})
+        differentiation = result.get("differentiation_opportunities", [])
+        share = result.get("market_share_distribution", [])
+
+        prompt = _json.dumps({
+            "summary": summary,
+            "competitive_landscape": landscape,
+            "top_brands": [
+                {"brand": b.get("brand"), "market_share": b.get("market_share_percent"),
+                 "avg_price": b.get("avg_price"), "avg_bsr": b.get("avg_bsr")}
+                for b in share[:5]
+            ],
+            "differentiation_opportunities": differentiation[:5],
+        }, ensure_ascii=False, indent=2)
+
+        system = (
+            "You are an Amazon competitive strategy expert. "
+            "Based on the competitor data below, provide actionable strategy in Chinese.\n"
+            "Return JSON with these fields:\n"
+            "- competitive_position: string, 对当前竞争格局的判断\n"
+            "- recommended_positioning: string, 推荐的市场定位\n"
+            "- attack_strategy: list of strings, 具体的竞争攻击策略\n"
+            "- brands_to_watch: list of strings, 需要重点关注的品牌及原因\n"
+            "Return valid JSON only, no markdown."
+        )
+
+        raw = await self.llm_invoke(prompt, system=system)
+        if not raw:
+            return {}
+
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+            result = _json.loads(cleaned)
+            if isinstance(result, dict):
+                return result
+        except (_json.JSONDecodeError, ValueError):
+            logger.warning("[CompetitorAnalyst] LLM returned invalid JSON, skipping")
+        return {}
 
     def _analyze_competitors(self, products: List[Dict]) -> Dict[str, Any]:
         # 按品牌聚合

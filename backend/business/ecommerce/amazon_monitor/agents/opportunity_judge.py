@@ -15,6 +15,7 @@
   - 卖家数量（seller_count）→ 竞争激烈程度
 """
 
+import json as _json
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -45,7 +46,7 @@ class OpportunityJudgeAgent(Agent):
     name = "opportunity_judge"
     description = "Amazon 市场机会评估 Agent，综合评分并生成选品建议"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         """
         执行市场机会评估
 
@@ -115,6 +116,18 @@ class OpportunityJudgeAgent(Agent):
                 traffic_insights, customer_needs, alerts
             )
 
+            # LLM 增强：对 Top Picks 做第二意见审核
+            ai_result = await self._llm_review_picks(top_picks, sentiment_summary, customer_needs)
+            if ai_result:
+                state.set_meta("llm_enhanced", True)
+                for pick in top_picks:
+                    asin = pick.get("asin")
+                    if asin and asin in ai_result:
+                        pick["ai_comment"] = ai_result[asin]
+                logger.info("[OpportunityJudge] LLM 第二意见已注入 top_picks")
+            else:
+                state.set_meta("llm_enhanced", False)
+
             # 写入结果
             state.set("opportunities", opportunities)
             state.set("market_report", market_report)
@@ -145,6 +158,63 @@ class OpportunityJudgeAgent(Agent):
             state.add_event(f"opportunity_judge_error: {e}")
 
         return state
+
+    # ── LLM 增强：第二意见 ──
+
+    async def _llm_review_picks(
+        self,
+        top_picks: List[Dict],
+        sentiment_summary: Dict,
+        customer_needs: List[str],
+    ) -> Dict[str, str]:
+        """让 LLM 审核 Top Picks，给出每个商品的简短评语。返回 {asin: comment}，失败返回空 dict"""
+        if not top_picks:
+            return {}
+
+        picks_data = [
+            {
+                "asin": p.get("asin"),
+                "title": (p.get("title") or "")[:50],
+                "price": p.get("current_price") or p.get("price"),
+                "rating": p.get("rating"),
+                "review_count": p.get("review_count"),
+                "monthly_sold": p.get("monthly_sold"),
+                "bsr_trend": p.get("bsr_trend"),
+                "total_score": p.get("total_score"),
+                "score_grade": p.get("score_grade"),
+                "score_highlights": p.get("score_highlights", []),
+            }
+            for p in top_picks[:5]
+        ]
+
+        prompt = _json.dumps({
+            "top_picks": picks_data,
+            "market_sentiment": sentiment_summary.get("market_sentiment"),
+            "customer_needs": customer_needs[:5],
+        }, ensure_ascii=False, indent=2)
+
+        system = (
+            "You are an Amazon product selection expert reviewing algorithm-scored picks.\n"
+            "For each ASIN, provide a brief Chinese comment (1-2 sentences) on whether "
+            "the score might be overestimated or underestimated, and why.\n"
+            "Return JSON: {\"ASIN1\": \"评语\", \"ASIN2\": \"评语\", ...}\n"
+            "Return valid JSON only, no markdown."
+        )
+
+        raw = await self.llm_invoke(prompt, system=system)
+        if not raw:
+            return {}
+
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+            result = _json.loads(cleaned)
+            if isinstance(result, dict):
+                return {k: str(v) for k, v in result.items()}
+        except (_json.JSONDecodeError, ValueError):
+            logger.warning("[OpportunityJudge] LLM returned invalid JSON, skipping")
+        return {}
 
     def _score_product(
         self,

@@ -15,11 +15,15 @@
 - traffic_insights          → traffic_analyzer
 """
 
+import json as _json
+import logging
 from datetime import datetime
 from typing import Dict, Any, List
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
+
+logger = logging.getLogger(__name__)
 
 
 class BriefingGeneratorAgent(Agent):
@@ -28,7 +32,7 @@ class BriefingGeneratorAgent(Agent):
     name = "briefing_generator"
     description = "电商选品简报生成 Agent，汇总上游分析输出 Markdown 报告"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         state.add_event("briefing_generator_start")
 
         try:
@@ -41,11 +45,22 @@ class BriefingGeneratorAgent(Agent):
             traffic = state.get("traffic_insights") or {}
             products = state.get("collected_products") or []
 
-            md = self._generate_markdown(
+            # LLM 增强：尝试用 LLM 生成自然语言报告
+            llm_md = await self._llm_generate_report(
                 market, competitor, profitability,
-                sentiment, review_insights, customer_needs,
-                traffic, products,
+                sentiment, customer_needs, traffic, products,
             )
+
+            if llm_md:
+                md = llm_md
+                logger.info("[BriefingGenerator] LLM 自然语言报告已生成")
+            else:
+                # Fallback: 原有 Markdown 模板拼接
+                md = self._generate_markdown(
+                    market, competitor, profitability,
+                    sentiment, review_insights, customer_needs,
+                    traffic, products,
+                )
 
             briefing = {
                 "title": "电商选品分析简报",
@@ -62,6 +77,7 @@ class BriefingGeneratorAgent(Agent):
 
             state.set("briefing", briefing)
             state.set("result", md)
+            state.set_meta("llm_enhanced", bool(llm_md))
             state.add_event("briefing_generator_success")
 
         except Exception as e:
@@ -69,6 +85,82 @@ class BriefingGeneratorAgent(Agent):
             state.add_event(f"briefing_generator_error: {e}")
 
         return state
+
+    # ── LLM 自然语言报告 ──
+
+    async def _llm_generate_report(
+        self,
+        market: Dict, competitor: Dict, profitability: Dict,
+        sentiment: Dict, customer_needs: List, traffic: Dict, products: List,
+    ) -> str:
+        """让 LLM 生成自然语言分析报告，失败返回空字符串（触发 fallback）"""
+        data = {}
+        if market:
+            s = market.get("summary", {})
+            data["market"] = {
+                "trend": s.get("market_trend"),
+                "avg_price": s.get("average_price"),
+                "total_monthly_sales": s.get("total_monthly_sales"),
+                "avg_rating": s.get("average_rating"),
+                "opportunities": [o.get("opportunity") for o in market.get("opportunities", [])[:3]],
+                "risks": [r.get("risk_type") for r in market.get("risks", [])[:3]],
+                "ai_insights": market.get("ai_insights"),
+            }
+        if competitor:
+            s = competitor.get("summary", {})
+            data["competitor"] = {
+                "total_brands": s.get("total_brands_analyzed"),
+                "concentration": s.get("market_concentration"),
+                "top3_share": s.get("top_3_market_share"),
+                "landscape": competitor.get("competitive_landscape", {}),
+                "ai_insights": competitor.get("ai_insights"),
+            }
+        if sentiment:
+            data["reviews"] = {
+                "market_sentiment": sentiment.get("market_sentiment"),
+                "avg_positive_pct": sentiment.get("avg_positive_pct"),
+                "top_praise": sentiment.get("top_praise_keywords", [])[:3],
+                "top_complaints": sentiment.get("top_complaint_keywords", [])[:3],
+                "ai_insights": sentiment.get("ai_insights"),
+            }
+        if traffic:
+            data["traffic"] = {
+                "competition_level": traffic.get("competition_level"),
+                "high_potential_count": traffic.get("high_potential_count"),
+                "ai_insights": traffic.get("ai_insights"),
+            }
+        if customer_needs:
+            data["customer_needs"] = customer_needs[:5]
+        data["total_products"] = len(products)
+
+        if not data:
+            return ""
+
+        prompt = _json.dumps(data, ensure_ascii=False, indent=2)
+
+        system = (
+            "You are a professional e-commerce analyst writing a product selection briefing.\n"
+            "Based on the multi-dimensional analysis data below, write a comprehensive "
+            "Chinese Markdown report (~800-1200 words).\n\n"
+            "Structure:\n"
+            "# 电商选品分析简报\n"
+            "## 一、市场概况\n"
+            "## 二、竞争格局\n"
+            "## 三、用户评价洞察\n"
+            "## 四、机会与风险\n"
+            "## 五、选品建议\n\n"
+            "Requirements:\n"
+            "- Use data to support every conclusion\n"
+            "- Be specific and actionable\n"
+            "- Include concrete numbers from the data\n"
+            "- End with 3 clear, prioritized action items\n"
+            "- Output Markdown directly, no code blocks wrapping"
+        )
+
+        raw = await self.llm_invoke(prompt, system=system)
+        if raw and len(raw) > 200:
+            return raw.strip()
+        return ""
 
     # ── Markdown 生成 ──
 

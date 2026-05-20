@@ -10,6 +10,7 @@
 数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
 """
 
+import json as _json
 from typing import Any, Dict, List
 from datetime import datetime
 
@@ -24,7 +25,7 @@ class MarketAnalystAgent(Agent):
     name = "market_analyst"
     description = "电商选品市场分析 Agent，基于 Keepa 数据做市场趋势和盈利评估"
 
-    def run(self, state: State) -> State:
+    async def run(self, state: State) -> State:
         state.add_event("market_analyst_start")
         analysis_type = state.get("analysis_type", "market_trends")
         state.set_meta("analysis_type", analysis_type)
@@ -41,6 +42,13 @@ class MarketAnalystAgent(Agent):
 
             if analysis_type == "market_trends":
                 result = self._analyze_market_trends(products)
+
+                # LLM 增强：基于市场趋势数据生成战略洞察
+                ai_result = await self._llm_analyze_market(result)
+                if ai_result:
+                    result["ai_insights"] = ai_result
+                    logger.info("[MarketAnalyst] LLM 市场洞察已注入")
+
             elif analysis_type == "roi_analysis":
                 profit_margin = state.get("profit_margin", 0.25)
                 result = self._analyze_profitability(products, profit_margin)
@@ -56,6 +64,7 @@ class MarketAnalystAgent(Agent):
             elif analysis_type == "roi_analysis":
                 state.set("profitability_result", result)
             state.set_meta("analysis_completed", True)
+            state.set_meta("llm_enhanced", bool(result.get("ai_insights")))
             state.add_event("market_analyst_success")
 
         except Exception as e:
@@ -65,6 +74,55 @@ class MarketAnalystAgent(Agent):
             state.add_event(f"market_analyst_error: {e}")
 
         return state
+
+    # ── LLM 增强分析 ──
+
+    async def _llm_analyze_market(self, market_result: Dict[str, Any]) -> Dict[str, Any]:
+        """让 LLM 基于市场趋势数据生成战略洞察，失败返回空 dict"""
+        summary = market_result.get("summary", {})
+        brand_distribution = market_result.get("brand_distribution", {})
+        opportunities = market_result.get("opportunities", [])
+        risks = market_result.get("risks", [])
+
+        # 截断品牌分布，只取 top 5
+        top_brands = dict(list(brand_distribution.items())[:5])
+
+        prompt = _json.dumps({
+            "summary": summary,
+            "top_brands": {
+                brand: {"count": info.get("count"), "total_sales": info.get("total_sales"),
+                        "avg_price": info.get("avg_price"), "avg_rating": info.get("avg_rating")}
+                for brand, info in top_brands.items()
+            },
+            "opportunities": opportunities[:5],
+            "risks": risks[:5],
+        }, ensure_ascii=False, indent=2)
+
+        system = (
+            "You are an Amazon market analyst. "
+            "Based on the market data below, provide strategic insights in Chinese.\n"
+            "Return JSON with these fields:\n"
+            "- market_stage: string, 市场所处阶段（成长期/成熟期/衰退期）\n"
+            "- entry_recommendation: string, 进入建议\n"
+            "- key_success_factors: list of strings, 关键成功因素\n"
+            "- hidden_risks: list of strings, 隐藏风险\n"
+            "Return valid JSON only, no markdown."
+        )
+
+        raw = await self.llm_invoke(prompt, system=system)
+        if not raw:
+            return {}
+
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+            result = _json.loads(cleaned)
+            if isinstance(result, dict):
+                return result
+        except (_json.JSONDecodeError, ValueError):
+            logger.warning("[MarketAnalyst] LLM returned invalid JSON, skipping")
+        return {}
 
     # ── 市场趋势分析 ──
 
