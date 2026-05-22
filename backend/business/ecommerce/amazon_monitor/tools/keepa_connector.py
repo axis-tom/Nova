@@ -640,12 +640,78 @@ class KeepaConnector:
             if bsr_csv:
                 bsr_history = _decode_keepa_csv(bsr_csv[-100:], is_price=False)[-50:]
 
+            # ── 类目树 ──
+            category_tree = p.get("categoryTree") or []
+            root_category = p.get("rootCategory") or 0
+
+            # ── 商品类型 ──
+            product_type = p.get("type")  # 0=standard, 1=parent/variation, 2=child
+            product_group = p.get("productGroup", "") or ""
+            binding = p.get("binding", "") or ""
+
+            # ── 制造信息 ──
+            manufacturer = p.get("manufacturer", "") or ""
+            model = p.get("model", "") or ""
+            part_number = p.get("partNumber", "") or ""
+
+            # ── 条形码 ──
+            upc = p.get("upc", "") or ""
+            ean = p.get("ean", "") or ""
+            isbn = p.get("isbn", "") or ""
+
+            # ── 变体属性 ──
+            color = p.get("color", "") or ""
+            size = p.get("size", "") or ""
+            weight = p.get("weight")  # 单位由 packageDimension 决定，通常 1/100 克
+            package_quantity = p.get("packageQuantity")
+
+            # ── Listing 内容 ──
+            features = p.get("features") or []
+            description = p.get("description", "") or ""
+            images_csv = p.get("imagesCSV", "") or ""
+
+            # ── 变体关系 ──
+            parent_asin = p.get("parentAsin", "") or ""
+            variation_csv = p.get("variationCSV", "") or ""
+
             return {
                 # 基础信息
                 "asin": asin,
                 "title": title,
                 "brand": brand,
                 "category_id": category,
+                "root_category": root_category,
+                "category_tree": category_tree,
+
+                # 商品类型
+                "product_type": product_type,
+                "product_group": product_group,
+                "binding": binding,
+
+                # 制造信息
+                "manufacturer": manufacturer,
+                "model": model,
+                "part_number": part_number,
+
+                # 条形码
+                "upc": upc,
+                "ean": ean,
+                "isbn": isbn,
+
+                # 变体属性
+                "color": color,
+                "size": size,
+                "weight": weight,
+                "package_quantity": package_quantity,
+
+                # Listing 内容
+                "features": features,
+                "description": description,
+                "images_csv": images_csv,
+
+                # 变体关系
+                "parent_asin": parent_asin,
+                "variation_csv": variation_csv,
 
                 # 价格
                 "current_price": current_price,

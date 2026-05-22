@@ -17,7 +17,7 @@ from langchain_openai import ChatOpenAI
 
 AGENT_LLM_CONFIG: Dict[str, Optional[Dict[str, Any]]] = {
     "orchestrator": {
-        "model": "claude-opus-4-6",
+        "model": "gpt-5.2",
         "temperature": 0.3,
         "max_tokens": 4000,
     },

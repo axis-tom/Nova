@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from backend.data.models.project import ProjectCreate, ProjectUpdate, ProjectOut
 from backend.foundation.memory.short_term.conversation_store import ConversationCreate, ConversationUpdate, ConversationOut
-from backend.data.repositories.postgres.project_repo import ProjectRepository
-from backend.data.repositories.postgres.conversation_repo import ConversationRepository
+from backend.data.repositories.postgreSQL.project_repo import ProjectRepository
+from backend.data.repositories.postgreSQL.conversation_repo import ConversationRepository
 
 router = APIRouter(prefix="/tree", tags=["项目与对话"])
 

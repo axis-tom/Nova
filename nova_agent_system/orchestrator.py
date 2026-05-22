@@ -7,6 +7,7 @@ Orchestrator — 核心调度引擎
 4. LLM 汇总结果 → 返回
 """
 
+import operator
 from typing import Dict, Any, List, Optional, TypedDict, Annotated, Sequence
 from contextvars import ContextVar
 import json
@@ -56,7 +57,7 @@ HISTORY_MAX_MESSAGES = 50   # 从 SQLite 拉取的最大消息数
 
 
 class AgentState(TypedDict):
-    messages: Annotated[Sequence[Dict[str, Any]], "对话消息列表"]
+    messages: Annotated[List[Dict[str, Any]], operator.add]
     user_input: str
     final_response: Optional[str]
     tool_results: List[Dict[str, Any]]
@@ -203,14 +204,20 @@ async def _build_history_messages(conv_id: str, current_input: str) -> List[Dict
     for i, round_msgs in enumerate(rounds):
         is_recent = (total_rounds - i) <= HISTORY_FULL_ROUNDS
         for msg in round_msgs:
-            if is_recent:
-                history.append({"role": msg["role"], "content": msg["content"]})
-            else:
-                if msg["role"] in ("user", "assistant"):
-                    content = msg["content"]
-                    if len(content) > 500:
-                        content = content[:500] + "..."
-                    history.append({"role": msg["role"], "content": content})
+            if msg["role"] == "tool":
+                continue
+            if msg["role"] == "assistant":
+                content = msg.get("content", "") or ""
+                if not content:
+                    continue
+                if not is_recent and len(content) > 500:
+                    content = content[:500] + "..."
+                history.append({"role": "assistant", "content": content})
+            elif msg["role"] == "user":
+                content = msg["content"]
+                if not is_recent and len(content) > 500:
+                    content = content[:500] + "..."
+                history.append({"role": "user", "content": content})
 
     return history
 
@@ -234,6 +241,17 @@ def _build_state_summary(conv_id: str) -> str:
             lines.append(f"- {key}: {value[:100]}...")
         else:
             lines.append(f"- {key}: {value}")
+
+    # ── pending_data_requests 高亮提示 ──
+    pending = state.data.get("pending_data_requests") or []
+    if pending:
+        pending_asins = {r.get("asin", "?") for r in pending if isinstance(r, dict)}
+        lines.insert(
+            0,
+            f"⚠️ **pending_data_requests**: {len(pending)} 项待补单 "
+            f"(ASINs: {', '.join(sorted(pending_asins)[:5])}) —— "
+            f"请调用 product_collector 补充数据",
+        )
 
     if not lines:
         return ""
@@ -340,7 +358,16 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
         if msg["role"] == "user":
             langchain_messages.append(HumanMessage(content=msg["content"]))
         elif msg["role"] == "assistant":
-            langchain_messages.append(AIMessage(content=msg.get("content", "")))
+            tool_calls = msg.get("tool_calls")
+            if tool_calls:
+                langchain_messages.append(AIMessage(
+                    content=msg.get("content", "") or "",
+                    tool_calls=[{"id": tc["id"], "name": tc["name"], "args": tc["args"], "type": "tool_call"} for tc in tool_calls],
+                ))
+            else:
+                content = msg.get("content", "") or ""
+                if content:
+                    langchain_messages.append(AIMessage(content=content))
         elif msg["role"] == "tool":
             langchain_messages.append(ToolMessage(content=msg["content"], tool_call_id=msg.get("tool_call_id", "")))
 

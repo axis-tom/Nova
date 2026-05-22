@@ -17,9 +17,9 @@ from backend.foundation.memory.short_term.conversation_store import (
     MessageOut
 )
 from backend.data.models.project import TreeNode
-from backend.data.repositories.postgres.conversation_repo import ConversationRepository
-from backend.data.repositories.postgres.message_repo import MessageRepository
-from backend.data.repositories.postgres.project_repo import ProjectRepository
+from backend.data.repositories.postgreSQL.conversation_repo import ConversationRepository
+from backend.data.repositories.postgreSQL.message_repo import MessageRepository
+from backend.data.repositories.postgreSQL.project_repo import ProjectRepository
 
 router = APIRouter(prefix="/conversation", tags=["对话"])
 

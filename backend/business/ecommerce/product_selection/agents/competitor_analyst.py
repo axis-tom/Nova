@@ -2,17 +2,20 @@
 竞品分析 Agent - 电商选品分析场景
 
 职责：
-1. 读取 state.collected_products（Keepa 采集的真实商品数据）
-2. 按品牌聚合，计算市场份额、价格、BSR、评分等竞争力指标
-3. 分层竞争格局（梯队划分）
-4. 识别差异化机会（价格带空白、低竞争品牌、BSR 上升机会）
+1. 读取 state.collected_products（Keepa + Rainforest + Canopy 三源数据）
+2. 按品牌聚合：市场份额、价格、BSR、评分等竞争力指标
+3. 产品级 head-to-head 对比：头部 3 品深度对比
+4. 定价策略识别：从 price_history 判断涨价/降价/稳定模式
+5. listing 质量对比：五点/图片/描述/A+ 完整度
+6. 分层竞争格局 + 差异化机会识别
 
-数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
+数据源：state.collected_products（由 product_collector 三源采集）
 """
 
 import json as _json
 from typing import Any, Dict, List
 from datetime import datetime
+from statistics import median
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
@@ -20,10 +23,10 @@ from backend.utils.logger import logger
 
 
 class CompetitorAnalystAgent(Agent):
-    """竞品分析 Agent — 基于 Keepa 真实数据做品牌级竞品对比"""
+    """竞品分析 Agent — 品牌聚合 + 产品级 head-to-head 对比"""
 
     name = "competitor_analyst"
-    description = "电商竞品分析 Agent，基于 Keepa 数据做品牌对比和差异化分析"
+    description = "电商竞品分析 Agent，基于 Keepa + Canopy/Rainforest 数据做品牌竞争和产品级对比分析"
 
     async def run(self, state: State) -> State:
         state.add_event("competitor_analyst_start")
@@ -40,7 +43,7 @@ class CompetitorAnalystAgent(Agent):
 
             result = self._analyze_competitors(products)
 
-            # LLM 增强：基于竞品数据生成竞争策略
+            # LLM 增强
             ai_result = await self._llm_analyze_competitors(result)
             if ai_result:
                 result["ai_insights"] = ai_result
@@ -63,14 +66,20 @@ class CompetitorAnalystAgent(Agent):
     # ── LLM 增强分析 ──
 
     async def _llm_analyze_competitors(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """让 LLM 基于竞品数据生成竞争策略，失败返回空 dict"""
         summary = result.get("summary", {})
+        head_to_head = result.get("head_to_head", {})
         landscape = result.get("competitive_landscape", {})
         differentiation = result.get("differentiation_opportunities", [])
         share = result.get("market_share_distribution", [])
 
         prompt = _json.dumps({
             "summary": summary,
+            "top_3_products": [
+                {"title": p.get("title", "")[:60], "brand": p.get("brand"),
+                 "price": p.get("price"), "price_pattern": p.get("price_pattern"),
+                 "monthly_sold": p.get("monthly_sold")}
+                for p in (head_to_head.get("top_3_products") or [])[:3]
+            ],
             "competitive_landscape": landscape,
             "top_brands": [
                 {"brand": b.get("brand"), "market_share": b.get("market_share_percent"),
@@ -86,8 +95,9 @@ class CompetitorAnalystAgent(Agent):
             "Return JSON with these fields:\n"
             "- competitive_position: string, 对当前竞争格局的判断\n"
             "- recommended_positioning: string, 推荐的市场定位\n"
-            "- attack_strategy: list of strings, 具体的竞争攻击策略\n"
+            "- attack_strategy: list of strings, 具体的竞争攻击策略（基于头部竞品弱点）\n"
             "- brands_to_watch: list of strings, 需要重点关注的品牌及原因\n"
+            "- listing_tips: list of strings, 基于竞品 listing 分析得出的优化建议\n"
             "Return valid JSON only, no markdown."
         )
 
@@ -106,12 +116,171 @@ class CompetitorAnalystAgent(Agent):
             logger.warning("[CompetitorAnalyst] LLM returned invalid JSON, skipping")
         return {}
 
+    # ── 定价策略识别 ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _classify_price_pattern(price_history: List) -> str:
+        """从 price_history CSV 判断定价策略"""
+        if not price_history or len(price_history) < 3:
+            return "数据不足"
+
+        vals = [v for _, v in price_history[-90:]] if len(price_history) > 90 else [v for _, v in price_history]
+        if not vals or len(vals) < 3:
+            return "数据不足"
+
+        first = vals[0]
+        last = vals[-1]
+        if first <= 0:
+            return "数据异常"
+
+        total_change = (last - first) / first * 100
+        max_val = max(vals)
+        min_val = min(vals)
+        volatility = (max_val - min_val) / first * 100 if first > 0 else 0
+
+        if volatility < 5:
+            return "稳定"
+        if total_change < -5:
+            return "持续降价"
+        if total_change > 5:
+            return "持续涨价"
+        if volatility > 15:
+            return "频繁波动"
+        return "小幅调整"
+
+    # ── listing 质量评估 ──────────────────────────────────────────────
+
+    def _compare_listing_quality(self, products: List[Dict]) -> Dict[str, Any]:
+        """对比各商品的 listing 完整度"""
+        scored = []
+        for p in products:
+            score = 0
+            bullets = p.get("feature_bullets") or []
+            images = p.get("images") or []
+            specs = p.get("specifications") or {}
+            desc = p.get("description") or ""
+            aplus = p.get("aplus_content")
+
+            if len(bullets) >= 5:
+                score += 2
+            elif len(bullets) >= 3:
+                score += 1
+
+            if len(images) >= 7:
+                score += 2
+            elif len(images) >= 3:
+                score += 1
+
+            if len(specs) >= 10:
+                score += 2
+            elif len(specs) >= 5:
+                score += 1
+
+            if aplus:
+                score += 2
+
+            if len(desc) > 500:
+                score += 2
+            elif len(desc) > 100:
+                score += 1
+
+            scored.append({
+                "asin": p.get("asin", ""),
+                "title": (p.get("title") or "")[:60],
+                "listing_score": score,
+                "max_score": 10,
+                "bullet_count": len(bullets),
+                "image_count": len(images),
+                "spec_count": len(specs),
+                "has_aplus": bool(aplus),
+                "has_description": len(desc) > 0,
+            })
+
+        scored.sort(key=lambda x: x["listing_score"], reverse=True)
+        avg_score = round(sum(s["listing_score"] for s in scored) / len(scored), 1) if scored else 0
+
+        return {
+            "average_listing_score": avg_score,
+            "max_score": 10,
+            "distribution": {
+                "excellent": sum(1 for s in scored if s["listing_score"] >= 8),
+                "good": sum(1 for s in scored if 5 <= s["listing_score"] < 8),
+                "weak": sum(1 for s in scored if s["listing_score"] < 5),
+            },
+            "rankings": scored[:10],
+        }
+
+    # ── 头部竞品深挖 ──────────────────────────────────────────────────
+
+    def _analyze_head_to_head(self, products: List[Dict]) -> Dict[str, Any]:
+        """BSR 最好的 3 个产品做逐项对比"""
+        sorted_prods = sorted(products, key=lambda p: p.get("current_bsr") or 999999)
+        top3 = sorted_prods[:3]
+
+        def _extract_key_specs(specs: Dict) -> Dict:
+            """提取关键规格"""
+            key_fields = [
+                "Brand", "Color", "Size", "Material", "Weight",
+                "Product Dimensions", "Item Weight", "Batteries",
+                "Power Source", "Style", "Special Feature",
+            ]
+            return {k: specs[k] for k in key_fields if k in specs}
+
+        return {
+            "top_3_products": [
+                {
+                    "asin": p.get("asin"),
+                    "title": (p.get("title") or "")[:80],
+                    "brand": p.get("brand", "Unknown"),
+                    "price": p.get("current_price"),
+                    "list_price": p.get("list_price"),
+                    "is_prime": p.get("is_prime", False),
+                    "is_fba": p.get("fulfillment") == "FBA",
+                    "is_in_stock": p.get("is_in_stock"),
+                    "price_pattern": self._classify_price_pattern(p.get("price_history") or []),
+                    "bsr_trajectory": p.get("bsr_trend", "unknown"),
+                    "rating": p.get("rating"),
+                    "review_count": p.get("review_count", 0),
+                    "rating_breakdown": p.get("rating_breakdown", {}),
+                    "monthly_sold": p.get("monthly_sold", 0),
+                    "seller_count": p.get("seller_count", 0),
+                    "feature_bullets": p.get("feature_bullets", [])[:5],
+                    "spec_highlights": _extract_key_specs(p.get("specifications", {})),
+                    "variation_count": len(p.get("variations", [])),
+                    "image_count": len(p.get("images", [])),
+                    "has_description": bool(p.get("description", "")),
+                    "sponsored": len(p.get("sponsored_products", [])) > 0,
+                    "data_sources": p.get("data_sources", []),
+                }
+                for p in top3
+            ],
+            "cross_comparison": {
+                "price_range": {
+                    "min": min(p.get("current_price") for p in top3 if p.get("current_price")),
+                    "max": max(p.get("current_price") for p in top3 if p.get("current_price")),
+                },
+                "all_prime": all(p.get("is_prime") for p in top3),
+                "all_fba": all(p.get("fulfillment") == "FBA" for p in top3),
+                "avg_rating": round(
+                    sum(p.get("rating") for p in top3 if p.get("rating")) /
+                    max(1, sum(1 for p in top3 if p.get("rating"))),
+                    2,
+                ),
+                "total_monthly_sold": sum(p.get("monthly_sold", 0) for p in top3),
+                "price_patterns": list(set(
+                    self._classify_price_pattern(p.get("price_history") or []) for p in top3
+                )),
+            },
+        }
+
+    # ── 竞品分析主函数 ────────────────────────────────────────────────
+
     def _analyze_competitors(self, products: List[Dict]) -> Dict[str, Any]:
-        # 按品牌聚合
+        # 品牌聚合
         brand_data = self._aggregate_brands(products)
         total_sales = sum(b["total_sales"] for b in brand_data.values())
 
-        # 计算市场份额并排序
+        # 市场份额排序
         brand_list = []
         for brand, b in brand_data.items():
             share = b["total_sales"] / total_sales if total_sales > 0 else 0
@@ -131,11 +300,16 @@ class CompetitorAnalystAgent(Agent):
                 "avg_seller_count": round(b["_seller_sum"] / b["count"]) if b["count"] else 0,
                 "bsr_trends": b["bsr_trends"],
             })
-
         brand_list.sort(key=lambda x: x["total_monthly_sales"], reverse=True)
 
         # 竞争格局分层
         landscape = self._analyze_landscape(brand_list)
+
+        # head-to-head 对比（新增）
+        head_to_head = self._analyze_head_to_head(products)
+
+        # listing 质量对比（新增）
+        listing_quality = self._compare_listing_quality(products)
 
         # 差异化机会
         differentiation = self._identify_differentiation(brand_list, products)
@@ -144,8 +318,7 @@ class CompetitorAnalystAgent(Agent):
         rating_comparison = sorted(
             [{"brand": b["brand"], "avg_rating": b["avg_rating"], "total_reviews": b["total_reviews"]}
              for b in brand_list if b["avg_rating"] is not None],
-            key=lambda x: x["avg_rating"],
-            reverse=True,
+            key=lambda x: x["avg_rating"], reverse=True,
         )
 
         # 价格区间对比
@@ -186,12 +359,16 @@ class CompetitorAnalystAgent(Agent):
                 }
                 for i, b in enumerate(brand_list)
             ],
+            "head_to_head": head_to_head,
+            "listing_quality": listing_quality,
             "price_comparison": price_comparison,
             "rating_comparison": rating_comparison,
             "differentiation_opportunities": differentiation,
             "competitive_landscape": landscape,
             "generated_at": datetime.now().isoformat(),
         }
+
+    # ── 品牌聚合 ──────────────────────────────────────────────────────
 
     def _aggregate_brands(self, products: List[Dict]) -> Dict[str, Dict]:
         brands: Dict[str, Dict] = {}
@@ -243,7 +420,6 @@ class CompetitorAnalystAgent(Agent):
             if trend in b["bsr_trends"]:
                 b["bsr_trends"][trend] += 1
 
-        # 修正 inf
         for b in brands.values():
             if b["min_price"] == float("inf"):
                 b["min_price"] = None
@@ -284,7 +460,6 @@ class CompetitorAnalystAgent(Agent):
     ) -> List[Dict]:
         opportunities = []
 
-        # 1. 价格带空白
         price_bands = [
             ("<$20", 0, 20), ("$20-50", 20, 50), ("$50-100", 50, 100),
             ("$100-200", 100, 200), ("$200+", 200, float("inf")),
@@ -304,7 +479,6 @@ class CompetitorAnalystAgent(Agent):
                     "potential": "中高",
                 })
 
-        # 2. BSR 上升但品牌弱势（小品牌在起飞）
         for b in brand_list:
             improving = b["bsr_trends"].get("improving", 0)
             total_trends = sum(b["bsr_trends"].values())
@@ -315,7 +489,6 @@ class CompetitorAnalystAgent(Agent):
                     "potential": "高",
                 })
 
-        # 3. 高评论壁垒品牌的弱点（评分低但评论多 = 锁定效应弱）
         for b in brand_list:
             if b["avg_rating"] and b["avg_rating"] < 3.8 and b["total_reviews"] > 500:
                 opportunities.append({

@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
 from backend.data.models.data_source import DataSourceInDB, DataSourceType
-from backend.data.repositories.postgres.data_source_repo import DataSourceRepository
+from backend.data.repositories.postgreSQL.data_source_repo import DataSourceRepository
 from backend.common.core import AgentInput, AgentOutput
 from backend.foundation.perception.collectors.competitor import CompetitorAgent
 from backend.foundation.perception.collectors.social import SocialAgent
@@ -204,7 +204,7 @@ class CollectorScheduler:
         """
         try:
             # 获取所有启用的数据源
-            from backend.data.repositories.postgres.user_repo import UserRepository
+            from backend.data.repositories.postgreSQL.user_repo import UserRepository
             
             user_repo = UserRepository(self.db)
             

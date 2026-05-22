@@ -2,17 +2,20 @@
 市场分析 Agent - 电商选品分析场景
 
 职责：
-1. 读取 state.collected_products（Keepa 采集的真实商品数据）
-2. 分析市场趋势：价格/BSR/品牌分布、趋势方向
-3. 识别市场机会点和风险点
-4. 进行盈利评估（基于 Keepa monthly_sold 估算）
+1. 读取 state.collected_products（Keepa + Rainforest + Canopy 三源数据）
+2. 市场体量：月销总额、营收估算、价格带分布
+3. 市场趋势：用 price_history / bsr_history CSV 时间序列做真正的趋势计算
+4. 淡旺季：按月份聚合 BSR/价格，识别旺季低谷
+5. 品牌分布、价格带、机会/风险识别
+6. 盈利评估（roi_analysis 模式）
 
-数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
+数据源：state.collected_products（由 product_collector 三源采集）
 """
 
 import json as _json
 from typing import Any, Dict, List
 from datetime import datetime
+from statistics import median
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
@@ -20,10 +23,10 @@ from backend.utils.logger import logger
 
 
 class MarketAnalystAgent(Agent):
-    """市场分析 Agent — 基于 Keepa 真实数据做市场趋势分析和盈利评估"""
+    """市场分析 Agent — 基于 Keepa 历史 + Rainforest/Canopy 详情做市场趋势和淡旺季分析"""
 
     name = "market_analyst"
-    description = "电商选品市场分析 Agent，基于 Keepa 数据做市场趋势和盈利评估"
+    description = "电商选品市场分析 Agent，基于 Keepa 时间序列 + Canopy/Rainforest listing 数据做市场体量/趋势/淡旺季分析"
 
     async def run(self, state: State) -> State:
         state.add_event("market_analyst_start")
@@ -43,7 +46,12 @@ class MarketAnalystAgent(Agent):
             if analysis_type == "market_trends":
                 result = self._analyze_market_trends(products)
 
-                # LLM 增强：基于市场趋势数据生成战略洞察
+                # 注入搜索热度（从 search_results 中提取）
+                search_results = state.get("search_results") or {}
+                if search_results:
+                    result["search_heat"] = self._analyze_search_heat(search_results)
+
+                # LLM 增强
                 ai_result = await self._llm_analyze_market(result)
                 if ai_result:
                     result["ai_insights"] = ai_result
@@ -78,20 +86,26 @@ class MarketAnalystAgent(Agent):
     # ── LLM 增强分析 ──
 
     async def _llm_analyze_market(self, market_result: Dict[str, Any]) -> Dict[str, Any]:
-        """让 LLM 基于市场趋势数据生成战略洞察，失败返回空 dict"""
         summary = market_result.get("summary", {})
+        volume = market_result.get("market_volume", {})
+        seasonality = market_result.get("seasonality", {})
+        trends = market_result.get("trends", {})
         brand_distribution = market_result.get("brand_distribution", {})
         opportunities = market_result.get("opportunities", [])
         risks = market_result.get("risks", [])
 
-        # 截断品牌分布，只取 top 5
         top_brands = dict(list(brand_distribution.items())[:5])
 
         prompt = _json.dumps({
+            "market_volume": volume,
             "summary": summary,
+            "trends": trends,
+            "seasonality": {k: v for k, v in seasonality.items() if k != "monthly_bsr_median" and k != "monthly_price_median"},
             "top_brands": {
-                brand: {"count": info.get("count"), "total_sales": info.get("total_sales"),
-                        "avg_price": info.get("avg_price"), "avg_rating": info.get("avg_rating")}
+                brand: {
+                    "count": info.get("count"), "total_sales": info.get("total_sales"),
+                    "avg_price": info.get("avg_price"), "avg_rating": info.get("avg_rating"),
+                }
                 for brand, info in top_brands.items()
             },
             "opportunities": opportunities[:5],
@@ -103,9 +117,10 @@ class MarketAnalystAgent(Agent):
             "Based on the market data below, provide strategic insights in Chinese.\n"
             "Return JSON with these fields:\n"
             "- market_stage: string, 市场所处阶段（成长期/成熟期/衰退期）\n"
-            "- entry_recommendation: string, 进入建议\n"
+            "- entry_recommendation: string, 进入建议（考虑体量+趋势+淡旺季）\n"
             "- key_success_factors: list of strings, 关键成功因素\n"
             "- hidden_risks: list of strings, 隐藏风险\n"
+            "- seasonality_strategy: string, 基于淡旺季的运营策略建议\n"
             "Return valid JSON only, no markdown."
         )
 
@@ -124,7 +139,221 @@ class MarketAnalystAgent(Agent):
             logger.warning("[MarketAnalyst] LLM returned invalid JSON, skipping")
         return {}
 
-    # ── 市场趋势分析 ──
+    # ── 市场体量 ──────────────────────────────────────────────────────
+
+    def _analyze_market_volume(self, products: List[Dict]) -> Dict[str, Any]:
+        """用 monthly_sold + 价格 + BSR 综合估算市场体量"""
+        total_monthly_sold = sum(p.get("monthly_sold", 0) for p in products)
+        total_revenue = sum(
+            (p.get("monthly_sold", 0) or 0) *
+            (p.get("avg_price_90d") or p.get("current_price") or 0)
+            for p in products
+        )
+
+        prices = [p["current_price"] for p in products if p.get("current_price")]
+        bsr_vals = [p["current_bsr"] for p in products if p.get("current_bsr")]
+
+        # 价格带
+        price_bands = self._analyze_price_bands(products)
+
+        return {
+            "total_monthly_units": total_monthly_sold,
+            "estimated_monthly_revenue": round(total_revenue, 2),
+            "product_count": len(products),
+            "avg_price": round(sum(prices) / len(prices), 2) if prices else 0,
+            "price_tier_distribution": price_bands,
+            "bsr_range": {
+                "min": min(bsr_vals) if bsr_vals else None,
+                "max": max(bsr_vals) if bsr_vals else None,
+                "median": round(median(bsr_vals)) if bsr_vals else None,
+            },
+        }
+
+    # ── 市场趋势（用 time-series 替代单点标签） ──────────────────────
+
+    @staticmethod
+    def _get_value_at_days_ago(history: List, days: int):
+        """从 [[timestamp_ms, value], ...] 中找约 N 天前的值"""
+        if not history or len(history) < 2:
+            return None
+        target_ts = history[-1][0] - days * 86400 * 1000
+        best = None
+        for ts, val in history:
+            if best is None or abs(ts - target_ts) < abs(best[0] - target_ts):
+                best = (ts, val)
+        return best[1] if best else None
+
+    def _analyze_trends_from_history(self, products: List[Dict]) -> Dict[str, Any]:
+        """从 price_history / bsr_history CSV 计算真正的趋势指标"""
+        bsr_changes_30d = []
+        bsr_changes_90d = []
+        price_changes_30d = []
+        price_changes_90d = []
+        bsr_direction = {"improving": 0, "declining": 0, "stable": 0}
+
+        for p in products:
+            bsr_hist = p.get("bsr_history") or []
+            price_hist = p.get("price_history") or []
+
+            if bsr_hist and len(bsr_hist) >= 2:
+                bsr_30 = self._get_value_at_days_ago(bsr_hist, 30)
+                bsr_90 = self._get_value_at_days_ago(bsr_hist, 90)
+                bsr_now = bsr_hist[-1][1]
+
+                if bsr_30 and bsr_30 > 0:
+                    chg = (bsr_now - bsr_30) / bsr_30 * 100
+                    bsr_changes_30d.append(chg)
+                if bsr_90 and bsr_90 > 0:
+                    chg = (bsr_now - bsr_90) / bsr_90 * 100
+                    bsr_changes_90d.append(chg)
+
+                # 方向分类
+                if bsr_30 and bsr_now < bsr_30 * 0.95:
+                    bsr_direction["improving"] += 1
+                elif bsr_30 and bsr_now > bsr_30 * 1.05:
+                    bsr_direction["declining"] += 1
+                else:
+                    bsr_direction["stable"] += 1
+            else:
+                bsr_direction["stable"] += 1  # 无历史数据默认稳定
+
+            if price_hist and len(price_hist) >= 2:
+                price_30 = self._get_value_at_days_ago(price_hist, 30)
+                price_90 = self._get_value_at_days_ago(price_hist, 90)
+                price_now = price_hist[-1][1]
+
+                if price_30 and price_30 > 0:
+                    chg = (price_now - price_30) / price_30 * 100
+                    price_changes_30d.append(chg)
+                if price_90 and price_90 > 0:
+                    chg = (price_now - price_90) / price_90 * 100
+                    price_changes_90d.append(chg)
+
+        total = len(products)
+        median_bsr_30 = round(median(bsr_changes_30d), 1) if bsr_changes_30d else None
+        median_price_30 = round(median(price_changes_30d), 1) if price_changes_30d else None
+
+        # 市场方向判断
+        improving_pct = bsr_direction["improving"] / total * 100 if total else 0
+        declining_pct = bsr_direction["declining"] / total * 100 if total else 0
+        if improving_pct > 40:
+            market_dir = "上升"
+        elif declining_pct > 40:
+            market_dir = "下降"
+        else:
+            market_dir = "稳定"
+
+        return {
+            "bsr": {
+                "median_change_30d_pct": median_bsr_30,
+                "median_change_90d_pct": round(median(bsr_changes_90d), 1) if bsr_changes_90d else None,
+                "improving_pct": round(improving_pct, 1),
+                "declining_pct": round(declining_pct, 1),
+                "stable_pct": round(bsr_direction["stable"] / total * 100, 1) if total else 0,
+                "market_direction": market_dir,
+            },
+            "price": {
+                "median_change_30d_pct": median_price_30,
+                "median_change_90d_pct": round(median(price_changes_90d), 1) if price_changes_90d else None,
+                "price_direction": (
+                    "上涨" if median_price_30 and median_price_30 > 3
+                    else "下降" if median_price_30 and median_price_30 < -3
+                    else "稳定"
+                ),
+            },
+        }
+
+    # ── 淡旺季 ────────────────────────────────────────────────────────
+
+    def _analyze_seasonality(self, products: List[Dict]) -> Dict[str, Any]:
+        """
+        用 price_history / bsr_history CSV 按月聚合。
+        BSR 最低 = 需求最高（旺季），价格最高 = 溢价期。
+        """
+        monthly_bsr: Dict[int, List[float]] = {i: [] for i in range(1, 13)}
+        monthly_price: Dict[int, List[float]] = {i: [] for i in range(1, 13)}
+
+        for p in products:
+            for ts, bsr in (p.get("bsr_history") or []):
+                try:
+                    month = datetime.fromtimestamp(ts / 1000).month
+                    monthly_bsr[month].append(float(bsr))
+                except (OSError, ValueError, TypeError):
+                    continue
+
+            for ts, price in (p.get("price_history") or []):
+                try:
+                    month = datetime.fromtimestamp(ts / 1000).month
+                    monthly_price[month].append(float(price))
+                except (OSError, ValueError, TypeError):
+                    continue
+
+        # 计算月度中位数
+        monthly_bsr_med = {}
+        monthly_price_med = {}
+        for m in range(1, 13):
+            vals = monthly_bsr.get(m, [])
+            monthly_bsr_med[m] = round(median(vals)) if vals else None
+            pvals = monthly_price.get(m, [])
+            monthly_price_med[m] = round(median(pvals), 2) if pvals else None
+
+        # BSR 中位数最低的月份 = 旺季
+        valid_bsr = [(m, v) for m, v in monthly_bsr_med.items() if v is not None]
+        valid_bsr.sort(key=lambda x: x[1])
+        peak_months = [m for m, _ in valid_bsr[:3]]
+        low_months = [m for m, _ in valid_bsr[-3:]] if len(valid_bsr) >= 6 else []
+
+        # 季节性强度：旺季 BSR vs 淡季 BSR 差距
+        strength = "弱"
+        if peak_months and low_months:
+            peak_bsr = monthly_bsr_med.get(peak_months[0])
+            low_bsr = monthly_bsr_med.get(low_months[0])
+            if peak_bsr and low_bsr and peak_bsr > 0:
+                ratio = low_bsr / peak_bsr
+                if ratio > 2:
+                    strength = "强"
+                elif ratio > 1.3:
+                    strength = "中"
+
+        return {
+            "peak_season_months": peak_months,
+            "low_season_months": low_months,
+            "monthly_bsr_median": monthly_bsr_med,
+            "monthly_price_median": monthly_price_med,
+            "seasonality_strength": strength,
+        }
+
+    # ── 搜索热度 ──────────────────────────────────────────────────────
+
+    def _analyze_search_heat(self, search_results: Dict[str, Any]) -> Dict[str, Any]:
+        """从 Canopy/Rainforest 搜索结果中提取搜索热度指标"""
+        keyword_results = search_results.get("keyword_results") or []
+        total_results = []
+        for kr in keyword_results:
+            tr = kr.get("total_results", 0)
+            if isinstance(tr, (int, float)) and tr > 0:
+                total_results.append(tr)
+
+        if not total_results:
+            return {"heat_level": "未知", "keyword_count": len(keyword_results)}
+
+        avg_results = round(sum(total_results) / len(total_results))
+        if avg_results > 200:
+            heat = "高"
+        elif avg_results > 100:
+            heat = "中"
+        else:
+            heat = "低"
+
+        return {
+            "heat_level": heat,
+            "avg_search_results": avg_results,
+            "max_search_results": max(total_results),
+            "min_search_results": min(total_results),
+            "keyword_count": len(keyword_results),
+        }
+
+    # ── 市场趋势分析（重构） ─────────────────────────────────────────
 
     def _analyze_market_trends(self, products: List[Dict]) -> Dict[str, Any]:
         total = len(products)
@@ -138,35 +367,26 @@ class MarketAnalystAgent(Agent):
         avg_rating = sum(ratings) / len(ratings) if ratings else 0
         total_monthly_sales = sum(p.get("monthly_sold", 0) for p in products)
 
-        # BSR 趋势分布
-        bsr_trend_dist = {"improving": 0, "declining": 0, "stable": 0, "unknown": 0}
-        for p in products:
-            trend = p.get("bsr_trend", "unknown")
-            if trend in bsr_trend_dist:
-                bsr_trend_dist[trend] += 1
-            else:
-                bsr_trend_dist["unknown"] += 1
-
-        improving_pct = bsr_trend_dist["improving"] / total if total else 0
-        declining_pct = bsr_trend_dist["declining"] / total if total else 0
-        if improving_pct > 0.5:
-            market_trend = "上升"
-        elif declining_pct > 0.5:
-            market_trend = "下降"
-        else:
-            market_trend = "稳定"
-
         # 品牌分布
         brand_distribution = self._aggregate_by_brand(products)
 
         # 价格带分析
         price_band_analysis = self._analyze_price_bands(products)
 
+        # 市场体量（新增）
+        market_volume = self._analyze_market_volume(products)
+
+        # 趋势（time-series 增强）
+        trends = self._analyze_trends_from_history(products)
+
+        # 淡旺季（新增）
+        seasonality = self._analyze_seasonality(products)
+
         # 机会识别
         opportunities = self._identify_opportunities(products, price_band_analysis)
 
         # 风险识别
-        risks = self._identify_risks(products, bsr_trend_dist, total)
+        risks = self._identify_risks(products, trends, total)
 
         return {
             "analysis_type": "market_trends",
@@ -176,15 +396,19 @@ class MarketAnalystAgent(Agent):
                 "total_monthly_sales": total_monthly_sales,
                 "average_rating": round(avg_rating, 2),
                 "average_bsr": round(avg_bsr),
-                "market_trend": market_trend,
+                "market_direction": trends["bsr"]["market_direction"],
             },
+            "market_volume": market_volume,
+            "trends": trends,
+            "seasonality": seasonality,
             "brand_distribution": brand_distribution,
             "price_band_analysis": price_band_analysis,
-            "bsr_trend_distribution": bsr_trend_dist,
             "opportunities": opportunities,
             "risks": risks,
             "generated_at": datetime.now().isoformat(),
         }
+
+    # ── 品牌聚合 ──────────────────────────────────────────────────────
 
     def _aggregate_by_brand(self, products: List[Dict]) -> Dict[str, Any]:
         brands: Dict[str, Dict] = {}
@@ -255,7 +479,6 @@ class MarketAnalystAgent(Agent):
     def _identify_opportunities(self, products: List[Dict], price_bands: Dict) -> List[Dict]:
         opportunities = []
 
-        # 上升期 + 高评分 + 低评论（竞争小的成长商品）
         rising_low_competition = [
             p for p in products
             if p.get("bsr_trend") == "improving"
@@ -270,7 +493,6 @@ class MarketAnalystAgent(Agent):
                 "asins": [p["asin"] for p in rising_low_competition[:5]],
             })
 
-        # 月销高 + 卖家少（供给不足）
         high_demand_low_supply = [
             p for p in products
             if (p.get("monthly_sold") or 0) > 100
@@ -284,30 +506,28 @@ class MarketAnalystAgent(Agent):
                 "asins": [p["asin"] for p in high_demand_low_supply[:5]],
             })
 
-        # 价格带空白
         for band, stats in price_bands.items():
             if stats["count"] == 0:
                 opportunities.append({
                     "opportunity": f"价格带空白：{band}",
-                    "evidence": f"该价格区间无商品，可能是差异化切入点",
+                    "evidence": "该价格区间无商品，可能是差异化切入点",
                     "strength": "中",
                 })
 
         return opportunities
 
-    def _identify_risks(self, products: List[Dict], bsr_trend_dist: Dict, total: int) -> List[Dict]:
+    def _identify_risks(self, products: List[Dict], trends: Dict, total: int) -> List[Dict]:
         risks = []
 
-        # 市场萎缩
-        declining_pct = bsr_trend_dist.get("declining", 0) / total if total else 0
-        if declining_pct > 0.5:
+        bsr_t = trends.get("bsr", {})
+        declining_pct = bsr_t.get("declining_pct", 0)
+        if declining_pct > 40:
             risks.append({
                 "risk_type": "市场萎缩",
-                "detail": f"{declining_pct*100:.0f}% 的商品 BSR 呈下降趋势，市场可能在收缩",
+                "detail": f"{declining_pct:.0f}% 的商品 BSR 呈下降趋势，市场可能在收缩",
                 "severity": "高",
             })
 
-        # 竞争激烈
         seller_counts = [p.get("seller_count", 0) for p in products if p.get("seller_count")]
         avg_sellers = sum(seller_counts) / len(seller_counts) if seller_counts else 0
         if avg_sellers > 20:
@@ -317,7 +537,6 @@ class MarketAnalystAgent(Agent):
                 "severity": "高" if avg_sellers > 50 else "中",
             })
 
-        # 评论壁垒
         review_counts = [p.get("review_count", 0) for p in products if p.get("review_count")]
         avg_reviews = sum(review_counts) / len(review_counts) if review_counts else 0
         if avg_reviews > 1000:
@@ -329,7 +548,7 @@ class MarketAnalystAgent(Agent):
 
         return risks
 
-    # ── 盈利评估 ──
+    # ── 盈利评估 ──────────────────────────────────────────────────────
 
     def _analyze_profitability(
         self, products: List[Dict], profit_margin: float = 0.25
@@ -360,7 +579,6 @@ class MarketAnalystAgent(Agent):
         total_revenue = sum(r["monthly_revenue"] for r in results)
         total_profit = sum(r["est_monthly_profit"] for r in results)
 
-        # 按品牌汇总
         brand_profit: Dict[str, Dict] = {}
         for r in results:
             brand = r["brand"]

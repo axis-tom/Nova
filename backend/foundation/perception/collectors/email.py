@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.common.collectors.base import BaseCollector
 from backend.common.core import AgentInput
 from backend.foundation.perception.connectors.email.imap_client import IMAPClient
-from backend.data.repositories.postgres.raw_email_repo import RawEmailRepository
+from backend.data.repositories.postgreSQL.raw_email_repo import RawEmailRepository
 from backend.utils.crypto import decrypt_password
 from backend.utils.logger import logger
 

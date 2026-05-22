@@ -50,6 +50,13 @@ class TrafficAnalyzerAgent(Agent):
             products: List[Dict] = state.get("collected_products", [])
             product_map: Dict = state.get("product_map", {})
 
+            # 字段归一化：Keepa 用 current_price/current_bsr，内部分析用 price/bsr_rank
+            for p in products:
+                if "current_price" in p and "price" not in p:
+                    p["price"] = p["current_price"]
+                if "current_bsr" in p and "bsr_rank" not in p:
+                    p["bsr_rank"] = p["current_bsr"]
+
             if not products:
                 logger.warning("[TrafficAnalyzer] No products to analyze")
                 state.set("traffic_insights", {})

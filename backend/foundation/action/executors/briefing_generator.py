@@ -4,8 +4,8 @@ from datetime import datetime
 
 from backend.common.core import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
-from backend.data.repositories.postgres.raw_email_repo import RawEmailRepository
-from backend.data.repositories.postgres.briefing_repo import BriefingRepository
+from backend.data.repositories.postgreSQL.raw_email_repo import RawEmailRepository
+from backend.data.repositories.postgreSQL.briefing_repo import BriefingRepository
 from backend.data.models.briefing import BriefingCreate
 
 class BriefingGeneratorAgent(Agent):

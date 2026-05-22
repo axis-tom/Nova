@@ -205,5 +205,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,
+        reload_dirs=["/home/nova/projects/Nova/backend"],
+        reload_excludes=["/home/nova/projects/Nova/backend/infrastructure/data"],
         log_level=settings.LOG_LEVEL.lower()
     )

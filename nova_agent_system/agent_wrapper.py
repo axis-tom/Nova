@@ -33,15 +33,14 @@ AGENT_REGISTRY = [
     {
         "name": "product_collector",
         "description": (
-            "Amazon 商品采集（基于 Keepa）：拉取价格、BSR、评论、销量等历史数据。"
-            "**推荐用法**：传入 watchlist_asins=[\"B0XXX\",...] 直接查指定商品（每 ASIN 1 token，快且省）。"
-            "用户问「分析 B0XXX 这个商品」「对比这几个 ASIN」类问题时**首选**此入口。"
-            "兼容旧入口：可显式 allow_keyword_search=True + expanded_keywords 走关键词搜索"
-            "（但 Pro 套餐 /search 每次烧 10 token 且常返空，不推荐）。"
+            "Amazon 商品采集（Keepa + Rainforest + Canopy 三数据源）。"
+            "**推荐用法 1**：传入 watchlist_asins=[\"B0XXX\",...] 查指定商品，自动获取 Keepa 历史趋势 + Rainforest listing 详情 + Canopy listing 补全。"
+            "**推荐用法 2**：传入 expanded_keywords=[\"...\"] 通过 Canopy 关键词搜索自动发现 ASIN（Rainforest 备用）。"
+            "**L2 补单**：如果 state 有 pending_data_requests，会按需补充更多评论页/卖家报价/类目榜单。"
         ),
         "input_example": (
             '{"watchlist_asins": ["B0BDHWDR12", "B0F9FP4MC4"], "domain": "US"}  '
-            '# 推荐：直接传 ASIN；或者 {"expanded_keywords":["bluetooth earbuds"], "allow_keyword_search": true}'
+            '# 已知 ASIN；或 {"expanded_keywords":["bluetooth earbuds"], "allow_keyword_search": true}  # 关键词发现'
         ),
         "requires_upstream": [],
     },
@@ -70,7 +69,9 @@ AGENT_REGISTRY = [
     {
         "name": "market_analyst",
         "description": (
-            "Amazon 市场分析：基于 Keepa 真实数据分析市场趋势、品牌分布、价格带、机会/风险。"
+            "Amazon 市场分析：基于 Keepa 历史趋势（price/BSR CSV）+ Canopy/Rainforest listing 数据，"
+            "分析市场体量（月销/营收）、市场趋势（BSR/价格 time-series 变化率）、"
+            "淡旺季（月度 BSR/价格分布）、品牌分布、价格带、机会/风险。"
             "支持 analysis_type='market_trends'（默认）或 'roi_analysis'（盈利评估）。"
             "**必须先调用 product_collector**，读取 state.collected_products"
         ),
@@ -80,8 +81,9 @@ AGENT_REGISTRY = [
     {
         "name": "competitor_analyst",
         "description": (
-            "Amazon 竞品分析：基于 Keepa 真实数据，按品牌聚合做市场份额、价格区间、"
-            "评分对比、竞争格局分层和差异化机会识别。"
+            "Amazon 竞品分析：品牌聚合 + 产品级 head-to-head 对比。"
+            "分析市场份额、竞争格局分层、头部竞品定价策略（基于 price_history 识别的涨价/降价/稳定模式）、"
+            "listing 质量对比（五点/图片/描述/A+）、差异化机会。"
             "**必须先调用 product_collector**，读取 state.collected_products"
         ),
         "input_example": '{}  # 必须先有 product_collector 的 collected_products',

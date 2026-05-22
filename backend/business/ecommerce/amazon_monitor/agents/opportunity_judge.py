@@ -73,6 +73,14 @@ class OpportunityJudgeAgent(Agent):
         try:
             # 读取所有上游数据
             products: List[Dict] = state.get("collected_products", [])
+
+            # 字段归一化：Keepa 用 current_price/current_bsr，内部分析用 price/bsr_rank
+            for p in products:
+                if "current_price" in p and "price" not in p:
+                    p["price"] = p["current_price"]
+                if "current_bsr" in p and "bsr_rank" not in p:
+                    p["bsr_rank"] = p["current_bsr"]
+
             review_insights: List[Dict] = state.get("review_insights", [])
             sentiment_summary: Dict = state.get("sentiment_summary", {})
             customer_needs: List[str] = state.get("customer_needs", [])
@@ -419,10 +427,10 @@ class OpportunityJudgeAgent(Agent):
                 "asin": product.get("asin"),
                 "title": product.get("title", "")[:80],
                 "category": cat,
-                "price": product.get("price"),
+                "price": product.get("current_price") or product.get("price"),
                 "rating": product.get("rating"),
                 "review_count": product.get("review_count"),
-                "bsr_rank": product.get("bsr_rank"),
+                "bsr_rank": product.get("current_bsr") or product.get("bsr_rank"),
                 "total_score": product.get("total_score"),
                 "score_grade": product.get("score_grade"),
                 "competition_level": cat_data.get("competition_level", "未知"),
@@ -436,7 +444,7 @@ class OpportunityJudgeAgent(Agent):
         """生成机会说明"""
         reasons = []
         score = product.get("total_score", 0)
-        bsr = product.get("bsr_rank")
+        bsr = product.get("current_bsr") or product.get("bsr_rank")
         rating = product.get("rating", 0)
         reviews = product.get("review_count", 0)
 
@@ -581,9 +589,11 @@ class OpportunityJudgeAgent(Agent):
             lines.append(f"|------|------|------|------|------|-----|---------|")
             for pick in top_picks[:10]:
                 title = (pick.get("title") or "")[:30]
-                price = f"${pick.get('price', 0):.2f}" if pick.get("price") else "N/A"
+                price_val = pick.get("current_price") or pick.get("price")
+                price = f"${price_val:.2f}" if price_val else "N/A"
                 rating = pick.get("rating", "N/A")
-                bsr = f"#{pick.get('bsr_rank', 'N/A')}"
+                bsr_val = pick.get("current_bsr") or pick.get("bsr_rank")
+                bsr = f"#{bsr_val}" if bsr_val else "N/A"
                 score = f"{pick.get('total_score', 0):.0f} ({pick.get('score_grade', 'N/A')})"
                 lines.append(
                     f"| {pick.get('rank', '')} | {pick.get('asin', '')} | {title} | "

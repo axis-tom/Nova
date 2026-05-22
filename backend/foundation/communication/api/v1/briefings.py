@@ -7,7 +7,7 @@ from backend.data.database import AsyncSessionLocal, get_db
 from backend.foundation.communication.api.v1.auth import get_current_user
 from backend.data.models.user import UserOut
 from backend.data.models.briefing import BriefingCreate, BriefingOut, BriefingUpdate
-from backend.data.repositories.postgres.briefing_repo import BriefingRepository
+from backend.data.repositories.postgreSQL.briefing_repo import BriefingRepository
 from backend.foundation.perception.collectors.email import EmailAgent
 
 router = APIRouter(prefix="/briefings", tags=["简报"])

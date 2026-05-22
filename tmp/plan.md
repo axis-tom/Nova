@@ -114,5 +114,27 @@ steps:
 
 ---
 
+https://81hub.ai
+
+
 **请问您对这个方案是否满意？** 如果有需要调整的地方（比如优先实现哪些功能、是否需要特定的 Amazon 数据源等），请告诉我，我可以进一步细化。如果方案没问题，请切换到 **Act Mode**，我来开始实现。
 
+curl https://81hub.ai/v1/messages \
+  -H "x-api-key: sk-j4mVoHqyIuXGsNdGXK3iUwarOPdIcdsZSyO1SEdUpG7NGLpT" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{
+    "model":"claude-sonnet-4-6",
+    "max_tokens":10,
+    "messages":[{"role":"user","content":"hi"}]
+  }'
+
+
+  curl https://81hub.ai/v1/messages \
+  -H "x-api-key: sk-j4mVoHqyIuXGsNdGXK3iUwarOPdIcdsZSyO1SEdUpG7NGLpT" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-6","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}'
+
+
+  curl -H "Authorization: Bearer sk-j4mVoHqyIuXGsNdGXK3iUwarOPdIcdsZSyO1SEdUpG7NGLpT" https://81hub.ai/v1/models

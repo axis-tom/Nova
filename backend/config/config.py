@@ -64,6 +64,36 @@ class Settings(BaseSettings):
     KEEPA_DEAL_MAX_RESULTS: int = 30               # Deal API 每次最多返回数量
     KEEPA_CACHE_TTL_HOURS: int = 6                 # ASIN 缓存 TTL（小时），0 = 禁用缓存
 
+    # Rainforest API 配置
+    # 注册地址: https://app.rainforestapi.com/
+    # 文档: https://docs.rainforestapi.com/
+    # 计费: 不同端点独立计费（product/reviews/search 各消耗不同 credit）
+    RAINFOREST_API_KEY: Optional[str] = None
+
+    # Rainforest 采集控制
+    RAINFOREST_DEFAULT_DOMAIN: str = "amazon.com"     # 默认市场域名
+    RAINFOREST_MAX_RETRY: int = 3                     # 失败重试次数
+    RAINFOREST_REQUEST_TIMEOUT: int = 30              # 请求超时（秒）
+    RAINFOREST_REVIEWS_FIRST_PAGE_SIZE: int = 10      # L1 评论首页条数
+    RAINFOREST_REVIEWS_EXTRA_PAGE_SIZE: int = 50      # L2 补单时每页条数
+    RAINFOREST_MAX_REVIEW_PAGES: int = 3              # 补单最多拉取页数
+    RAINFOREST_SEARCH_MAX_RESULTS: int = 20           # 搜索每关键词最大结果数
+    RAINFOREST_SEARCH_MAX_KEYWORDS: int = 5           # 每次最多搜索关键词数
+
+    # Canopy API 配置
+    # 注册地址: https://app.canopyapi.com/
+    # 文档: https://docs.canopyapi.com/
+    CANOPY_API_KEY: Optional[str] = None
+
+    # Canopy 采集控制
+    CANOPY_DEFAULT_DOMAIN: str = "amazon.com"
+    CANOPY_REQUEST_TIMEOUT: int = 60
+    CANOPY_REVIEWS_FIRST_PAGE_SIZE: int = 10
+    CANOPY_REVIEWS_EXTRA_PAGE_SIZE: int = 50
+    CANOPY_MAX_REVIEW_PAGES: int = 3
+    CANOPY_SEARCH_MAX_RESULTS: int = 20
+    CANOPY_SEARCH_MAX_KEYWORDS: int = 5
+
     # Amazon 监控调度器开关
     # 默认关闭：避免每 6 小时自动跑 product_collector 偷烧 Keepa token
     # 显式设为 1/true/yes 才会在启动时拉起后台定时任务

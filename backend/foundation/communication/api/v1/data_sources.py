@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Dict, Any
 
 from backend.data.database import get_db
-from backend.data.repositories.postgres.data_source_repo import DataSourceRepository
+from backend.data.repositories.postgreSQL.data_source_repo import DataSourceRepository
 from backend.foundation.communication.api.v1.auth import get_current_user
 from backend.data.models.user import UserOut
 from backend.data.models.data_source import DataSourceCreate, DataSourceUpdate
