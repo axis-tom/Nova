@@ -19,7 +19,7 @@ const Workspace = () => import('@/interface/components/workspace/Workspace.vue')
 const AgentChat = () => import('@/interface/views/AgentChat.vue')
 
 const routes = [
-  { path: '/', redirect: '/workspace' },
+  { path: '/', redirect: '/agent-chat' },
   { path: '/login', name: 'Login', component: Login, meta: { requiresAuth: false, title: '登录' } },
   { path: '/dashboard', name: 'Dashboard', component: Dashboard, meta: { requiresAuth: true, title: '仪表盘' } },
   { path: '/data-sources', name: 'DataSources', component: DataSources, meta: { requiresAuth: true, title: '数据源管理' } },

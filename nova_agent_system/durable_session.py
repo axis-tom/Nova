@@ -74,6 +74,25 @@ class DurableSession:
             ON messages(conv_id, agent_id)
         """)
 
+        # analysis_checkpoints 表：存储分析树 checkpoint 快照
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_checkpoints (
+                id              TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                invocation_id   TEXT NOT NULL,
+                agent_name      TEXT NOT NULL,
+                dimensions_json TEXT,
+                state_json      TEXT,
+                summary_json    TEXT,
+                created_at      TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_conv
+            ON analysis_checkpoints(conversation_id, created_at)
+        """)
+
         conn.commit()
         conn.close()
 
@@ -324,6 +343,85 @@ class DurableSession:
         conn.close()
 
         return len(expired_ids)
+
+
+# ── Checkpoint 操作 ──
+
+    def save_checkpoint(
+        self,
+        checkpoint_id: str,
+        conversation_id: str,
+        invocation_id: str,
+        agent_name: str,
+        dimensions_json: str,
+        state_json: str,
+        summary_json: str,
+    ) -> None:
+        """保存分析树 checkpoint 快照"""
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO analysis_checkpoints
+            (id, conversation_id, invocation_id, agent_name, dimensions_json, state_json, summary_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (checkpoint_id, conversation_id, invocation_id, agent_name, dimensions_json, state_json, summary_json, now),
+        )
+        conn.commit()
+        conn.close()
+
+    def load_checkpoint(self, checkpoint_id: str) -> Optional[Dict[str, Any]]:
+        """加载单个 checkpoint"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM analysis_checkpoints WHERE id = ?", (checkpoint_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return dict(row)
+
+    def list_checkpoints(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """列出某个会话的所有 checkpoints（按时间升序）"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM analysis_checkpoints WHERE conversation_id = ? ORDER BY created_at ASC",
+            (conversation_id,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def delete_checkpoints_after(
+        self, conversation_id: str, invocation_id: str
+    ) -> int:
+        """删除指定 invocation 之后的所有 checkpoints（用于回溯）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        # 找到该 invocation 的 created_at
+        cursor.execute(
+            "SELECT created_at FROM analysis_checkpoints WHERE invocation_id = ?",
+            (invocation_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return 0
+        cutoff = row[0]
+        cursor.execute(
+            "DELETE FROM analysis_checkpoints WHERE conversation_id = ? AND created_at > ?",
+            (conversation_id, cutoff),
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
 
 
 # 全局单例

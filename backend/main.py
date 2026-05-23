@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from backend.foundation.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.foundation.communication.api.v1 import models, tree, amazon_monitor, agent_chat
+from backend.foundation.communication.api.v1 import models, tree, amazon_monitor, agent_chat, analysis_tree_api
 from backend.foundation.communication.api.v1 import router as api_router
 from backend.config.config import settings
 from backend.foundation.communication.message_bus import message_bus
@@ -163,6 +163,9 @@ app.include_router(amazon_monitor.router, prefix=f"{settings.API_V1_PREFIX}/amaz
 
 # 注册Agent Chat API路由 - 智能体对话（SSE流式）
 app.include_router(agent_chat.router, prefix=settings.API_V1_PREFIX, tags=["Agent 对话"])
+
+# 注册分析树 API 路由 - 选品分析树查询/回溯/追加维度
+app.include_router(analysis_tree_api.router, prefix=settings.API_V1_PREFIX, tags=["分析树"])
 
 
 # 健康检查端点

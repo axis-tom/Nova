@@ -159,53 +159,111 @@
         </div>
       </el-main>
 
-      <!-- 右侧：工具轨迹面板 -->
-      <el-aside width="360px" class="trace-panel">
-        <div class="trace-header">
-          <h3><el-icon><Monitor /></el-icon> 工具执行轨迹</h3>
-          <el-button
-            v-if="traceLogs.length > 0"
-            link
-            size="small"
-            @click="clearTrace"
-          >
-            清空
-          </el-button>
+      <!-- 右侧：选品分析树面板 -->
+      <el-aside width="360px" class="tree-panel">
+        <div class="tree-header">
+          <h3>🌳 选品分析树</h3>
+          <span v-if="treeBranches.length > 0" class="tree-round-badge">
+            第 {{ treeRound }} 轮
+          </span>
         </div>
 
-        <div class="trace-content">
+        <div class="tree-content">
           <!-- 空状态 -->
-          <div v-if="traceLogs.length === 0" class="trace-empty">
-            <el-empty description="暂无工具调用记录" :image-size="60" />
+          <div v-if="treeBranches.length === 0" class="tree-empty">
+            <el-empty description="发送选品分析请求后，这里将实时展示分析树" :image-size="60" />
           </div>
 
-          <!-- 轨迹时间线 -->
-          <div v-else class="trace-timeline">
+          <!-- 分析树 -->
+          <div v-else class="tree-list">
             <div
-              v-for="(log, index) in traceLogs"
-              :key="index"
-              class="trace-item"
-              :class="log.type"
+              v-for="branch in treeBranches"
+              :key="branch.branch_id"
+              class="tree-branch"
+              :class="branch.status"
             >
-              <div class="trace-dot">
-                <el-icon v-if="log.type === 'tool_call'"><Cpu /></el-icon>
-                <el-icon v-else-if="log.type === 'tool_result'"><Select /></el-icon>
-                <el-icon v-else-if="log.type === 'error'"><WarningFilled /></el-icon>
-                <el-icon v-else><InfoFilled /></el-icon>
+              <!-- 分支头部 -->
+              <div class="branch-header">
+                <div class="branch-status-icon">
+                  <span v-if="branch.status === 'running'" class="status-spinner"></span>
+                  <span v-else-if="branch.status === 'completed'">✅</span>
+                  <span v-else-if="branch.status === 'error'">❌</span>
+                  <span v-else-if="branch.status === 'partial'">⚠️</span>
+                  <span v-else>⬜</span>
+                </div>
+                <span class="branch-label">{{ branch.label }}</span>
+                <div class="branch-actions">
+                  <el-tooltip content="追加维度" placement="top">
+                    <el-button
+                      link
+                      size="small"
+                      @click="handleAppendDimension(branch)"
+                      :disabled="isSending"
+                    >
+                      +维度
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="回溯至此" placement="top">
+                    <el-button
+                      link
+                      size="small"
+                      @click="handleBacktrack(branch.invocations[branch.invocations.length - 1])"
+                      :disabled="isSending"
+                    >
+                      回溯
+                    </el-button>
+                  </el-tooltip>
+                </div>
               </div>
-              <div class="trace-body">
-                <div class="trace-title">{{ log.title }}</div>
-                <div v-if="log.detail" class="trace-detail">
-                  <pre>{{ log.detail }}</pre>
+
+              <!-- 分支下的 invocation 节点 -->
+              <div class="branch-invocations">
+                <div
+                  v-for="inv in branch.invocations"
+                  :key="inv.invocation_id"
+                  class="tree-invocation"
+                  :class="inv.status"
+                >
+                  <div class="inv-header">
+                    <span class="inv-status-icon">
+                      <span v-if="inv.status === 'running'" class="status-spinner-sm"></span>
+                      <span v-else-if="inv.status === 'completed'">✅</span>
+                      <span v-else>❌</span>
+                    </span>
+                    <div class="inv-dimensions">
+                      <span
+                        v-for="dim in inv.dimensions"
+                        :key="dim"
+                        class="dim-tag"
+                      >{{ dim }}</span>
+                      <span v-if="inv.dimensions.length === 0" class="dim-tag dim-default">
+                        {{ inv.branch_label }}
+                      </span>
+                    </div>
+                  </div>
+                  <div v-if="inv.result_summary" class="inv-summary">
+                    {{ inv.result_summary }}
+                  </div>
+                  <div v-if="inv.error_message" class="inv-error">
+                    {{ inv.error_message }}
+                  </div>
+                  <div class="inv-meta">
+                    <span v-if="inv.started_at" class="inv-time">
+                      {{ formatTimeStr(inv.started_at) }}
+                    </span>
+                    <el-tooltip content="回溯到此节点" placement="top">
+                      <el-button
+                        link
+                        size="small"
+                        class="inv-backtrack-btn"
+                        @click="handleBacktrack(inv)"
+                        :disabled="isSending"
+                      >
+                        回溯
+                      </el-button>
+                    </el-tooltip>
+                  </div>
                 </div>
-                <div v-if="log.args" class="trace-args">
-                  <el-collapse accordion>
-                    <el-collapse-item title="查看参数" name="1">
-                      <pre>{{ JSON.stringify(log.args, null, 2) }}</pre>
-                    </el-collapse-item>
-                  </el-collapse>
-                </div>
-                <div class="trace-time">{{ formatTime(log.timestamp) }}</div>
               </div>
             </div>
           </div>
@@ -218,8 +276,20 @@
 <script setup lang="ts">
 import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Loading, Close, Monitor, Cpu, Select, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
-import { streamChat, type SSEEvent, type ToolCallData } from '@/api/agentChat'
+import { Loading, Close } from '@element-plus/icons-vue'
+import {
+  streamChat,
+  type SSEEvent,
+  type ToolCallData,
+  type TreeBranchData,
+  type TreeInvocation,
+  type TreeNodeAddedData,
+  type TreeNodeStatusData,
+  type TreeFullData,
+  getAnalysisTree,
+  backtrackAnalysis,
+  appendDimension,
+} from '@/api/agentChat'
 import { useAgentChatStore } from '@/state/agentChat'
 import BriefingCard from '@/interface/components/charts/BriefingCard.vue'
 
@@ -236,14 +306,6 @@ interface ChatMessage {
   tokenUsage?: number
 }
 
-interface TraceLog {
-  type: 'status' | 'tool_call' | 'tool_result' | 'error'
-  title: string
-  detail?: string
-  args?: Record<string, unknown>
-  timestamp: number
-}
-
 // ── 状态 ──
 
 const messages = ref<ChatMessage[]>([])
@@ -252,9 +314,13 @@ const isSending = ref(false)
 const isLoading = ref(false)
 const streamingContent = ref('')
 const currentStatus = ref('')
-const traceLogs = ref<TraceLog[]>([])
 const conversationId = ref('')
 const briefingData = ref<Record<string, any> | null>(null)
+
+// ── 分析树状态 ──
+const treeBranches = ref<TreeBranchData[]>([])
+const treeRound = ref(0)
+const pendingInvocations = ref<Map<string, TreeNodeStatusData>>(new Map())
 
 let abortController: AbortController | null = null
 let msgCounter = 0
@@ -327,20 +393,18 @@ function handleSSEEvent(event: SSEEvent) {
   switch (type) {
     case 'status':
       currentStatus.value = data as string
-      addTraceLog('status', data as string)
       break
 
     case 'agent_start': {
       const info = data as unknown as { name: string; args: Record<string, unknown> }
       currentStatus.value = `⚙️ ${info.name} 执行中...`
-      addTraceLog('tool_call', `▶ ${info.name} 开始执行`, info.args)
       break
     }
 
     case 'agent_end': {
       const info = data as unknown as { name: string; elapsed_s: number | null }
       const elapsed = info.elapsed_s != null ? ` (${info.elapsed_s}s)` : ''
-      addTraceLog('tool_result', `✓ ${info.name} 完成${elapsed}`)
+      currentStatus.value = `✓ ${info.name} 完成${elapsed}`
       break
     }
 
@@ -353,6 +417,24 @@ function handleSSEEvent(event: SSEEvent) {
     case 'tool_result':
       currentStatus.value = data as string
       break
+
+    case 'tree_node_status': {
+      const statusData = data as unknown as TreeNodeStatusData
+      handleTreeNodeStatus(statusData)
+      break
+    }
+
+    case 'tree_node_added': {
+      const addedData = data as unknown as TreeNodeAddedData
+      handleTreeNodeAdded(addedData)
+      break
+    }
+
+    case 'tree_full': {
+      const treeData = data as unknown as TreeFullData
+      handleTreeFull(treeData)
+      break
+    }
 
     case 'briefing_data':
       briefingData.value = data as unknown as Record<string, any>
@@ -369,7 +451,6 @@ function handleSSEEvent(event: SSEEvent) {
       break
 
     case 'done':
-      // 完成，将流式内容转为正式消息
       if (streamingContent.value) {
         messages.value.push({
           id: `msg-${++msgCounter}`,
@@ -385,6 +466,10 @@ function handleSSEEvent(event: SSEEvent) {
       abortController = null
       store.setCurrentConversationId(conversationId.value)
       store.loadConversations()
+
+      // 清空运行中的 invocation
+      pendingInvocations.value.clear()
+
       scrollToBottom()
       break
 
@@ -407,23 +492,170 @@ function cancelStream() {
   streamingContent.value = ''
 }
 
-// ── 轨迹面板 ──
+// ── 分析树面板 ──
 
-function addTraceLog(type: TraceLog['type'], title: string, args?: Record<string, unknown>) {
-  traceLogs.value.push({
-    type,
-    title,
-    args,
-    timestamp: Date.now(),
-  })
-  // 最多保留 50 条
-  if (traceLogs.value.length > 50) {
-    traceLogs.value.splice(0, traceLogs.value.length - 50)
+function handleTreeNodeStatus(statusData: TreeNodeStatusData) {
+  // 记录 pending invocation（状态为 running）
+  pendingInvocations.value.set(statusData.invocation_id, statusData)
+
+  // 查找或创建分支
+  let branch = treeBranches.value.find(b => b.branch_id === statusData.agent_name)
+  if (!branch) {
+    branch = {
+      branch_id: statusData.agent_name,
+      agent_name: statusData.agent_name,
+      label: statusData.branch_label,
+      status: 'running',
+      invocations: [],
+    }
+    treeBranches.value.push(branch)
+  } else {
+    branch.status = 'running'
+  }
+
+  // 添加运行中的 invocation
+  const existing = branch.invocations.find(
+    inv => inv.invocation_id === statusData.invocation_id
+  )
+  if (!existing) {
+    branch.invocations.push({
+      invocation_id: statusData.invocation_id,
+      agent_name: statusData.agent_name,
+      branch_label: statusData.branch_label,
+      params: {},
+      dimensions: statusData.dimensions,
+      result_summary: '',
+      status: 'running',
+      parent_invocation_id: null,
+      checkpoint_id: null,
+      conversation_round: 0,
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      error_message: null,
+    })
   }
 }
 
-function clearTrace() {
-  traceLogs.value = []
+function handleTreeNodeAdded(addedData: TreeNodeAddedData) {
+  pendingInvocations.value.delete(addedData.invocation_id)
+
+  // 查找分支
+  let branch = treeBranches.value.find(b => b.branch_id === addedData.agent_name)
+  if (!branch) {
+    branch = {
+      branch_id: addedData.agent_name,
+      agent_name: addedData.agent_name,
+      label: addedData.branch_label,
+      status: addedData.status === 'completed' ? 'completed' : 'error',
+      invocations: [],
+    }
+    treeBranches.value.push(branch)
+  }
+
+  // 查找或更新 invocation
+  const existing = branch.invocations.find(
+    inv => inv.invocation_id === addedData.invocation_id
+  )
+  if (existing) {
+    existing.status = addedData.status
+    existing.result_summary = addedData.result_summary
+    existing.checkpoint_id = addedData.checkpoint_id
+    existing.completed_at = addedData.completed_at
+    existing.error_message = addedData.error_message
+    existing.dimensions = addedData.dimensions
+  } else {
+    branch.invocations.push({
+      invocation_id: addedData.invocation_id,
+      agent_name: addedData.agent_name,
+      branch_label: addedData.branch_label,
+      params: {},
+      dimensions: addedData.dimensions,
+      result_summary: addedData.result_summary,
+      status: addedData.status,
+      parent_invocation_id: addedData.parent_invocation_id,
+      checkpoint_id: addedData.checkpoint_id,
+      conversation_round: addedData.conversation_round,
+      started_at: addedData.started_at,
+      completed_at: addedData.completed_at,
+      error_message: addedData.error_message,
+    })
+  }
+
+  // 更新分支状态
+  updateBranchStatus(branch)
+}
+
+function handleTreeFull(treeData: TreeFullData) {
+  treeBranches.value = treeData.branches
+  treeRound.value = treeData.conversation_round
+}
+
+function updateBranchStatus(branch: TreeBranchData) {
+  const statuses = branch.invocations.map(inv => inv.status)
+  if (statuses.includes('running')) {
+    branch.status = 'running'
+  } else if (statuses.every(s => s === 'completed')) {
+    branch.status = 'completed'
+  } else if (statuses.every(s => s === 'error')) {
+    branch.status = 'error'
+  } else if (statuses.includes('completed')) {
+    branch.status = 'partial'
+  } else {
+    branch.status = 'pending'
+  }
+}
+
+async function handleBacktrack(inv: TreeInvocation) {
+  if (!inv.invocation_id || !conversationId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定回溯到 [${inv.branch_label}] 节点？该节点之后的所有分析将被撤销。`,
+      '回溯确认',
+      { confirmButtonText: '确定回溯', cancelButtonText: '取消', type: 'warning' }
+    )
+    const result = await backtrackAnalysis(conversationId.value, inv.invocation_id)
+    ElMessage.success(result.message)
+    // 从树中移除该 invocation 之后的所有节点
+    treeBranches.value.forEach(branch => {
+      const idx = branch.invocations.findIndex(i => i.invocation_id === inv.invocation_id)
+      if (idx >= 0) {
+        branch.invocations = branch.invocations.slice(0, idx + 1)
+      }
+    })
+    // 移除后面分支的所有 invocation
+    const branchIdx = treeBranches.value.findIndex(b => b.branch_id === inv.agent_name)
+    if (branchIdx >= 0) {
+      // 标记后续分支为 pending
+      for (let i = branchIdx + 1; i < treeBranches.value.length; i++) {
+        treeBranches.value[i].status = 'pending'
+        treeBranches.value[i].invocations = []
+      }
+    }
+    // 更新分支状态
+    treeBranches.value.forEach(b => updateBranchStatus(b))
+  } catch {
+    // 用户取消
+  }
+}
+
+async function handleAppendDimension(branch: TreeBranchData) {
+  if (!conversationId.value || branch.invocations.length === 0) return
+  try {
+    const { value: dimLabel } = await ElMessageBox.prompt(
+      '请输入要追加的分析维度（例如："Q4旺季对比"、"价格弹性分析"）',
+      `追加维度 - ${branch.label}`,
+      { confirmButtonText: '追加', cancelButtonText: '取消' }
+    )
+    if (!dimLabel || !dimLabel.trim()) return
+    const result = await appendDimension(
+      conversationId.value,
+      branch.agent_name,
+      dimLabel.trim(),
+    )
+    ElMessage.success(result.message)
+  } catch {
+    // 用户取消
+  }
 }
 
 // ── 工具函数 ──
@@ -447,8 +679,9 @@ function handleShiftEnter() {
   // 默认换行
 }
 
-function formatTime(ts: number) {
-  const d = new Date(ts)
+function formatTimeStr(isoStr: string) {
+  if (!isoStr) return ''
+  const d = new Date(isoStr)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
@@ -500,7 +733,9 @@ function handleNewChat() {
   store.newConversation()
   messages.value = []
   conversationId.value = ''
-  traceLogs.value = []
+  treeBranches.value = []
+  treeRound.value = 0
+  pendingInvocations.value.clear()
   briefingData.value = null
 }
 
@@ -513,8 +748,26 @@ async function handleSelectConversation(convId: string) {
     content: m.content,
     createdAt: m.createdAt,
   }))
-  traceLogs.value = []
+  // 加载该对话的树
+  loadTreeForConversation(convId)
   scrollToBottom()
+}
+
+async function loadTreeForConversation(convId: string) {
+  try {
+    const res = await getAnalysisTree(convId)
+    if (res.tree) {
+      treeBranches.value = res.tree.branches
+      treeRound.value = res.tree.conversation_round
+    } else {
+      treeBranches.value = []
+      treeRound.value = 0
+    }
+    pendingInvocations.value.clear()
+  } catch {
+    treeBranches.value = []
+    treeRound.value = 0
+  }
 }
 
 function handleConvAction(cmd: string, conv: { id: string; title: string }) {
@@ -828,9 +1081,9 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
-/* ── 轨迹面板 ── */
+/* ── 分析树面板 ── */
 
-.trace-panel {
+.tree-panel {
   background: #fafbfc;
   border-left: 1px solid #e2e8f0;
   display: flex;
@@ -838,7 +1091,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-.trace-header {
+.tree-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -847,126 +1100,217 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.trace-header h3 {
+.tree-header h3 {
   margin: 0;
   font-size: 15px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   color: #334155;
 }
 
-.trace-content {
+.tree-round-badge {
+  font-size: 12px;
+  color: #64748b;
+  background: #e2e8f0;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.tree-content {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
 }
 
-.trace-empty {
+.tree-empty {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
 }
 
-.trace-timeline {
+.tree-list {
   display: flex;
   flex-direction: column;
-  gap: 0;
-}
-
-.trace-item {
-  display: flex;
   gap: 12px;
-  padding: 12px 8px;
-  border-left: 2px solid #e2e8f0;
-  margin-left: 8px;
-  position: relative;
 }
 
-.trace-item:last-child {
-  border-left-color: transparent;
-}
+/* ── Tree Branch ── */
 
-.trace-dot {
-  position: absolute;
-  left: -9px;
-  top: 14px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
+.tree-branch {
   background: white;
-  border: 2px solid #e2e8f0;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.tree-branch.running {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 1px #bfdbfe;
+}
+
+.tree-branch.completed {
+  border-color: #86efac;
+}
+
+.tree-branch.error {
+  border-color: #fca5a5;
+}
+
+.branch-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 10px;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #f1f5f9;
 }
 
-.trace-item.tool_call .trace-dot {
-  border-color: #3b82f6;
-  color: #3b82f6;
+.branch-status-icon {
+  font-size: 14px;
+  flex-shrink: 0;
 }
 
-.trace-item.tool_result .trace-dot {
-  border-color: #22c55e;
-  color: #22c55e;
-}
-
-.trace-item.error .trace-dot {
-  border-color: #ef4444;
-  color: #ef4444;
-}
-
-.trace-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.trace-title {
+.branch-label {
   font-size: 13px;
-  font-weight: 500;
-  color: #334155;
-  margin-bottom: 4px;
+  font-weight: 600;
+  color: #1e293b;
+  flex: 1;
 }
 
-.trace-detail {
-  margin-top: 4px;
+.branch-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
 
-.trace-detail pre {
-  margin: 0;
+.tree-branch:hover .branch-actions {
+  opacity: 1;
+}
+
+/* ── Tree Invocation ── */
+
+.branch-invocations {
+  padding: 6px 12px 6px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tree-invocation {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border-left: 3px solid #e2e8f0;
+  transition: border-color 0.2s;
+}
+
+.tree-invocation.running {
+  border-left-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.tree-invocation.completed {
+  border-left-color: #22c55e;
+}
+
+.tree-invocation.error {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.inv-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.inv-status-icon {
   font-size: 12px;
-  color: #64748b;
-  white-space: pre-wrap;
-  word-break: break-word;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
-.trace-args {
-  margin-top: 4px;
+.inv-dimensions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
 }
 
-.trace-args :deep(.el-collapse-item__header) {
-  font-size: 12px;
-  padding: 4px 0;
-}
-
-.trace-args :deep(.el-collapse-item__content) {
-  padding: 8px;
-  background: #f1f5f9;
-  border-radius: 4px;
-}
-
-.trace-args pre {
-  margin: 0;
+.dim-tag {
   font-size: 11px;
-  white-space: pre-wrap;
+  padding: 1px 6px;
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
-.trace-time {
+.dim-tag.dim-default {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.inv-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.inv-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.inv-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.inv-time {
   font-size: 11px;
   color: #94a3b8;
-  margin-top: 4px;
+}
+
+.inv-backtrack-btn {
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.tree-invocation:hover .inv-backtrack-btn {
+  opacity: 1;
+}
+
+/* ── Status Spinner ── */
+
+.status-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.status-spinner-sm {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── 推荐问题卡片 ── */

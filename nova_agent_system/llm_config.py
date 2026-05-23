@@ -93,6 +93,9 @@ def get_llm_for_agent(agent_name: str) -> Optional[ChatOpenAI]:
 
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL", "")
+    # 确保 base_url 以 /v1 结尾，否则 SDK 构造的路径可能被代理返回错误响应
+    if base_url and not base_url.rstrip("/").endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
 
     env_key = f"AGENT_{agent_name.upper()}_MODEL"
     model = os.getenv(env_key) or config["model"]
@@ -105,6 +108,7 @@ def get_llm_for_agent(agent_name: str) -> Optional[ChatOpenAI]:
         base_url=base_url,
         temperature=config["temperature"],
         max_tokens=config["max_tokens"],
+        use_responses_api=False,
     )
 
 

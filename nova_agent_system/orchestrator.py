@@ -35,6 +35,7 @@ from nova_agent_system.session_store import session_store
 from nova_agent_system.durable_session import get_durable_session
 from nova_agent_system.summarizer import summarize_conversation
 from nova_agent_system.llm_config import get_llm_for_agent
+from nova_agent_system.analysis_tree import analysis_tree_manager
 
 # ── 全局记忆实例 ──
 memory = MemoryStore()
@@ -131,7 +132,7 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     conv_id = conv_id_var.get() or f"ephemeral-{uuid.uuid4()}"
     state = session_store.get_or_create(conv_id)
 
-    result = await call_agent(agent_name, params, state=state)
+    result = await call_agent(agent_name, params, state=state, conv_id=conv_id)
 
     # 持久化 State 到 SQLite（Phase 3）
     session_store.save(conv_id)
@@ -371,7 +372,20 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
         elif msg["role"] == "tool":
             langchain_messages.append(ToolMessage(content=msg["content"], tool_call_id=msg.get("tool_call_id", "")))
 
-    response = await llm_with_tools.ainvoke(langchain_messages)
+    try:
+        response = await llm_with_tools.ainvoke(langchain_messages)
+    except AttributeError as e:
+        if "'str' object has no attribute 'model_dump'" in str(e):
+            return {"messages": [{
+                "role": "assistant",
+                "content": "⚠️ LLM 服务返回异常响应，请稍后重试。如果问题持续，请检查 API 服务状态。",
+            }]}
+        raise
+    except Exception as e:
+        return {"messages": [{
+            "role": "assistant",
+            "content": f"⚠️ LLM 调用失败: {e}",
+        }]}
 
     # 转换回我们的消息格式
     new_message = {
@@ -553,6 +567,11 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
     conv_id = conversation_id or f"ephemeral-{uuid.uuid4()}"
     token = conv_id_var.set(conv_id)
     durable = get_durable_session()
+
+    # 注册分析树 SSE 事件队列
+    tree_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+    analysis_tree_manager.register_queue(conv_id, tree_queue)
+
     try:
         # Step 2: 持久化用户消息
         await durable.append_message(conv_id, "user", user_input)
@@ -574,6 +593,13 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         final_response = ""
         _agent_timers: dict = {}
         async for event in graph.astream(initial_state):
+            # 穿插分析树事件（不阻塞）
+            while not tree_queue.empty():
+                try:
+                    tree_event = tree_queue.get_nowait()
+                    yield tree_event
+                except asyncio.QueueEmpty:
+                    break
             node_name = list(event.keys())[0]
             state_data = event[node_name]
 
@@ -622,6 +648,19 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         if not final_response:
             final_response = "处理完成，但未能生成回答。"
 
+        # 排空剩余的树事件
+        while not tree_queue.empty():
+            try:
+                tree_event = tree_queue.get_nowait()
+                yield tree_event
+            except asyncio.QueueEmpty:
+                break
+
+        # 推送完整树结构（供前端初始化渲染）
+        tree_dict = analysis_tree_manager.to_dict(conv_id)
+        if tree_dict and tree_dict.get("branches"):
+            yield {"type": "tree_full", "data": tree_dict}
+
         # 流式输出最终回答（按句/段分块）
         yield {"type": "start_response", "data": ""}
         import re
@@ -650,3 +689,4 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         asyncio.create_task(_try_summarize(conv_id))
     finally:
         conv_id_var.reset(token)
+        analysis_tree_manager.unregister_queue(conv_id)

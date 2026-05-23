@@ -156,6 +156,7 @@ async def call_agent(
     name: str,
     params: Dict[str, Any],
     state: Optional[State] = None,
+    conv_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     调用指定 Nova Agent
@@ -169,6 +170,7 @@ async def call_agent(
         name: Agent 名称（对应 AGENT_REGISTRY 中的 name）
         params: 输入参数 dict
         state: 可选的会话 State；若传入，本次调用会读取/写入该 State（流水线模式）
+        conv_id: 可选会话 ID；传入则自动追踪到分析树
 
     Returns:
         Agent 的输出结果 dict，包含:
@@ -176,10 +178,17 @@ async def call_agent(
         - data: state 中所有输出数据
         - events: 执行事件日志
     """
+    from nova_agent_system.analysis_tree import analysis_tree_manager
+
     agent = _load_agent(name)
 
     if state is None:
         state = State()
+
+    # 清除上一次 agent 调用残留的 error（防止 pipeline 状态污染）
+    state.data.pop("error", None)
+    state.data.pop("error_type", None)
+    state.data.pop("error_details", None)
 
     # Shallow merge：params 覆盖同名 key，保留上游字段
     for key, value in params.items():
@@ -187,13 +196,31 @@ async def call_agent(
 
     state.add_event(f"call_agent:{name}:start")
 
+    # ── 分析树追踪：开始 ──
+    invocation = None
+    if conv_id:
+        try:
+            round_num = state.get_meta("conversation_round", 0)
+            invocation = analysis_tree_manager.on_agent_start(
+                conv_id, name, params, conversation_round=round_num
+            )
+        except Exception:
+            pass  # 树追踪失败不影响主流程
+
     # 执行 Agent — Nova 部分 Agent 是 sync 的（keyword_expander/traffic_analyzer/opportunity_judge），
     # 部分是 async 的（product_collector/review_analyzer），统一兼容
-    maybe_result = agent.run(state)
-    if inspect.isawaitable(maybe_result):
-        result_state = await maybe_result
-    else:
-        result_state = maybe_result
+    error_message = None
+    try:
+        maybe_result = agent.run(state)
+        if inspect.isawaitable(maybe_result):
+            result_state = await maybe_result
+        else:
+            result_state = maybe_result
+    except Exception as e:
+        error_message = str(e)
+        result_state = state
+        result_state.data["error"] = error_message
+        result_state.data["error_type"] = "agent_exception"
 
     # 注意：result_state 与 state 通常是同一对象（agent 就地改），但 review_analyzer 等
     # 部分 agent 可能返回 new State。这里以 result_state 为准做后续提取，但若 state
@@ -212,6 +239,18 @@ async def call_agent(
             "error_message": data["error"],
             "error_details": data.get("error_details") or {},
         }
+        # 分析树追踪：错误结束
+        if conv_id and invocation:
+            try:
+                analysis_tree_manager.on_agent_end(
+                    conv_id=conv_id,
+                    invocation_id=invocation.invocation_id,
+                    result_summary=data["error"][:300],
+                    state_dict=result_state.to_dict() if result_state else None,
+                    error_message=data["error"],
+                )
+            except Exception:
+                pass
         return {
             "agent": name,
             "status": "error",
@@ -250,6 +289,19 @@ async def call_agent(
         )
     except Exception:
         pass  # 记忆保存失败不影响主流程
+
+    # ── 分析树追踪：结束 ──
+    if conv_id and invocation:
+        try:
+            analysis_tree_manager.on_agent_end(
+                conv_id=conv_id,
+                invocation_id=invocation.invocation_id,
+                result_summary=result_summary,
+                state_dict=result_state.to_dict() if result_state else None,
+                error_message=error_message,
+            )
+        except Exception:
+            pass  # 树追踪失败不影响主流程
 
     return {
         "agent": name,

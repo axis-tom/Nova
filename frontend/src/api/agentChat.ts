@@ -31,8 +31,8 @@ export interface ToolResult {
 // ── SSE 事件类型 ──
 
 export interface SSEEvent {
-  type: 'status' | 'tool_call' | 'tool_result' | 'start_response' | 'response_chunk' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'briefing_data'
-  data: string | ToolCallData
+  type: 'status' | 'tool_call' | 'tool_result' | 'start_response' | 'response_chunk' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'briefing_data' | 'tree_node_status' | 'tree_node_added' | 'tree_full'
+  data: string | ToolCallData | TreeNodeStatusData | TreeNodeAddedData | TreeFullData
   conversation_id: string
 }
 
@@ -40,6 +40,86 @@ export interface ToolCallData {
   name: string
   args: Record<string, unknown>
   id: string
+}
+
+// ── 分析树类型 ──
+
+export interface TreeNodeStatusData {
+  invocation_id: string
+  agent_name: string
+  branch_label: string
+  status: 'running' | 'completed' | 'error'
+  dimensions: string[]
+}
+
+export interface TreeNodeAddedData {
+  invocation_id: string
+  agent_name: string
+  branch_label: string
+  parent_invocation_id: string | null
+  dimensions: string[]
+  status: 'completed' | 'error'
+  result_summary: string
+  checkpoint_id: string | null
+  conversation_round: number
+  started_at: string | null
+  completed_at: string | null
+  error_message: string | null
+}
+
+export interface TreeInvocation {
+  invocation_id: string
+  agent_name: string
+  branch_label: string
+  params: Record<string, unknown>
+  dimensions: string[]
+  result_summary: string
+  status: 'running' | 'completed' | 'error'
+  parent_invocation_id: string | null
+  checkpoint_id: string | null
+  conversation_round: number
+  started_at: string | null
+  completed_at: string | null
+  error_message: string | null
+}
+
+export interface TreeBranchData {
+  branch_id: string
+  agent_name: string
+  label: string
+  status: 'pending' | 'running' | 'completed' | 'error' | 'partial'
+  invocations: TreeInvocation[]
+}
+
+export interface TreeFullData {
+  conversation_id: string
+  conversation_round: number
+  branches: TreeBranchData[]
+}
+
+export interface TreeResponse {
+  conversation_id: string
+  tree: TreeFullData | null
+  checkpoints: any[]
+}
+
+export interface BacktrackResponse {
+  ok: boolean
+  invocation_id: string
+  agent_name: string
+  branch_label: string
+  checkpoint_id: string | null
+  restored_state_keys: string[]
+  message: string
+}
+
+export interface AppendDimensionResponse {
+  ok: boolean
+  agent_name: string
+  dimension_label: string
+  checkpoint_id: string | null
+  restored_state_keys: string[]
+  message: string
 }
 
 // ── SSE 流式对话 ──
@@ -188,4 +268,35 @@ export async function renameConversation(convId: string, title: string): Promise
 
 export async function deleteConversation(convId: string): Promise<void> {
   await client.delete(`/agent/conversations/${convId}`);
+}
+
+// ── 分析树操作 ──
+
+/** 获取分析树 */
+export async function getAnalysisTree(convId: string): Promise<TreeResponse> {
+  const res = await client.get(`/agent/conversations/${convId}/tree`);
+  return res as unknown as TreeResponse;
+}
+
+/** 回溯到指定 invocation */
+export async function backtrackAnalysis(convId: string, invocationId: string): Promise<BacktrackResponse> {
+  const res = await client.post(`/agent/conversations/${convId}/tree/backtrack`, {
+    invocation_id: invocationId,
+  });
+  return res as unknown as BacktrackResponse;
+}
+
+/** 追加分析维度 */
+export async function appendDimension(
+  convId: string,
+  agentName: string,
+  dimensionLabel: string,
+  dimensionParams: Record<string, unknown> = {},
+): Promise<AppendDimensionResponse> {
+  const res = await client.post(`/agent/conversations/${convId}/tree/append_dimension`, {
+    agent_name: agentName,
+    dimension_label: dimensionLabel,
+    dimension_params: dimensionParams,
+  });
+  return res as unknown as AppendDimensionResponse;
 }
