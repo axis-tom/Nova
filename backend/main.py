@@ -17,6 +17,7 @@ from backend.utils.logger import logger                                   # ✅ 
 # 新增导入，用于建表
 from backend.data.database import engine, Base                            # ✅ 已迁移
 import backend.data.models.db  # 确保所有模型被加载
+import backend.data.models.amazon_product  # Amazon 产品 ETL 模型
 
 # 新增导入，用于 ToolRegistry
 from backend.foundation.action.tools.registry import ToolRegistry                    # ✅ 已迁移
@@ -75,9 +76,16 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to start data collection scheduler: {e}")
     
     # 启动 Amazon 市场监控调度器
-    # 默认关闭：定时任务会自动跑 product_collector，每 6 小时烧一波 Keepa token
-    # 通过 ENABLE_AMAZON_SCHEDULER=1 显式开启
+    # 同时启动 Token-Budget-Aware ETL 调度器（负责三源 ETL 定时刷新）
+    # 默认关闭：通过 ENABLE_AMAZON_SCHEDULER=1 显式开启
     if settings.ENABLE_AMAZON_SCHEDULER:
+        try:
+            from backend.business.ecommerce.amazon_monitor.budget_scheduler import budget_scheduler
+            budget_scheduler.start()
+            logger.info("Token-Budget-Aware ETL scheduler started")
+        except Exception as e:
+            logger.error(f"Failed to start BudgetAwareScheduler: {e}")
+
         try:
             from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
             amazon_scheduler = get_monitor_scheduler()
@@ -95,6 +103,13 @@ async def lifespan(app: FastAPI):
     
     # 停止 Amazon 市场监控调度器
     if settings.ENABLE_AMAZON_SCHEDULER:
+        try:
+            from backend.business.ecommerce.amazon_monitor.budget_scheduler import budget_scheduler
+            budget_scheduler.stop()
+            logger.info("Token-Budget-Aware ETL scheduler stopped")
+        except Exception as e:
+            logger.error(f"Error stopping BudgetAwareScheduler: {e}")
+
         try:
             from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
             amazon_scheduler = get_monitor_scheduler()
