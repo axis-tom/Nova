@@ -13,6 +13,7 @@ M8: 卖家类型分布
 M9: A+视频分布
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
@@ -40,6 +41,7 @@ class MarketAnalysisService:
 
     async def get_market_summary(
         self, category_name: Optional[str] = None, domain: str = "US",
+        tier: Optional[str] = None, brand: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         类目聚合统计。
@@ -52,6 +54,10 @@ class MarketAnalysisService:
         conditions = [AmazonProduct.domain == domain]
         if category_name:
             conditions.append(AmazonProduct.category_name == category_name)
+        if tier:
+            conditions.append(AmazonProduct.importance_tier == tier)
+        if brand:
+            conditions.append(AmazonProduct.brand == brand)
 
         base = select(AmazonProduct).where(and_(*conditions))
         count_stmt = select(sql_func.count()).select_from(AmazonProduct).where(and_(*conditions))
@@ -104,6 +110,8 @@ class MarketAnalysisService:
         return {
             "category": category_name or "all",
             "domain": domain,
+            "tier_filter": tier,
+            "brand_filter": brand,
             "total_asins": total_asins,
             "avg_bsr": round(sum(bsrs) / len(bsrs)) if bsrs else None,
             "avg_price": round(sum(prices) / len(prices), 2) if prices else None,
@@ -659,4 +667,40 @@ class MarketAnalysisService:
             "with_video_count": with_video,
             "with_video_pct": round(with_video / total * 100, 1) if total else 0,
             "avg_video_count": round(sum(video_counts) / len(video_counts)) if video_counts else 0,
+        }
+
+    # ════════════════════════════════════════════════
+    # M10: 市场报告（组合 9 个维度）
+    # ════════════════════════════════════════════════
+
+    async def get_market_report(
+        self, category_name: Optional[str] = None, domain: str = "US",
+    ) -> Dict[str, Any]:
+        """一次性返回市场分析全维度数据"""
+        summary, trend, price_dist, brand_conc, review_dist, \
+            rating_dist, seller_dist, seller_type, aplus = await asyncio.gather(
+                self.get_market_summary(category_name, domain),
+                self.get_market_trend(category_name, domain),
+                self.get_price_distribution(category_name, domain),
+                self.get_brand_concentration(category_name, domain),
+                self.get_review_count_distribution(category_name, domain),
+                self.get_rating_distribution(category_name, domain),
+                self.get_product_concentration(category_name, domain),
+                self.get_seller_type_distribution(category_name, domain),
+                self.get_aplus_video_distribution(category_name, domain),
+            )
+
+        return {
+            "category": category_name or "all",
+            "domain": domain,
+            "summary": summary,
+            "trend": trend,
+            "price_distribution": price_dist,
+            "brand_concentration": brand_conc,
+            "review_distribution": review_dist,
+            "rating_distribution": rating_dist,
+            "seller_distribution": seller_dist,
+            "seller_type_distribution": seller_type,
+            "aplus_video_distribution": aplus,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }

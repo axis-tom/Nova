@@ -34,6 +34,8 @@ def get_service(db: AsyncSession = Depends(get_db)) -> MarketAnalysisService:
 async def market_summary(
     category: Optional[str] = Query(None, description="类目名称，不传则全品类"),
     domain: str = Query("US", description="市场 US/DE/JP"),
+    tier: Optional[str] = Query(None, description="Importance Tier 筛选 (hot/active/passive)"),
+    brand: Optional[str] = Query(None, description="品牌名筛选"),
     service: MarketAnalysisService = Depends(get_service),
 ):
     """
@@ -42,7 +44,7 @@ async def market_summary(
     类目聚合统计：ASIN 数、平均 BSR/价格/评分、品牌数、卖家数、
     月销总量、营收估算、价格带分布、Tier 分布。
     """
-    return await service.get_market_summary(category, domain)
+    return await service.get_market_summary(category, domain, tier, brand)
 
 
 # ════════════════════════════════════════
@@ -197,3 +199,23 @@ async def aplus_video_distribution(
     A+ Content 覆盖率、视频数分布（Rainforest 独家数据）。
     """
     return await service.get_aplus_video_distribution(category, domain)
+
+
+# ════════════════════════════════════════
+# M10: 市场报告（组合 9 个维度）
+# ════════════════════════════════════════
+
+
+@router.get("/report")
+async def market_report(
+    category: Optional[str] = Query(None, description="类目名称，不传则全品类"),
+    domain: str = Query("US"),
+    service: MarketAnalysisService = Depends(get_service),
+):
+    """
+    市场报告（组合 9 个维度）
+
+    一次性返回所有市场分析数据：统计/趋势/价格分布/品牌集中度/
+    评分分布/卖家分布/卖家类型/A+视频。
+    """
+    return await service.get_market_report(category, domain)
