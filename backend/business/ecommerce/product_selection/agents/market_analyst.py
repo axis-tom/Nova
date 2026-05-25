@@ -21,6 +21,10 @@ from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
 from backend.utils.logger import logger
 
+# ── 新增：本地表查询依赖 ──
+from backend.data.database import AsyncSessionLocal
+from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
+
 
 class MarketAnalystAgent(Agent):
     """市场分析 Agent — 基于 Keepa 历史 + Rainforest/Canopy 详情做市场趋势和淡旺季分析"""
@@ -35,6 +39,16 @@ class MarketAnalystAgent(Agent):
 
         try:
             products: List[Dict] = state.get("collected_products", []) or []
+
+            # ── 优先从 amazon_products 本地表读取 ──
+            if not products:
+                category = state.get("category") or state.get("market_category")
+                if category:
+                    try:
+                        products = await self._load_from_local_db(category, state.get("domain", "US"))
+                    except Exception as e:
+                        logger.warning(f"[MarketAnalyst] 本地表查询失败，回退旧路径: {e}")
+
             if not products:
                 state.set("result", {
                     "analysis_type": analysis_type,
@@ -82,6 +96,51 @@ class MarketAnalystAgent(Agent):
             state.add_event(f"market_analyst_error: {e}")
 
         return state
+
+    # ── 新增：从 amazon_products 本地表加载 ──
+
+    async def _load_from_local_db(self, category: str, domain: str) -> List[Dict]:
+        """从 amazon_products 表查询该类目的商品，转为旧格式供下游分析"""
+        async with AsyncSessionLocal() as db:
+            repo = AmazonProductRepository(db)
+            from sqlalchemy import select
+            from backend.data.models.amazon_product import AmazonProduct
+            stmt = select(AmazonProduct).where(
+                AmazonProduct.category_name == category,
+                AmazonProduct.domain == domain,
+            )
+            result = await db.execute(stmt)
+            products = list(result.scalars().all())
+
+        if not products:
+            return []
+
+        # 转为 MarketAnalystAgent 期望的 dict 格式
+        converted = []
+        for p in products:
+            converted.append({
+                "asin": p.asin,
+                "title": p.title,
+                "brand": p.brand,
+                "current_price": p.current_price,
+                "current_bsr": p.current_bsr,
+                "rating": p.rating,
+                "review_count": p.review_count,
+                "monthly_sold": p.monthly_sold,
+                "seller_count": p.seller_count,
+                "bsr_trend": p.bsr_trend,
+                "bsr_history": p.bsr_history,
+                "price_history": p.price_history,
+                "avg_price_90d": p.avg_price_90d,
+                "feature_bullets": p.feature_bullets,
+                "main_image": p.main_image,
+                "is_fba": p.is_fba,
+                "is_prime": p.is_prime,
+                "aplus_content": p.aplus_content,
+                "data_source": p.data_source,
+            })
+        logger.info(f"[MarketAnalyst] 从本地表加载 {len(converted)} 个商品（类目={category}）")
+        return converted
 
     # ── LLM 增强分析 ──
 

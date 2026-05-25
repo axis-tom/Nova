@@ -11,12 +11,14 @@
 """
 
 import json as _json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
 from backend.utils.logger import logger
+from backend.data.database import AsyncSessionLocal
+from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 
 
 class AmazonReviewAnalyzerAgent(Agent):
@@ -31,6 +33,17 @@ class AmazonReviewAnalyzerAgent(Agent):
         try:
             products: List[Dict] = state.get("collected_products", []) or []
             max_analyze: int = state.get("max_products_to_analyze", 20)
+
+            # ── 优先从 amazon_products 本地表读取 ──
+            if not products:
+                asins = state.get("asins") or []
+                category = state.get("category") or state.get("market_category")
+                try:
+                    products = await self._load_from_local_db(
+                        asins=asins, category=category, domain=state.get("domain", "US"),
+                    )
+                except Exception as e:
+                    logger.warning(f"[ReviewAnalyzer] 本地表查询失败: {e}")
 
             if not products:
                 state.set("review_insights", [])
@@ -405,6 +418,59 @@ class AmazonReviewAnalyzerAgent(Agent):
             needs.append("高客单价品类，用户对品质和服务要求更高")
 
         return needs
+
+    # ── 从 amazon_products 本地表加载 ──
+
+    async def _load_from_local_db(
+        self, asins: List[str] = None, category: str = None, domain: str = "US",
+    ) -> List[Dict]:
+        """从 amazon_products 表查询商品，转为旧分析逻辑需要的格式"""
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            from backend.data.models.amazon_product import AmazonProduct
+
+            conditions = [AmazonProduct.domain == domain]
+            if asins:
+                conditions.append(AmazonProduct.asin.in_(asins))
+            elif category:
+                conditions.append(AmazonProduct.category_name == category)
+            else:
+                return []
+
+            stmt = select(AmazonProduct).where(*conditions)
+            result = await db.execute(stmt)
+            products = list(result.scalars().all())
+
+        if not products:
+            return []
+
+        converted = []
+        for p in products:
+            converted.append({
+                "asin": p.asin,
+                "title": p.title,
+                "brand": p.brand,
+                "current_price": p.current_price,
+                "current_bsr": p.current_bsr,
+                "rating": p.rating,
+                "review_count": p.review_count,
+                "monthly_sold": p.monthly_sold,
+                "seller_count": p.seller_count,
+                "bsr_trend": p.bsr_trend,
+                "bsr_history": p.bsr_history,
+                "price_history": p.price_history,
+                "avg_price_90d": p.avg_price_90d,
+                "feature_bullets": p.feature_bullets,
+                "main_image": p.main_image,
+                "is_fba": p.is_fba,
+                "is_prime": p.is_prime,
+                "aplus_content": p.aplus_content,
+                "data_source": p.data_source,
+            })
+        n = len(converted)
+        source = f"{len(asins)} ASIN" if asins else f"类目={category}"
+        logger.info(f"[ReviewAnalyzer] 从本地表加载 {n} 个商品（{source}）")
+        return converted
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         return await super().execute(input_data)
