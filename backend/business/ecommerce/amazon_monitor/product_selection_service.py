@@ -10,31 +10,21 @@ S5: ASIN 详情及趋势
 S6: ASIN 优惠趋势
 """
 import logging
-import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
-from statistics import median
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 from backend.data.models.amazon_product import AmazonProduct
+from backend.business.ecommerce.amazon_monitor.scoring import (
+    score_single_product,
+    grade_distribution,
+    calc_price_stability,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# S1: 8 维度评分权重
-SCORE_WEIGHTS = {
-    "bsr_rank": 0.20,
-    "bsr_trend": 0.15,
-    "rating": 0.15,
-    "review_count": 0.10,
-    "monthly_sold": 0.15,
-    "price_stability": 0.10,
-    "competition": 0.10,
-    "sentiment": 0.05,
-}
 
 
 class ProductSelectionService:
@@ -94,7 +84,7 @@ class ProductSelectionService:
         scored = []
         for p in products:
             d = self._product_to_dict(p)
-            score = self._score_single(d)
+            score = score_single_product(d)
             if score["total_score"] >= min_score:
                 scored.append({**d, **score})
 
@@ -124,117 +114,9 @@ class ProductSelectionService:
                 }
                 for i, s in enumerate(top)
             ],
-            "grade_distribution": self._grade_distribution(scored),
+            "grade_distribution": grade_distribution(scored),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-
-    def _score_single(self, p: Dict) -> Dict[str, Any]:
-        """8 维评分"""
-        scores = {}
-
-        # BSR 排名
-        bsr = p.get("current_bsr")
-        if bsr:
-            if bsr <= 100: scores["bsr_rank"] = 100
-            elif bsr <= 1000: scores["bsr_rank"] = 85
-            elif bsr <= 5000: scores["bsr_rank"] = 70
-            elif bsr <= 20000: scores["bsr_rank"] = 55
-            elif bsr <= 100000: scores["bsr_rank"] = 35
-            else: scores["bsr_rank"] = 15
-        else:
-            scores["bsr_rank"] = 30
-
-        # BSR 趋势
-        trend = p.get("bsr_trend", "unknown")
-        scores["bsr_trend"] = {"improving": 100, "stable": 65, "declining": 20}.get(trend, 50)
-
-        # 评分
-        rating = p.get("rating") or 0
-        scores["rating"] = (
-            100 if rating >= 4.5 else
-            80 if rating >= 4.0 else
-            60 if rating >= 3.5 else
-            40 if rating >= 3.0 else
-            20
-        )
-
-        # 评论数
-        reviews = p.get("review_count") or 0
-        scores["review_count"] = (
-            100 if reviews >= 10000 else
-            80 if reviews >= 1000 else
-            60 if reviews >= 100 else
-            40 if reviews >= 10 else
-            20
-        )
-
-        # 月销量
-        sold = p.get("monthly_sold") or 0
-        scores["monthly_sold"] = (
-            100 if sold >= 5000 else
-            80 if sold >= 1000 else
-            60 if sold >= 300 else
-            40 if sold >= 50 else
-            20 if sold > 0 else
-            max(20, scores["bsr_rank"] * 0.6)
-        )
-
-        # 价格稳定性
-        min_p, max_p = p.get("min_price_90d"), p.get("max_price_90d")
-        avg_p = p.get("avg_price_90d") or p.get("current_price")
-        if min_p and max_p and avg_p and avg_p > 0:
-            vol = (max_p - min_p) / avg_p
-            scores["price_stability"] = (
-                100 if vol <= 0.05 else
-                80 if vol <= 0.15 else
-                60 if vol <= 0.30 else
-                40 if vol <= 0.50 else
-                20
-            )
-        else:
-            scores["price_stability"] = 60
-
-        # 竞争程度
-        sellers = p.get("seller_count") or 0
-        scores["competition"] = (
-            60 if sellers == 0 else
-            90 if sellers <= 3 else
-            75 if sellers <= 10 else
-            55 if sellers <= 30 else
-            35 if sellers <= 100 else
-            15
-        )
-
-        # 情感（无评论数据时中性）
-        scores["sentiment"] = 60
-
-        total = sum(scores.get(k, 0) * SCORE_WEIGHTS[k] for k in SCORE_WEIGHTS)
-
-        highlights = []
-        if trend == "improving":
-            highlights.append("BSR 持续改善（销量增长）")
-        if sold >= 1000:
-            highlights.append(f"月销约 {sold:,} 件")
-        if min_p and max_p and avg_p and avg_p > 0:
-            vol = (max_p - min_p) / avg_p * 100
-            if vol <= 10:
-                highlights.append(f"价格稳定（90天波动 {vol:.0f}%）")
-        if sellers > 0 and sellers <= 5:
-            highlights.append(f"竞争少（仅 {sellers} 个卖家）")
-
-        return {
-            "total_score": round(total, 1),
-            "score_detail": scores,
-            "highlights": highlights,
-            "score_grade": "A" if total >= 80 else "B" if total >= 70 else "C" if total >= 60 else "D",
-        }
-
-    def _grade_distribution(self, scored: List[Dict]) -> Dict[str, int]:
-        dist: Dict[str, int] = {"A": 0, "B": 0, "C": 0, "D": 0}
-        for s in scored:
-            grade = s.get("score_grade", "D")
-            dist[grade] = dist.get(grade, 0) + 1
-        return dist
 
     # ════════════════════════════════════════════
     # S2: 关键词扩展+搜索选品
@@ -408,7 +290,7 @@ class ProductSelectionService:
                     "min_price_90d": p["min_price_90d"],
                     "max_price_90d": p["max_price_90d"],
                     "bsr_trend": p["bsr_trend"],
-                    "price_stability": self._calc_price_stability_label(p),
+                    "price_stability": calc_price_stability(p),
                 }
                 for p in top
             ],
@@ -469,7 +351,7 @@ class ProductSelectionService:
                 "avg_price_90d": p["avg_price_90d"],
                 "min_price_90d": p["min_price_90d"],
                 "max_price_90d": p["max_price_90d"],
-                "price_stability": self._calc_price_stability_label(p),
+                "price_stability": calc_price_stability(p),
             },
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -533,7 +415,7 @@ class ProductSelectionService:
             "title": (product.title or "")[:80],
             "current_price": product.current_price,
             "avg_price_90d": product.avg_price_90d,
-            "price_stability": self._calc_price_stability_label(self._product_to_dict(product)),
+            "price_stability": calc_price_stability(self._product_to_dict(product)),
             "deal_analysis": {
                 "total_price_points": len(prices),
                 "avg_price": round(avg_price, 2),
