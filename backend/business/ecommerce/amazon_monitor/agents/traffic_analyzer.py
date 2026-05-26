@@ -1,19 +1,18 @@
 """
-流量与竞品分析 Agent - Amazon 监控场景
-对应文章第4步：流量分析与竞品监控
+流量与竞品分析 Agent - Amazon 监控场景（LLM 驱动的新架构）
 
 职责：
-1. 分析商品 BSR 排名分布
-2. 进行竞品价格比较
-3. 识别价格异常（大幅下降/上涨）
-4. 分析市场竞争格局
-5. 生成流量洞察报告
+1. LLM 拿到商品数据后自主决定流量/竞品分析路径
+2. 按需调用分析工具（BSR 排名、价格分析、竞品对比、价格预警）
+3. LLM 逐步思考、决策、输出完整的流量洞察报告
 """
 
 import asyncio
 import json as _json
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+
+from langchain_core.tools import tool
 
 from backend.common.core.agent import Agent
 from backend.common.core.state import State
@@ -22,9 +21,34 @@ from backend.data.database import AsyncSessionLocal
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 
 
+_TRAFFIC_SYSTEM_PROMPT = """你是 Amazon 流量与竞品分析专家。你有以下分析工具可用：
+
+{tool_descriptions}
+
+你的分析维度必须覆盖：
+1. BSR 排名分布（Top 100/1000/10000/Others 分布、平均 BSR、最佳 BSR 商品、品类平均 BSR）
+2. 价格分布（平均/最低/最高价格、价格区间分布、Prime 占比、推荐价格区间）
+3. 竞品对比（按品类分组的平均价格/评分/评论数、竞争等级判断）
+4. 价格预警（价格异常偏离市场均价的商品、偏离百分比）
+5. 流量洞察汇总（竞争等级、高潜力商品数、市场摘要、Top 机会）
+
+规则：
+- 每次调用一个工具，看结果，思考后决定下一步
+- 按需逐步分析，不要一次性调用所有工具
+- 当你认为信息足够覆盖以上维度时，输出最终分析报告
+- 最终报告必须是 JSON 格式
+
+最终报告输出到以下 state keys：
+- traffic_insights: 流量洞察
+- bsr_analysis: BSR 排名分析
+- price_analysis: 价格分析
+- competitor_comparison: 竞品对比
+- price_alerts: 价格预警列表"""
+
+
 class TrafficAnalyzerAgent(Agent):
     """
-    流量与竞品分析 Agent
+    流量与竞品分析 Agent — LLM 驱动，按需调流量/竞品工具
     分析 BSR 排名、价格竞争和市场格局
     """
 
@@ -32,21 +56,8 @@ class TrafficAnalyzerAgent(Agent):
     description = "Amazon 流量与竞品分析 Agent，分析 BSR 排名和价格竞争"
 
     async def run(self, state: State) -> State:
-        """
-        执行流量与竞品分析
-
-        输入（从 state 读取）：
-          - collected_products: List[dict] 采集到的商品列表
-          - product_map: Dict[str, dict] ASIN → 商品详情映射
-
-        输出（写入 state）：
-          - traffic_insights: dict 流量洞察
-          - bsr_analysis: dict BSR 排名分析
-          - competitor_comparison: dict 竞品对比
-          - price_alerts: List[dict] 价格预警
-        """
         state.add_event("traffic_analyzer_start")
-        logger.info("[TrafficAnalyzer] Starting traffic and competitor analysis")
+        logger.info("[TrafficAnalyzer] Starting LLM-driven traffic analysis")
 
         try:
             products: List[Dict] = state.get("collected_products", [])
@@ -79,45 +90,41 @@ class TrafficAnalyzerAgent(Agent):
                 state.add_event("traffic_analyzer_no_products")
                 return state
 
-            # 1. BSR 排名分析
-            bsr_analysis = self._analyze_bsr(products)
-
-            # 2. 价格分析
-            price_analysis = self._analyze_prices(products)
-
-            # 3. 竞品对比（按品类分组）
-            competitor_comparison = self._compare_competitors(products)
-
-            # 4. 价格预警
-            price_alerts = self._detect_price_alerts(products)
-
-            # 5. 流量洞察汇总
-            traffic_insights = self._build_traffic_insights(
-                products, bsr_analysis, price_analysis, competitor_comparison
+            # ── LLM 驱动的分析循环 ──
+            tools = self._build_analysis_tools(products)
+            tool_descriptions = "\n".join(
+                f"- {t.name}: {t.description}" for t in tools
+            )
+            system_prompt = _TRAFFIC_SYSTEM_PROMPT.format(
+                tool_descriptions=tool_descriptions,
             )
 
-            # LLM 增强：基于计算数据生成战略洞察
-            ai_result = await self._llm_analyze_traffic(
-                traffic_insights, bsr_analysis, price_analysis,
-                competitor_comparison, price_alerts
+            analysis_question = (
+                f"请分析以下 {len(products)} 个商品的流量和竞争数据。\n"
+                f"请逐步分析，每次调用工具后思考结果，再决定下一步。"
             )
-            if ai_result:
-                traffic_insights["ai_insights"] = ai_result
-                logger.info("[TrafficAnalyzer] LLM 战略洞察已注入")
 
-            # 写入结果
-            state.set("traffic_insights", traffic_insights)
-            state.set("bsr_analysis", bsr_analysis)
-            state.set("competitor_comparison", competitor_comparison)
-            state.set("price_alerts", price_alerts)
+            raw_output = await self._run_analysis_loop(
+                products=products,
+                system_prompt=system_prompt,
+                analysis_question=analysis_question,
+                max_turns=15,
+            )
+
+            result = self._parse_json_output(raw_output)
+            result["llm_driven"] = True
+            logger.info("[TrafficAnalyzer] LLM 驱动流量分析完成")
+
+            # 保持 state key 向后兼容
+            state.set("traffic_insights", result.get("traffic_insights", {}))
+            state.set("bsr_analysis", result.get("bsr_analysis", {}))
+            state.set("competitor_comparison", result.get("competitor_comparison", {}))
+            state.set("price_alerts", result.get("price_alerts", []))
             state.set_meta("traffic_analyzed", len(products))
-            state.set_meta("llm_enhanced", bool(ai_result))
+            state.set_meta("llm_driven", True)
 
-            logger.info(
-                f"[TrafficAnalyzer] Analyzed {len(products)} products, "
-                f"{len(price_alerts)} price alerts"
-            )
-            state.add_event(f"traffic_analyzer_success: {len(products)} products, {len(price_alerts)} alerts")
+            logger.info(f"[TrafficAnalyzer] LLM analysis complete")
+            state.add_event(f"traffic_analyzer_success")
 
         except Exception as e:
             logger.error(f"[TrafficAnalyzer] Error: {e}")
@@ -130,67 +137,47 @@ class TrafficAnalyzerAgent(Agent):
 
         return state
 
-    # ── LLM 增强分析 ──
+    # ════════════════════════════════════════════════════════════════
+    # 工具定义
+    # ════════════════════════════════════════════════════════════════
 
-    async def _llm_analyze_traffic(
-        self,
-        traffic_insights: Dict[str, Any],
-        bsr_analysis: Dict[str, Any],
-        price_analysis: Dict[str, Any],
-        competitor_comparison: Dict[str, Any],
-        price_alerts: List[Dict],
-    ) -> Dict[str, Any]:
-        """让 LLM 基于计算数据生成战略洞察，失败返回空 dict"""
-        prompt = _json.dumps({
-            "traffic_summary": {
-                "total_products": traffic_insights.get("total_products"),
-                "competition_level": traffic_insights.get("competition_level"),
-                "avg_market_rating": traffic_insights.get("avg_market_rating"),
-                "high_potential_count": traffic_insights.get("high_potential_count"),
-                "market_summary": traffic_insights.get("market_summary"),
-            },
-            "bsr": {
-                "avg_bsr": bsr_analysis.get("avg_bsr"),
-                "distribution": bsr_analysis.get("distribution"),
-                "category_avg_bsr": bsr_analysis.get("category_avg_bsr"),
-            },
-            "price": {
-                "avg_price": price_analysis.get("avg_price"),
-                "min_price": price_analysis.get("min_price"),
-                "max_price": price_analysis.get("max_price"),
-                "price_distribution": price_analysis.get("price_distribution"),
-                "prime_ratio": price_analysis.get("prime_ratio"),
-            },
-            "competitor_categories": {
-                cat: {
-                    "product_count": info.get("product_count"),
-                    "avg_price": info.get("avg_price"),
-                    "avg_rating": info.get("avg_rating"),
-                    "competition_level": info.get("competition_level"),
-                }
-                for cat, info in list(competitor_comparison.items())[:5]
-            },
-            "price_alerts_count": len(price_alerts),
-            "price_alerts_sample": [
-                {"asin": a.get("asin"), "alert_type": a.get("alert_type"), "deviation_pct": a.get("deviation_pct")}
-                for a in price_alerts[:3]
-            ],
-        }, ensure_ascii=False, indent=2)
+    def _build_analysis_tools(self, products: List[Dict]) -> List:
+        """将流量/竞品分析维度暴露为 LLM 可调用的工具"""
 
-        system = (
-            "You are an Amazon traffic and competition analyst. "
-            "Based on the data below, provide strategic insights in Chinese.\n"
-            "Return JSON with these fields:\n"
-            "- trend_interpretation: string, 对当前市场流量趋势的解读\n"
-            "- competition_strategy: string, 竞争策略建议\n"
-            "- pricing_advice: string, 定价策略建议\n"
-            "- risk_warnings: list of strings, 风险预警列表\n"
-            "Return valid JSON only, no markdown."
-        )
+        @tool
+        def analyze_bsr_distribution() -> dict:
+            """分析 BSR 排名分布：Top 100/1000/10000/Others 分布、平均 BSR、最佳 BSR 商品、品类平均 BSR"""
+            return self._analyze_bsr(products)
 
-        raw = await self.llm_invoke(prompt, system=system)
-        if not raw:
-            return {}
+        @tool
+        def analyze_price_distribution() -> dict:
+            """分析价格分布：平均/最低/最高价格、价格区间分布、Prime 占比、推荐价格区间"""
+            return self._analyze_prices(products)
+
+        @tool
+        def compare_competitors_by_category() -> dict:
+            """竞品对比：按品类分组的平均价格/评分/评论数、最佳评分/最多评论商品、竞争等级"""
+            return self._compare_competitors(products)
+
+        @tool
+        def detect_price_anomalies() -> list:
+            """检测价格异常：价格显著偏离市场均价的商品、偏离百分比、预警类型"""
+            return self._detect_price_alerts(products)
+
+        @tool
+        def build_traffic_overview() -> dict:
+            """构建流量洞察汇总：竞争等级、高潜力商品数、市场摘要、Top 机会"""
+            bsr = self._analyze_bsr(products)
+            price = self._analyze_prices(products)
+            comp = self._compare_competitors(products)
+            return self._build_traffic_insights(products, bsr, price, comp)
+
+        return [
+            analyze_bsr_distribution, analyze_price_distribution,
+            compare_competitors_by_category, detect_price_anomalies,
+            build_traffic_overview,
+        ]
+
 
         try:
             cleaned = raw.strip()

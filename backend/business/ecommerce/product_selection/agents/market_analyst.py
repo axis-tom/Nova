@@ -1,15 +1,13 @@
 """
 市场分析 Agent - 电商选品分析场景
 
-职责：
-1. 读取 state.collected_products（Keepa + Rainforest + Canopy 三源数据）
-2. 市场体量：月销总额、营收估算、价格带分布
-3. 市场趋势：用 price_history / bsr_history CSV 时间序列做真正的趋势计算
-4. 淡旺季：按月份聚合 BSR/价格，识别旺季低谷
-5. 品牌分布、价格带、机会/风险识别
-6. 盈利评估（roi_analysis 模式）
+职责（LLM 驱动的新架构）：
+1. LLM 拿到商品数据后自主决定分析路径
+2. 按需调用分析工具（市场体量、趋势、淡旺季、品牌分布、壁垒等）
+3. LLM 逐步思考、决策、输出完整分析报告
+4. roi_analysis 模式仍保持纯计算路径
 
-数据源：state.collected_products（由 product_collector 三源采集）
+数据源：state.collected_products（由 product_collector 三源采集）或 amazon_products 本地表
 """
 
 import json as _json
@@ -17,17 +15,45 @@ from typing import Any, Dict, List
 from datetime import datetime
 from statistics import median
 
+from langchain_core.tools import tool
+
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
 from backend.utils.logger import logger
 
-# ── 新增：本地表查询依赖 ──
+# ── 本地表查询依赖 ──
 from backend.data.database import AsyncSessionLocal
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 
 
+_MARKET_SYSTEM_PROMPT = """你是 Amazon 市场分析专家。你有以下分析工具可用：
+
+{tool_descriptions}
+
+你的分析维度必须覆盖：
+1. 市场体量与规模（月销总额、营收估算、价格带分布）
+2. 市场趋势与方向（BSR 变化率、价格变化率、改善/衰退比例）
+3. 淡旺季特征（月度 BSR/价格中位数、旺季月份、季节性强度）
+4. 品牌格局与集中度（品牌数量、Top3 市场份额、寡占/分散/竞争判定、进入壁垒）
+5. 价格带分布（各价格区间的商品数、平均 BSR、平均评分）
+6. 评论壁垒与评分健康（评论数分布、壁垒等级、评分健康度评分）
+7. 卖家生态（FBA/FBM/Prime 数量及占比）
+8. Listing 质量（A+ 内容覆盖率、视频覆盖率）
+
+规则：
+- 每次调用一个工具，看结果，思考后决定下一步
+- 不要一次性调用所有工具，按需逐步分析
+- 当你认为信息足够覆盖以上维度时，输出最终分析报告
+- 最终报告必须是 JSON 格式，包含你分析过的所有维度
+- 在报告中说明你选择分析这些维度的理由
+- 如果某个工具返回空数据，说明该维度在该市场中不适用
+
+最终 JSON 格式示例：
+{{"market_volume": {{...}}, "trends": {{...}}, "seasonality": {{...}}, "brand_analysis": {{...}}, "price_bands": {{...}}, "review_barrier": {{...}}, "rating_health": {{...}}, "seller_composition": {{...}}, "aplus_coverage": {{...}}, "overall_assessment": "..."}}"""
+
+
 class MarketAnalystAgent(Agent):
-    """市场分析 Agent — 基于 Keepa 历史 + Rainforest/Canopy 详情做市场趋势和淡旺季分析"""
+    """市场分析 Agent — LLM 驱动，按需调分析工具"""
 
     name = "market_analyst"
     description = "电商选品市场分析 Agent，基于 Keepa 时间序列 + Canopy/Rainforest listing 数据做市场体量/趋势/淡旺季分析"
@@ -47,7 +73,7 @@ class MarketAnalystAgent(Agent):
                     try:
                         products = await self._load_from_local_db(category, state.get("domain", "US"))
                     except Exception as e:
-                        logger.warning(f"[MarketAnalyst] 本地表查询失败，回退旧路径: {e}")
+                        logger.warning(f"[MarketAnalyst] 本地表查询失败: {e}")
 
             if not products:
                 state.set("result", {
@@ -58,20 +84,44 @@ class MarketAnalystAgent(Agent):
                 return state
 
             if analysis_type == "market_trends":
-                result = self._analyze_market_trends(products)
+                # ── LLM 驱动的分析循环 ──
+                tools = self._build_analysis_tools(products)
+                tool_descriptions = "\n".join(
+                    f"- {t.name}: {t.description}" for t in tools
+                )
+                system_prompt = _MARKET_SYSTEM_PROMPT.format(
+                    tool_descriptions=tool_descriptions,
+                )
 
-                # 注入搜索热度（从 search_results 中提取）
+                # 搜索热度（从 search_results 提取，不作为工具）
                 search_results = state.get("search_results") or {}
+                extra_context = ""
                 if search_results:
-                    result["search_heat"] = self._analyze_search_heat(search_results)
+                    search_heat = self._analyze_search_heat(search_results)
+                    extra_context = f"\n搜索热度数据（已预计算）:\n{_json.dumps(search_heat, ensure_ascii=False, indent=2)}"
 
-                # LLM 增强
-                ai_result = await self._llm_analyze_market(result)
-                if ai_result:
-                    result["ai_insights"] = ai_result
-                    logger.info("[MarketAnalyst] LLM 市场洞察已注入")
+                analysis_question = (
+                    f"请分析以下 {len(products)} 个商品的市场情况。\n"
+                    f"商品数量：{len(products)}，字段：asin/title/brand/price/bsr/rating/review_count/monthly_sold 等。\n"
+                    f"部分商品含 price_history/bsr_history 时间序列数据。{extra_context}\n\n"
+                    f"请逐步分析，每次调用工具后思考结果，再决定下一步。"
+                )
+
+                raw_output = await self._run_analysis_loop(
+                    products=products,
+                    system_prompt=system_prompt,
+                    analysis_question=analysis_question,
+                    max_turns=15,
+                )
+
+                result = self._parse_json_output(raw_output)
+                result["analysis_type"] = "market_trends"
+                result["generated_at"] = datetime.now().isoformat()
+                result["llm_driven"] = True
+                logger.info("[MarketAnalyst] LLM 驱动分析完成")
 
             elif analysis_type == "roi_analysis":
+                # ROI 分析保持纯计算路径（不需要 LLM 决策）
                 profit_margin = state.get("profit_margin", 0.25)
                 result = self._analyze_profitability(products, profit_margin)
             else:
@@ -86,7 +136,7 @@ class MarketAnalystAgent(Agent):
             elif analysis_type == "roi_analysis":
                 state.set("profitability_result", result)
             state.set_meta("analysis_completed", True)
-            state.set_meta("llm_enhanced", bool(result.get("ai_insights")))
+            state.set_meta("llm_driven", analysis_type == "market_trends")
             state.add_event("market_analyst_success")
 
         except Exception as e:
@@ -96,6 +146,265 @@ class MarketAnalystAgent(Agent):
             state.add_event(f"market_analyst_error: {e}")
 
         return state
+
+    # ════════════════════════════════════════════════════════════════
+    # 工具定义（每个 _analyze_* 方法 → LangChain tool）
+    # ════════════════════════════════════════════════════════════════
+
+    def _build_analysis_tools(self, products: List[Dict]) -> List:
+        """将分析维度暴露为 LLM 可调用的工具"""
+
+        @tool
+        def analyze_market_volume() -> dict:
+            """估算市场体量：月销总量、月营收、平均价格、价格带分布、BSR 范围"""
+            return self._analyze_market_volume(products)
+
+        @tool
+        def analyze_trends() -> dict:
+            """分析 BSR 和价格趋势：30天/90天变化率、改善/衰退/稳定比例、市场方向"""
+            return self._analyze_trends_from_history(products)
+
+        @tool
+        def analyze_seasonality() -> dict:
+            """分析淡旺季：月度 BSR/价格中位数、旺季月份、淡季月份、季节性强度"""
+            return self._analyze_seasonality(products)
+
+        @tool
+        def analyze_brand_distribution() -> dict:
+            """分析品牌分布：各品牌的商品数、总销量、平均价格/评分/BSR"""
+            return self._aggregate_by_brand(products)
+
+        @tool
+        def analyze_price_bands() -> dict:
+            """分析价格带分布：<$20, $20-50, $50-100, $100-200, $200+ 各区间商品数/平均BSR/平均评分"""
+            return self._analyze_price_bands(products)
+
+        @tool
+        def analyze_review_barrier() -> dict:
+            """分析评论数分布：6档评论数区间的分布、平均评论数、评论壁垒等级（极高/高/中/低）"""
+            return self._analyze_review_barrier(products)
+
+        @tool
+        def analyze_rating_health() -> dict:
+            """分析评分健康度：评分四档分布、健康评分(0-100)、健康等级（优秀/良好/一般/较差）"""
+            return self._analyze_rating_health(products)
+
+        @tool
+        def analyze_seller_composition() -> dict:
+            """分析卖家类型分布：FBA/FBM/Prime 的数量和占比"""
+            return self._analyze_seller_composition(products)
+
+        @tool
+        def analyze_aplus_coverage() -> dict:
+            """分析 A+ Content 和视频覆盖率：A+ 商品数/占比、带视频商品数/占比"""
+            return self._analyze_aplus_coverage(products)
+
+        @tool
+        def analyze_brand_concentration() -> dict:
+            """分析品牌集中度：品牌数量、Top3 市场份额、集中度判定（寡占/分散/竞争）、进入壁垒"""
+            brand_dist = self._aggregate_by_brand(products)
+            return self._analyze_brand_concentration(brand_dist, products)
+
+        @tool
+        def analyze_opportunities() -> dict:
+            """识别市场机会：上升期低竞争商品、需求旺盛但供给不足、价格带空白"""
+            price_bands = self._analyze_price_bands(products)
+            return self._identify_opportunities(products, price_bands)
+
+        @tool
+        def analyze_risks() -> dict:
+            """识别市场风险：市场萎缩风险、竞争激烈风险、评论壁垒风险"""
+            trends = self._analyze_trends_from_history(products)
+            return self._identify_risks(products, trends, len(products))
+
+        return [
+            analyze_market_volume, analyze_trends, analyze_seasonality,
+            analyze_brand_distribution, analyze_price_bands,
+            analyze_review_barrier, analyze_rating_health,
+            analyze_seller_composition, analyze_aplus_coverage,
+            analyze_brand_concentration,
+            analyze_opportunities, analyze_risks,
+        ]
+
+    # ════════════════════════════════════════════════════════════════
+    # 新增维度分析（从 market_analysis.py Service 层移植）
+    # ════════════════════════════════════════════════════════════════
+
+    def _analyze_review_barrier(self, products: List[Dict]) -> Dict[str, Any]:
+        """评论数分布 + 壁垒评估（移植自 M5: get_review_count_distribution）"""
+        reviews = [p.get("review_count") for p in products if p.get("review_count") is not None]
+        if not reviews:
+            return {"total_with_reviews": 0, "distribution": {}, "review_barrier": "未知"}
+
+        bands = [
+            ("0-10", 0, 10), ("10-50", 10, 50), ("50-200", 50, 200),
+            ("200-1000", 200, 1000), ("1000-5000", 1000, 5000), ("5000+", 5000, float("inf")),
+        ]
+        distribution = {}
+        for label, lo, hi in bands:
+            distribution[label] = sum(1 for r in reviews if lo <= r < hi)
+
+        avg_reviews = sum(reviews) / len(reviews)
+        if avg_reviews > 5000:
+            barrier = "极高"
+        elif avg_reviews > 1000:
+            barrier = "高"
+        elif avg_reviews > 200:
+            barrier = "中"
+        else:
+            barrier = "低"
+
+        return {
+            "total_with_reviews": len(reviews),
+            "avg_review_count": round(avg_reviews),
+            "median_review_count": round(median(reviews)),
+            "min_reviews": min(reviews),
+            "max_reviews": max(reviews),
+            "review_barrier": barrier,
+            "distribution": distribution,
+        }
+
+    def _analyze_rating_health(self, products: List[Dict]) -> Dict[str, Any]:
+        """评分分布 + 健康度评估（移植自 M6: get_rating_distribution）"""
+        ratings = [p.get("rating") for p in products if p.get("rating")]
+        if not ratings:
+            return {"total_with_rating": 0, "distribution": {}, "rating_health_score": 0}
+
+        bands = [
+            ("4.0-5.0", 4.0, 5.0), ("3.0-4.0", 3.0, 4.0),
+            ("2.0-3.0", 2.0, 3.0), ("1.0-2.0", 1.0, 2.0),
+        ]
+        distribution = {}
+        for label, lo, hi in bands:
+            distribution[label] = sum(1 for r in ratings if lo <= r < hi)
+
+        excellent = sum(1 for r in ratings if r >= 4.5)
+        good = sum(1 for r in ratings if 4.0 <= r < 4.5)
+        average = sum(1 for r in ratings if 3.0 <= r < 4.0)
+        poor = sum(1 for r in ratings if r < 3.0)
+        total = len(ratings)
+
+        health_score = round(
+            (excellent * 100 + good * 75 + average * 50 + poor * 0) / total, 1
+        ) if total else 0
+
+        return {
+            "total_with_rating": total,
+            "avg_rating": round(sum(ratings) / total, 2),
+            "median_rating": round(median(ratings), 2),
+            "rating_health_score": health_score,
+            "rating_health_label": (
+                "优秀" if health_score >= 80
+                else "良好" if health_score >= 60
+                else "一般" if health_score >= 40
+                else "较差"
+            ),
+            "distribution": distribution,
+            "distribution_detail": {
+                "excellent_count": excellent,
+                "good_count": good,
+                "average_count": average,
+                "poor_count": poor,
+                "excellent_pct": round(excellent / total * 100, 1),
+                "good_pct": round(good / total * 100, 1),
+                "average_pct": round(average / total * 100, 1),
+                "poor_pct": round(poor / total * 100, 1),
+            },
+        }
+
+    def _analyze_seller_composition(self, products: List[Dict]) -> Dict[str, Any]:
+        """卖家类型分布：FBA/FBM/Prime（移植自 M8: get_seller_type_distribution）"""
+        total = len(products)
+        if not total:
+            return {"total_products": 0}
+
+        fba = sum(1 for p in products if p.get("is_fba"))
+        # FBM = not FBA (agent dict 没有 fulfillment 字段, 用 available/prime 推断)
+        prime = sum(1 for p in products if p.get("is_prime"))
+        fbm = total - fba
+        unknown = 0
+
+        return {
+            "total_products": total,
+            "fba_count": fba,
+            "fba_pct": round(fba / total * 100, 1) if total else 0,
+            "fbm_count": fbm,
+            "fbm_pct": round(fbm / total * 100, 1) if total else 0,
+            "unknown_count": unknown,
+            "prime_count": prime,
+            "prime_pct": round(prime / total * 100, 1) if total else 0,
+        }
+
+    def _analyze_aplus_coverage(self, products: List[Dict]) -> Dict[str, Any]:
+        """A+ Content 和视频覆盖率（移植自 M9: get_aplus_video_distribution）"""
+        total = len(products)
+        if not total:
+            return {"total_products": 0}
+
+        has_aplus = sum(1 for p in products if p.get("aplus_content"))
+        no_aplus = total - has_aplus
+        # 从 images 数量推断是否有视频（images > 1 表示有额外媒体内容）
+        with_video = sum(1 for p in products if p.get("images") and len(p.get("images", [])) > 1)
+        video_counts = [len(p.get("images", [])) for p in products if p.get("images") and len(p.get("images", [])) > 1]
+
+        return {
+            "total_products": total,
+            "aplus_count": has_aplus,
+            "aplus_pct": round(has_aplus / total * 100, 1) if total else 0,
+            "no_aplus_count": no_aplus,
+            "no_aplus_pct": round(no_aplus / total * 100, 1) if total else 0,
+            "with_video_count": with_video,
+            "with_video_pct": round(with_video / total * 100, 1) if total else 0,
+            "avg_video_or_image_count": round(sum(video_counts) / len(video_counts)) if video_counts else 0,
+        }
+
+    def _analyze_brand_concentration(self, brand_dist: Dict, products: List[Dict]) -> Dict[str, Any]:
+        """品牌集中度 + 进入壁垒（移植自 M4: get_brand_concentration）
+
+        brand_dist 来自 _aggregate_by_brand() 的输出，已含 total_sales。
+        """
+        if not brand_dist:
+            return {"total_brands": 0, "concentration": "未知", "entry_barrier": "未知"}
+
+        total_sales = sum(b.get("total_sales", 0) for b in brand_dist.values())
+
+        # 构建品牌列表（按销量排序）
+        brand_list = []
+        for brand, info in brand_dist.items():
+            share = (info["total_sales"] / total_sales * 100) if total_sales > 0 else 0
+            brand_list.append({
+                "brand": brand,
+                "product_count": info.get("count", 0),
+                "total_monthly_sales": info.get("total_sales", 0),
+                "market_share_pct": round(share, 1),
+                "avg_price": info.get("avg_price"),
+                "avg_rating": info.get("avg_rating"),
+                "avg_bsr": info.get("avg_bsr"),
+                "best_bsr_asin": info.get("best_bsr_asin"),
+            })
+
+        brand_list.sort(key=lambda x: x["market_share_pct"], reverse=True)
+
+        # 市场集中度判断
+        top3_share = sum(b["market_share_pct"] for b in brand_list[:3])
+        if top3_share > 80:
+            concentration = "高（寡占型）"
+            entry_barrier = "极高"
+        elif top3_share > 50:
+            concentration = "中（分散型）"
+            entry_barrier = "中等"
+        else:
+            concentration = "低（竞争型）"
+            entry_barrier = "较低"
+
+        return {
+            "total_brands": len(brand_dist),
+            "total_products": sum(b.get("count", 0) for b in brand_dist.values()),
+            "top_3_market_share_pct": round(top3_share, 1),
+            "concentration": concentration,
+            "entry_barrier": entry_barrier,
+            "brands": brand_list[:10],  # top 10 品牌
+        }
 
     # ── 新增：从 amazon_products 本地表加载 ──
 
@@ -142,63 +451,8 @@ class MarketAnalystAgent(Agent):
         logger.info(f"[MarketAnalyst] 从本地表加载 {len(converted)} 个商品（类目={category}）")
         return converted
 
-    # ── LLM 增强分析 ──
-
-    async def _llm_analyze_market(self, market_result: Dict[str, Any]) -> Dict[str, Any]:
-        summary = market_result.get("summary", {})
-        volume = market_result.get("market_volume", {})
-        seasonality = market_result.get("seasonality", {})
-        trends = market_result.get("trends", {})
-        brand_distribution = market_result.get("brand_distribution", {})
-        opportunities = market_result.get("opportunities", [])
-        risks = market_result.get("risks", [])
-
-        top_brands = dict(list(brand_distribution.items())[:5])
-
-        prompt = _json.dumps({
-            "market_volume": volume,
-            "summary": summary,
-            "trends": trends,
-            "seasonality": {k: v for k, v in seasonality.items() if k != "monthly_bsr_median" and k != "monthly_price_median"},
-            "top_brands": {
-                brand: {
-                    "count": info.get("count"), "total_sales": info.get("total_sales"),
-                    "avg_price": info.get("avg_price"), "avg_rating": info.get("avg_rating"),
-                }
-                for brand, info in top_brands.items()
-            },
-            "opportunities": opportunities[:5],
-            "risks": risks[:5],
-        }, ensure_ascii=False, indent=2)
-
-        system = (
-            "You are an Amazon market analyst. "
-            "Based on the market data below, provide strategic insights in Chinese.\n"
-            "Return JSON with these fields:\n"
-            "- market_stage: string, 市场所处阶段（成长期/成熟期/衰退期）\n"
-            "- entry_recommendation: string, 进入建议（考虑体量+趋势+淡旺季）\n"
-            "- key_success_factors: list of strings, 关键成功因素\n"
-            "- hidden_risks: list of strings, 隐藏风险\n"
-            "- seasonality_strategy: string, 基于淡旺季的运营策略建议\n"
-            "Return valid JSON only, no markdown."
-        )
-
-        raw = await self.llm_invoke(prompt, system=system)
-        if not raw:
-            return {}
-
-        try:
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-            result = _json.loads(cleaned)
-            if isinstance(result, dict):
-                return result
-        except (_json.JSONDecodeError, ValueError):
-            logger.warning("[MarketAnalyst] LLM returned invalid JSON, skipping")
-        return {}
-
-    # ── 市场体量 ──────────────────────────────────────────────────────
+    async def execute(self, input_data: AgentInput) -> AgentOutput:
+        return await super().execute(input_data)
 
     def _analyze_market_volume(self, products: List[Dict]) -> Dict[str, Any]:
         """用 monthly_sold + 价格 + BSR 综合估算市场体量"""
@@ -410,61 +664,6 @@ class MarketAnalystAgent(Agent):
             "max_search_results": max(total_results),
             "min_search_results": min(total_results),
             "keyword_count": len(keyword_results),
-        }
-
-    # ── 市场趋势分析（重构） ─────────────────────────────────────────
-
-    def _analyze_market_trends(self, products: List[Dict]) -> Dict[str, Any]:
-        total = len(products)
-
-        # 基础统计
-        prices = [p["current_price"] for p in products if p.get("current_price")]
-        bsr_list = [p["current_bsr"] for p in products if p.get("current_bsr")]
-        ratings = [p["rating"] for p in products if p.get("rating")]
-        avg_price = sum(prices) / len(prices) if prices else 0
-        avg_bsr = sum(bsr_list) / len(bsr_list) if bsr_list else 0
-        avg_rating = sum(ratings) / len(ratings) if ratings else 0
-        total_monthly_sales = sum(p.get("monthly_sold", 0) for p in products)
-
-        # 品牌分布
-        brand_distribution = self._aggregate_by_brand(products)
-
-        # 价格带分析
-        price_band_analysis = self._analyze_price_bands(products)
-
-        # 市场体量（新增）
-        market_volume = self._analyze_market_volume(products)
-
-        # 趋势（time-series 增强）
-        trends = self._analyze_trends_from_history(products)
-
-        # 淡旺季（新增）
-        seasonality = self._analyze_seasonality(products)
-
-        # 机会识别
-        opportunities = self._identify_opportunities(products, price_band_analysis)
-
-        # 风险识别
-        risks = self._identify_risks(products, trends, total)
-
-        return {
-            "analysis_type": "market_trends",
-            "summary": {
-                "total_products_analyzed": total,
-                "average_price": round(avg_price, 2),
-                "total_monthly_sales": total_monthly_sales,
-                "average_rating": round(avg_rating, 2),
-                "average_bsr": round(avg_bsr),
-                "market_direction": trends["bsr"]["market_direction"],
-            },
-            "market_volume": market_volume,
-            "trends": trends,
-            "seasonality": seasonality,
-            "brand_distribution": brand_distribution,
-            "price_band_analysis": price_band_analysis,
-            "opportunities": opportunities,
-            "risks": risks,
-            "generated_at": datetime.now().isoformat(),
         }
 
     # ── 品牌聚合 ──────────────────────────────────────────────────────

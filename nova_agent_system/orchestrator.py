@@ -152,9 +152,18 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
         k for k in state_keys
         if k in ("expanded_keywords", "collected_products", "review_insights",
                  "sentiment_summary", "customer_needs", "traffic_insights",
-                 "competitor_comparison", "keyword_groups", "market_report")
+                 "competitor_comparison", "keyword_groups", "market_report",
+                 "pending_data_requests")
     ]
     state_hint = f"\n\n[会话 state 已有字段: {', '.join(interesting_keys) or '(空)'}]"
+
+    # 如果有 pending_data_requests，额外提示 LLM 需要再次调 product_collector
+    deferred_count = len(state.get("pending_data_requests") or [])
+    if deferred_count > 0:
+        state_hint += (
+            f"\n⚠️ 有 {deferred_count} 个 ASIN 因 Keepa token 不足被推迟采集 "
+            f"(pending_data_requests)。请再次调用 product_collector 完成补采。"
+        )
 
     return f"Agent [{agent_name}] 执行结果:\n{output}{state_hint}"
 
@@ -351,6 +360,7 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 - 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
 - 如果当前会话已有数据（下方列出），说明用户之前已执行过 Agent，优先利用现有数据，不要重复调用
 - 最终回答要结构化、清晰，用中文，列出关键数据和建议
+	- 如果会话 state 中有 pending_data_requests，表示有 ASIN 因 API token 不足被推迟采集，需要再次调用 product_collector 来补采
 {memory_context}{state_summary}"""
 
     # 转换消息格式

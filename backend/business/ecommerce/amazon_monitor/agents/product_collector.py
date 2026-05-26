@@ -17,7 +17,7 @@
 """
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
 
 from backend.common.core.agent import Agent
@@ -493,6 +493,18 @@ class ProductCollectorAgent(Agent):
 
     # ── L1 核心收集 ──────────────────────────────────────────────────
 
+    async def _batch_asins_for_keepa(self, keepa, all_asins: List[str]) -> List[str]:
+        """根据 Keepa token 余量，返回本次能采集的 ASIN 子集（多余的走 defer）"""
+        try:
+            status = keepa.get_token_status()
+            available = status.get("tokens_left", 60)
+            if available >= len(all_asins):
+                return all_asins
+            return all_asins[:available]
+        except Exception as e:
+            logger.warning(f"[ProductCollector] Keepa token 检查失败: {e}")
+            return all_asins
+
     async def _collect_l1(
         self,
         state: State,
@@ -525,16 +537,24 @@ class ProductCollectorAgent(Agent):
             f"Canopy_product={do_canopy_product})"
         )
 
-        # 1. Keepa 批量查询（一次调 /product 覆盖所有 ASIN）
+        # 1. Keepa 批量查询（token-budget 感知：能查多少查多少）
         keepa_products: Dict[str, Dict] = {}
+        deferred_keepa_asins: List[str] = []
         if keepa and all_asins:
+            keepa_batch = await self._batch_asins_for_keepa(keepa, all_asins)
+            deferred_keepa_asins = [a for a in all_asins if a not in keepa_batch]
+            if deferred_keepa_asins:
+                logger.info(
+                    f"[ProductCollector] Keepa token 不足：先查 {len(keepa_batch)} 个，"
+                    f"推迟 {len(deferred_keepa_asins)} 个"
+                )
             try:
-                for i in range(0, len(all_asins), 100):
-                    batch = all_asins[i:i + 100]
+                for i in range(0, len(keepa_batch), 100):
+                    batch = keepa_batch[i:i + 100]
                     products = await keepa.async_query_products(batch, domain=domain, stats=180)
                     for p in products:
                         keepa_products[p["asin"]] = p
-                logger.info(f"[ProductCollector] Keepa: {len(keepa_products)}/{len(all_asins)}")
+                logger.info(f"[ProductCollector] Keepa: {len(keepa_products)}/{len(keepa_batch)} (deferred {len(deferred_keepa_asins)})")
             except KeepaError as e:
                 logger.warning(f"[ProductCollector] Keepa L1 failed: {e}")
                 _append_collection_error(state, "batch", "keepa", "/product", str(e))
@@ -578,6 +598,9 @@ class ProductCollectorAgent(Agent):
         for asin in all_asins:
             await _fetch_rf(asin)
             await _fetch_canopy(asin)
+
+        # Rainforest/Canopy 没有 token 预算限制，但它们也可能失败（在 _fetch_* 内部已捕获）
+        # 无论 Keepa 结果如何，Rainforest + Canopy 数据都是独立的，可以单独产出
 
         logger.info(
             f"[ProductCollector] Rainforest: {len([v for v in rf_products.values() if v])} products, "
@@ -627,6 +650,15 @@ class ProductCollectorAgent(Agent):
         state.set("collection_stats", collection_stats)
         state.set_meta("products_collected", len(products_list))
 
+        # 记录 Keepa 推迟的 ASIN，供重试调度
+        if deferred_keepa_asins:
+            state.set("deferred_keepa_asins", deferred_keepa_asins)
+            self._schedule_keepa_retry(state, deferred_keepa_asins, domain)
+            logger.info(
+                f"[ProductCollector] {len(deferred_keepa_asins)} ASINs 因 Keepa token 不足被推迟，"
+                f"已加入 pending_data_requests"
+            )
+
         logger.info(
             f"[ProductCollector] L1 done: {len(products_list)} products "
             f"(source={asin_source}, K={len(keepa_products)}, RF={len([v for v in rf_products.values() if v])}, "
@@ -654,8 +686,13 @@ class ProductCollectorAgent(Agent):
           - reviews_all: 拉取所有可用页（最多 3 页）
           - offers: 拉取卖家报价
           - best_sellers: 拉取类目榜单
+          - keepa_retry: 重新拉取 Keepa 数据（token 恢复后重试）
         """
-        if not rainforest:
+        keepa_retries: Dict[str, Dict] = {}  # ASIN → keepa data (for keepa_retry)
+
+        # 只有非 keepa_retry 的请求才需要 Rainforest
+        non_keepa_requests = [r for r in pending if r.get("field") != "keepa_retry"]
+        if non_keepa_requests and not rainforest:
             _set_error(state, "no_rainforest", "L2 补单需要 Rainforest API")
             return state
 
@@ -703,6 +740,23 @@ class ProductCollectorAgent(Agent):
                         state.set("best_sellers_data", best)
                         logger.info(f"[ProductCollector] L2: best_sellers {category_id} → {len(best)} items")
 
+                elif field == "keepa_retry":
+                    if not keepa:
+                        logger.warning(f"[ProductCollector] L2 keepa_retry: Keepa 不可用，跳过 {asin}")
+                        continue
+                    domain_for_retry = req.get("domain", domain)
+                    try:
+                        result = await keepa.async_query_products([asin], domain=domain_for_retry, stats=180)
+                        if result:
+                            keepa_retries[asin] = result[0]
+                            logger.info(f"[ProductCollector] L2 keepa_retry: {asin} 成功")
+                    except KeepaError as e:
+                        logger.warning(f"[ProductCollector] L2 keepa_retry {asin}: {e}")
+                        collection_errors.append({
+                            "asin": asin, "source": "keepa",
+                            "endpoint": "product", "error": str(e),
+                        })
+
             except RainforestError as e:
                 logger.warning(f"[ProductCollector] L2 {asin}/{field}: {e}")
                 collection_errors.append({
@@ -723,6 +777,27 @@ class ProductCollectorAgent(Agent):
                             seen_ids.add(r.get("id"))
                     p["reviews"] = existing
                     p["reviews_page_count"] = p.get("reviews_page_count", 0) + 1
+
+        # ── 合并 Keepa 重试数据到 product_map / collected_products ──
+        if keepa_retries:
+            products_list = list(state.get("collected_products") or [])
+            product_map = dict(state.get("product_map") or {})
+            for asin, k_data in keepa_retries.items():
+                product_map[asin] = _merge_product(
+                    k_data,
+                    product_map.get(asin, {}),  # 保留已有 RF/Canopy 数据
+                    None,
+                )
+                # 更新 products_list 中的对应项
+                for i, p in enumerate(products_list):
+                    if p.get("asin") == asin:
+                        products_list[i] = product_map[asin]
+                        break
+                else:
+                    products_list.append(product_map[asin])
+            state.set("product_map", product_map)
+            state.set("collected_products", products_list)
+            logger.info(f"[ProductCollector] L2 keepa_retry: 合并 {len(keepa_retries)} 个商品")
 
         # 清空已处理的请求
         state.set("pending_data_requests", [])
@@ -850,3 +925,24 @@ class ProductCollectorAgent(Agent):
         except Exception as e:
             logger.warning(f"[ProductCollector] Canopy init failed: {e}")
             return None
+
+    def _schedule_keepa_retry(self, state: State, deferred_asins: List[str], domain: str) -> None:
+        """将因 token 不足推迟的 ASIN 写入 pending_data_requests，供后续 L2 重试"""
+        existing = state.get("pending_data_requests") or []
+        new_requests = [
+            {
+                "asin": asin,
+                "field": "keepa_retry",
+                "domain": domain,
+                "reason": "因 Keepa token 不足被推迟",
+            }
+            for asin in deferred_asins
+            if not any(
+                r.get("asin") == asin and r.get("field") == "keepa_retry"
+                for r in existing
+            )
+        ]
+        if new_requests:
+            existing.extend(new_requests)
+            state.set("pending_data_requests", existing)
+            state.set_meta("deferred_asins_count", len(deferred_asins))

@@ -1,18 +1,19 @@
 """
-评论分析 Agent - Amazon 监控场景
+评论分析 Agent - Amazon 监控场景（LLM 驱动的新架构）
 
 职责：
-1. 读取 state.collected_products（Keepa 采集的真实商品数据）
-2. 基于评分、评论数、BSR 趋势、价格等数据做评论/评分洞察
-3. 生成情感分析摘要和客户需求推断
-4. 识别高口碑 / 低口碑 / 评论壁垒等特征
+1. LLM 拿到商品数据后自主决定评论分析路径
+2. 按需调用分析工具（基准计算、单品分析、情感摘要、需求推断）
+3. LLM 逐步思考、决策、输出完整的评论洞察报告
 
-数据源：state.collected_products（由 product_collector 通过 Keepa 采集）
+数据源：state.collected_products（由 product_collector 采集）或 amazon_products 本地表
 """
 
 import json as _json
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+
+from langchain_core.tools import tool
 
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
@@ -21,8 +22,30 @@ from backend.data.database import AsyncSessionLocal
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 
 
+_REVIEW_SYSTEM_PROMPT = """你是 Amazon 评论数据分析专家。你有以下分析工具可用：
+
+{tool_descriptions}
+
+你的分析维度必须覆盖：
+1. 品类基准值（平均评分、评论数中位数、平均价格、平均 BSR）
+2. 各商品的评论洞察（评分、评论壁垒、情感倾向、好评/差评推断、客户需求推断）
+3. 情感摘要汇总（整体情感分布、好评/差评关键词、评论壁垒分布、市场情感判断）
+4. 客户需求推断（从评论数据推断未被满足的客户需求）
+
+规则：
+- 每次调用一个工具，看结果，思考后决定下一步
+- 按需逐步分析，不要一次性调用所有工具
+- 当你认为信息足够覆盖以上维度时，输出最终分析报告
+- 最终报告必须是 JSON 格式，包含你分析过的所有维度
+
+最终报告输出到以下 state key：
+- review_insights: 各商品的详细评论洞察列表
+- sentiment_summary: 整体情感摘要
+- customer_needs: 客户需求列表"""
+
+
 class AmazonReviewAnalyzerAgent(Agent):
-    """评论分析 Agent — 基于 Keepa 真实数据做评分洞察和用户需求推断"""
+    """评论分析 Agent — LLM 驱动，按需调评论分析工具"""
 
     name = "review_analyzer"
     description = "Amazon 评论分析 Agent，基于 Keepa 数据提取评分洞察"
@@ -52,45 +75,41 @@ class AmazonReviewAnalyzerAgent(Agent):
                 state.add_event("review_analyzer_no_products")
                 return state
 
-            # 筛选有评论的商品，按评论数排序取 TOP N
-            products_with_reviews = sorted(
-                [p for p in products if (p.get("review_count") or 0) > 0],
-                key=lambda p: p.get("review_count", 0),
-                reverse=True,
-            )[:max_analyze]
-
-            if not products_with_reviews:
-                products_with_reviews = products[:max_analyze]
-
-            benchmark = self._compute_benchmark(products)
-
-            review_insights = [
-                self._analyze_single(p, benchmark)
-                for p in products_with_reviews
-            ]
-
-            sentiment_summary = self._build_sentiment_summary(review_insights)
-            customer_needs = self._infer_customer_needs(review_insights, benchmark)
-
-            # LLM 增强：基于代码计算的数据让 LLM 做深度语义分析
-            ai_insights = await self._llm_analyze(
-                benchmark, review_insights, sentiment_summary, customer_needs
+            # ── LLM 驱动的分析循环 ──
+            tools = self._build_analysis_tools(products, max_analyze)
+            tool_descriptions = "\n".join(
+                f"- {t.name}: {t.description}" for t in tools
             )
-            if ai_insights:
-                sentiment_summary["ai_insights"] = ai_insights
-                logger.info("[ReviewAnalyzer] LLM 深度洞察已注入")
-
-            state.set("review_insights", review_insights)
-            state.set("sentiment_summary", sentiment_summary)
-            state.set("customer_needs", customer_needs)
-            state.set_meta("reviews_analyzed", len(review_insights))
-            state.set_meta("llm_enhanced", bool(ai_insights))
-
-            logger.info(
-                f"[ReviewAnalyzer] Analyzed {len(review_insights)} products, "
-                f"avg sentiment: {sentiment_summary.get('avg_positive_pct', 0):.1f}% positive"
+            system_prompt = _REVIEW_SYSTEM_PROMPT.format(
+                tool_descriptions=tool_descriptions,
             )
-            state.add_event(f"review_analyzer_success: {len(review_insights)} analyzed")
+
+            analysis_question = (
+                f"请分析以下 {len(products)} 个商品的评论数据。\n"
+                f"我将分析前 {max_analyze} 个有评论的商品。\n"
+                f"请逐步分析，每次调用工具后思考结果，再决定下一步。"
+            )
+
+            raw_output = await self._run_analysis_loop(
+                products=products,
+                system_prompt=system_prompt,
+                analysis_question=analysis_question,
+                max_turns=15,
+            )
+
+            result = self._parse_json_output(raw_output)
+            result["llm_driven"] = True
+            logger.info("[ReviewAnalyzer] LLM 驱动评论分析完成")
+
+            # 保持 state key 向后兼容
+            state.set("review_insights", result.get("review_insights", []))
+            state.set("sentiment_summary", result.get("sentiment_summary", {}))
+            state.set("customer_needs", result.get("customer_needs", []))
+            state.set_meta("reviews_analyzed", len(result.get("review_insights", [])))
+            state.set_meta("llm_driven", True)
+
+            logger.info(f"[ReviewAnalyzer] LLM 分析完成")
+            state.add_event("review_analyzer_success")
 
         except Exception as e:
             logger.error(f"[ReviewAnalyzer] Error: {e}")
@@ -102,80 +121,46 @@ class AmazonReviewAnalyzerAgent(Agent):
 
         return state
 
-    # ── LLM 深度洞察 ──
+    # ════════════════════════════════════════════════════════════════
+    # 工具定义
+    # ════════════════════════════════════════════════════════════════
 
-    async def _llm_analyze(
-        self,
-        benchmark: Dict[str, Any],
-        review_insights: List[Dict],
-        sentiment_summary: Dict[str, Any],
-        customer_needs: List[str],
-    ) -> Dict[str, Any]:
-        """让 LLM 基于代码计算的数据做深度分析，失败返回空 dict"""
-        top_rated = sorted(
-            [i for i in review_insights if i.get("rating")],
-            key=lambda i: i["rating"], reverse=True,
-        )[:5]
-        low_rated = sorted(
-            [i for i in review_insights if i.get("rating")],
-            key=lambda i: i["rating"],
-        )[:5]
+    def _build_analysis_tools(self, products: List[Dict], max_analyze: int = 20) -> List:
+        """将评论分析维度暴露为 LLM 可调用的工具"""
+        # 筛选有评论的商品
+        products_with_reviews = sorted(
+            [p for p in products if (p.get("review_count") or 0) > 0],
+            key=lambda p: p.get("review_count", 0),
+            reverse=True,
+        )[:max_analyze]
+        if not products_with_reviews:
+            products_with_reviews = products[:max_analyze]
 
-        def _brief(item: Dict) -> Dict:
-            return {
-                "asin": item.get("asin"),
-                "title": item.get("title", "")[:60],
-                "rating": item.get("rating"),
-                "review_count": item.get("review_count"),
-                "review_barrier": item.get("review_barrier"),
-                "praise": item.get("common_praise", [])[:3],
-                "complaints": item.get("common_complaints", [])[:3],
-            }
+        benchmark = self._compute_benchmark(products)
 
-        prompt = _json.dumps({
-            "benchmark": {
-                "avg_rating": benchmark.get("avg_rating"),
-                "avg_price": benchmark.get("avg_price"),
-                "avg_review_count": benchmark.get("avg_review_count"),
-                "total_products": benchmark.get("total_products"),
-            },
-            "sentiment": {
-                "market_sentiment": sentiment_summary.get("market_sentiment"),
-                "avg_positive_pct": sentiment_summary.get("avg_positive_pct"),
-                "top_praise": sentiment_summary.get("top_praise_keywords", [])[:5],
-                "top_complaints": sentiment_summary.get("top_complaint_keywords", [])[:5],
-                "review_barrier_dist": sentiment_summary.get("review_barrier_distribution"),
-            },
-            "top_rated_products": [_brief(i) for i in top_rated],
-            "low_rated_products": [_brief(i) for i in low_rated],
-            "inferred_customer_needs": customer_needs[:5],
-        }, ensure_ascii=False, indent=2)
+        @tool
+        def compute_benchmark() -> dict:
+            """计算品类基准值：平均评分、评论数中位数、平均价格、平均 BSR、商品总数"""
+            return benchmark
 
-        system = (
-            "You are an Amazon review data analyst. "
-            "Based on the product rating data below, provide deep insights in Chinese. "
-            "Return JSON with these fields:\n"
-            "- pain_points: list of user pain points that existing products ignore\n"
-            "- differentiation_advice: list of actionable suggestions for new sellers\n"
-            "- review_barrier_assessment: string, whether the review barrier is a real entry obstacle\n"
-            "- market_quality_verdict: string, one-sentence market quality judgment\n"
-            "Return valid JSON only, no markdown."
-        )
+        @tool
+        def analyze_single_reviews() -> list:
+            """分析每个商品的评论洞察：评分、评论壁垒、情感倾向、好评/差评推断、客户需求"""
+            return [self._analyze_single(p, benchmark) for p in products_with_reviews]
 
-        raw = await self.llm_invoke(prompt, system=system)
-        if not raw:
-            return {}
+        @tool
+        def build_sentiment_summary() -> dict:
+            """构建情感摘要：整体情感分布、好评/差评关键词、评论壁垒分布、市场情感判断"""
+            insights = [self._analyze_single(p, benchmark) for p in products_with_reviews]
+            return self._build_sentiment_summary(insights)
 
-        try:
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-            result = _json.loads(cleaned)
-            if isinstance(result, dict):
-                return result
-        except (_json.JSONDecodeError, ValueError):
-            logger.warning("[ReviewAnalyzer] LLM returned invalid JSON, skipping")
-        return {}
+        @tool
+        def infer_customer_needs() -> list:
+            """推断客户需求：从评论数据推测未被满足的客户需求"""
+            insights = [self._analyze_single(p, benchmark) for p in products_with_reviews]
+            return self._infer_customer_needs(insights, benchmark)
+
+        return [compute_benchmark, analyze_single_reviews, build_sentiment_summary, infer_customer_needs]
 
     # ── 基准值 ──
 

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import asyncio
+import json
 import logging
 from pydantic import BaseModel, Field
 from backend.common.core.state import State
@@ -143,3 +144,120 @@ class Agent(ABC):
         # 示例调用
         response = await ollama_client.generate(prompt, model=model)
         return response
+
+    # ════════════════════════════════════════════════════════════════
+    # LLM 驱动的分析循环框架（Phase 6 Part B 大手术）
+    # Agent 从固定函数管道 → LLM 决定分析路径
+    # ════════════════════════════════════════════════════════════════
+
+    def _tool_fn(self, fn, products: List[Dict]):
+        """
+        将分析函数包装为可调用的闭包。
+        子类在 _build_analysis_tools 中调用此方法。
+        """
+        return lambda: fn(products)
+
+    async def _execute_tool_call(
+        self, tool_call: Dict, tools_map: Dict[str, Any],
+    ) -> Tuple[str, Any]:
+        """执行单个工具调用，返回 (tool_name, result)"""
+        name = tool_call.get("name", "")
+        raw_args = tool_call.get("args", {})
+        tool = tools_map.get(name)
+        if not tool:
+            logger.warning(f"[{self.name}] 未知工具: {name}")
+            return name, {"error": f"未知工具: {name}"}
+        try:
+            result = await tool.ainvoke(raw_args)
+            return name, result
+        except Exception as e:
+            logger.warning(f"[{self.name}] 工具 {name} 执行失败: {e}")
+            return name, {"error": str(e)}
+
+    async def _run_analysis_loop(
+        self,
+        products: List[Dict],
+        system_prompt: str,
+        analysis_question: str = "",
+        max_turns: int = 15,
+    ) -> str:
+        """
+        通用的 LLM 驱动分析循环。
+
+        流程：
+        1. 子类通过 _build_analysis_tools() 提供工具
+        2. 绑定工具到 LLM
+        3. 循环：LLM 思考 → 调工具 → 看结果 → 直到 LLM 主动结束
+        4. 返回 LLM 最终输出（JSON 字符串）
+
+        子类无需重写此方法，只需实现 _build_analysis_tools()。
+        """
+        tools = self._build_analysis_tools(products)
+        tools_map = {t.name: t for t in tools}
+
+        from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+
+        llm_with_tools = self.llm.bind_tools(tools)
+
+        messages = [SystemMessage(content=system_prompt)]
+        messages.append(HumanMessage(
+            content=analysis_question or (
+                f"请分析以下 {len(products)} 个商品的市场情况。\n"
+                f"你有 {len(tools)} 个分析工具可用，按需调用。\n"
+                f"商品摘要：{len(products)} 个商品，"
+                f"包含 asin/title/brand/price/rating/bsr/review_count/monthly_sold 等字段。\n\n"
+                f"请逐步分析，每次调用工具后思考结果，再决定下一步。"
+                f"当信息足够时，请输出完整分析报告（JSON 格式）。"
+            )
+        ))
+
+        for turn in range(max_turns):
+            try:
+                response = await llm_with_tools.ainvoke(messages)
+            except Exception as e:
+                logger.error(f"[{self.name}] LLM 调用失败 (turn {turn}): {e}")
+                break
+
+            messages.append(response)
+
+            if not response.tool_calls:
+                # LLM 主动结束 → 这就是最终输出
+                logger.info(f"[{self.name}] LLM 在 {turn+1} 轮后主动结束分析")
+                return response.content
+
+            for tc in response.tool_calls:
+                name, result = await self._execute_tool_call(tc, tools_map)
+                result_str = json.dumps(result, ensure_ascii=False, default=str)
+                messages.append(ToolMessage(
+                    content=result_str,
+                    tool_call_id=tc.get("id", ""),
+                ))
+
+        # 超时安全阀：最后一次 assistant 输出（如果有）或空
+        logger.warning(f"[{self.name}] 分析循环达到最大轮次 {max_turns}，强制结束")
+        for msg in reversed(messages):
+            if hasattr(msg, "content") and msg.content and isinstance(msg, type(response)):
+                return msg.content
+        return ""
+
+    def _build_analysis_tools(self, products: List[Dict]) -> List:
+        """
+        子类重写此方法，将 _analyze_* 方法转为 @tool 列表。
+        默认返回空列表（Agent 不使用工具）。
+        """
+        return []
+
+    def _parse_json_output(self, content: str) -> Dict[str, Any]:
+        """从 LLM 输出中提取 JSON，兼容 ```json ... ``` 包裹"""
+        if not content:
+            return {}
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            result = json.loads(cleaned)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"[{self.name}] LLM 输出不是合法 JSON，原样返回")
+        return {"llm_raw_output": content}

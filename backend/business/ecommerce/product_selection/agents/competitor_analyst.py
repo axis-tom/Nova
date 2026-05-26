@@ -1,15 +1,12 @@
 """
-竞品分析 Agent - 电商选品分析场景
+竞品分析 Agent - 电商选品分析场景（LLM 驱动的新架构）
 
 职责：
-1. 读取 state.collected_products（Keepa + Rainforest + Canopy 三源数据）
-2. 按品牌聚合：市场份额、价格、BSR、评分等竞争力指标
-3. 产品级 head-to-head 对比：头部 3 品深度对比
-4. 定价策略识别：从 price_history 判断涨价/降价/稳定模式
-5. listing 质量对比：五点/图片/描述/A+ 完整度
-6. 分层竞争格局 + 差异化机会识别
+1. LLM 拿到商品数据后自主决定竞品分析路径
+2. 按需调用分析工具（品牌聚合、head-to-head、listing 质量、定价策略等）
+3. LLM 逐步思考、决策、输出完整的竞品分析报告
 
-数据源：state.collected_products（由 product_collector 三源采集）
+数据源：state.collected_products（由 product_collector 三源采集）或 amazon_products 本地表
 """
 
 import json as _json
@@ -17,14 +14,41 @@ from typing import Any, Dict, List
 from datetime import datetime
 from statistics import median
 
+from langchain_core.tools import tool
+
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
 from backend.utils.logger import logger
 from backend.data.database import AsyncSessionLocal
 
 
+_COMPETITOR_SYSTEM_PROMPT = """你是 Amazon 竞品分析专家。你有以下分析工具可用：
+
+{tool_descriptions}
+
+你的分析维度必须覆盖：
+1. 品牌格局与市场份额（品牌数量、各品牌份额、Top3 集中度、市场集中度判定）
+2. 头部竞品深度对比（BSR 最好的 3 个产品的逐项对比：价格/评分/评论/定价策略/功能/变体）
+3. Listing 质量对比（五点/图片/A+/描述完整度、各商品评分及分布）
+4. 定价策略分析（各竞品的价格模式：稳定/涨价/降价/波动）
+5. 评分对比（各品牌的平均评分、总评论数）
+6. 价格区间对比（各品牌的价格区间和价格跨度）
+7. 竞争格局分层（第一/二/三梯队、市场领导者、进入壁垒）
+8. 差异化机会（价格带空白、上升中的小品牌、评分低洼竞品）
+
+规则：
+- 每次调用一个工具，看结果，思考后决定下一步
+- 不要一次性调用所有工具，按需逐步分析
+- 当你认为信息足够覆盖以上维度时，输出最终分析报告
+- 最终报告必须是 JSON 格式，包含你分析过的所有维度
+- 在报告中说明关键洞察和战略建议
+
+最终 JSON 格式示例：
+{{"market_share_distribution": [...], "head_to_head": {{...}}, "listing_quality": {{...}}, "brand_landscape": {{...}}, "differentiation_opportunities": [...], "overall_strategy": "..."}}"""
+
+
 class CompetitorAnalystAgent(Agent):
-    """竞品分析 Agent — 品牌聚合 + 产品级 head-to-head 对比"""
+    """竞品分析 Agent — LLM 驱动，按需调竞品分析工具"""
 
     name = "competitor_analyst"
     description = "电商竞品分析 Agent，基于 Keepa + Canopy/Rainforest 数据做品牌竞争和产品级对比分析"
@@ -54,18 +78,38 @@ class CompetitorAnalystAgent(Agent):
                 state.add_event("competitor_analyst_no_products")
                 return state
 
-            result = self._analyze_competitors(products)
+            # ── LLM 驱动的分析循环 ──
+            tools = self._build_analysis_tools(products)
+            tool_descriptions = "\n".join(
+                f"- {t.name}: {t.description}" for t in tools
+            )
+            system_prompt = _COMPETITOR_SYSTEM_PROMPT.format(
+                tool_descriptions=tool_descriptions,
+            )
 
-            # LLM 增强
-            ai_result = await self._llm_analyze_competitors(result)
-            if ai_result:
-                result["ai_insights"] = ai_result
-                logger.info("[CompetitorAnalyst] LLM 竞争策略已注入")
+            analysis_question = (
+                f"请分析以下 {len(products)} 个商品的竞品格局。\n"
+                f"商品数量：{len(products)}，跨越多个品牌。\n"
+                f"请逐步分析，每次调用工具后思考结果，再决定下一步。"
+            )
+
+            raw_output = await self._run_analysis_loop(
+                products=products,
+                system_prompt=system_prompt,
+                analysis_question=analysis_question,
+                max_turns=15,
+            )
+
+            result = self._parse_json_output(raw_output)
+            result["analysis_type"] = "competitor_benchmark"
+            result["generated_at"] = datetime.now().isoformat()
+            result["llm_driven"] = True
+            logger.info("[CompetitorAnalyst] LLM 驱动竞品分析完成")
 
             state.set("result", result)
             state.set("competitor_analysis_result", result)
             state.set_meta("analysis_completed", True)
-            state.set_meta("llm_enhanced", bool(result.get("ai_insights")))
+            state.set_meta("llm_driven", True)
             state.add_event("competitor_analyst_success")
 
         except Exception as e:
@@ -76,58 +120,90 @@ class CompetitorAnalystAgent(Agent):
 
         return state
 
-    # ── LLM 增强分析 ──
+    # ════════════════════════════════════════════════════════════════
+    # 工具定义
+    # ════════════════════════════════════════════════════════════════
 
-    async def _llm_analyze_competitors(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        summary = result.get("summary", {})
-        head_to_head = result.get("head_to_head", {})
-        landscape = result.get("competitive_landscape", {})
-        differentiation = result.get("differentiation_opportunities", [])
-        share = result.get("market_share_distribution", [])
+    def _build_analysis_tools(self, products: List[Dict]) -> List:
+        """将竞品分析维度暴露为 LLM 可调用的工具"""
 
-        prompt = _json.dumps({
-            "summary": summary,
-            "top_3_products": [
-                {"title": p.get("title", "")[:60], "brand": p.get("brand"),
-                 "price": p.get("price"), "price_pattern": p.get("price_pattern"),
-                 "monthly_sold": p.get("monthly_sold")}
-                for p in (head_to_head.get("top_3_products") or [])[:3]
-            ],
-            "competitive_landscape": landscape,
-            "top_brands": [
-                {"brand": b.get("brand"), "market_share": b.get("market_share_percent"),
-                 "avg_price": b.get("avg_price"), "avg_bsr": b.get("avg_bsr")}
-                for b in share[:5]
-            ],
-            "differentiation_opportunities": differentiation[:5],
-        }, ensure_ascii=False, indent=2)
+        @tool
+        def analyze_brand_market_share() -> dict:
+            """分析品牌市场份额：各品牌的商品数/总销量/平均价格/平均BSR/平均评分/BSR趋势"""
+            brand_data = self._aggregate_brands(products)
+            total_sales = sum(b["total_sales"] for b in brand_data.values())
+            brand_list = []
+            for brand, b in brand_data.items():
+                share = b["total_sales"] / total_sales if total_sales > 0 else 0
+                brand_list.append({
+                    "brand": brand,
+                    "market_share_percent": round(share * 100, 1),
+                    "product_count": b["count"],
+                    "total_monthly_sales": b["total_sales"],
+                    "avg_price": round(b["_price_sum"] / b["count"], 2) if b["count"] else 0,
+                    "avg_bsr": round(b["_bsr_sum"] / b["_bsr_count"]) if b["_bsr_count"] else None,
+                    "avg_rating": round(b["_rating_sum"] / b["_rating_count"], 2) if b["_rating_count"] else None,
+                    "total_reviews": b["total_reviews"],
+                    "bsr_trends": b["bsr_trends"],
+                })
+            brand_list.sort(key=lambda x: x["total_monthly_sales"], reverse=True)
+            top3_share = sum(b["market_share_percent"] for b in brand_list[:3])
+            return {
+                "total_brands": len(brand_list),
+                "total_products": len(products),
+                "top_3_market_share_pct": round(top3_share, 1),
+                "brands": brand_list,
+            }
 
-        system = (
-            "You are an Amazon competitive strategy expert. "
-            "Based on the competitor data below, provide actionable strategy in Chinese.\n"
-            "Return JSON with these fields:\n"
-            "- competitive_position: string, 对当前竞争格局的判断\n"
-            "- recommended_positioning: string, 推荐的市场定位\n"
-            "- attack_strategy: list of strings, 具体的竞争攻击策略（基于头部竞品弱点）\n"
-            "- brands_to_watch: list of strings, 需要重点关注的品牌及原因\n"
-            "- listing_tips: list of strings, 基于竞品 listing 分析得出的优化建议\n"
-            "Return valid JSON only, no markdown."
-        )
+        @tool
+        def analyze_head_to_head() -> dict:
+            """头部竞品深度对比：BSR 最好的 3 个产品的逐项对比（价格/评分/评论/定价策略/规格/图片/变体）"""
+            return self._analyze_head_to_head(products)
 
-        raw = await self.llm_invoke(prompt, system=system)
-        if not raw:
-            return {}
+        @tool
+        def analyze_listing_quality() -> dict:
+            """对比各商品的 listing 完整度：五点/图片/规格/描述/A+ 评分，平均分和分布"""
+            return self._compare_listing_quality(products)
 
-        try:
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-            result = _json.loads(cleaned)
-            if isinstance(result, dict):
-                return result
-        except (_json.JSONDecodeError, ValueError):
-            logger.warning("[CompetitorAnalyst] LLM returned invalid JSON, skipping")
-        return {}
+        @tool
+        def analyze_competitive_landscape() -> dict:
+            """分析竞争格局分层：第一/二/三梯队、市场领导者、进入壁垒、推荐策略"""
+            brand_data = self._aggregate_brands(products)
+            total_sales = sum(b["total_sales"] for b in brand_data.values())
+            brand_list = []
+            for brand, b in brand_data.items():
+                share = b["total_sales"] / total_sales if total_sales > 0 else 0
+                brand_list.append({
+                    "brand": brand, "market_share": share, "product_count": b["count"],
+                    "avg_rating": round(b["_rating_sum"] / b["_rating_count"], 2) if b["_rating_count"] else None,
+                    "total_reviews": b["total_reviews"], "bsr_trends": b["bsr_trends"],
+                })
+            brand_list.sort(key=lambda x: x["market_share"], reverse=True)
+            return self._analyze_landscape(brand_list)
+
+        @tool
+        def analyze_differentiation_opportunities() -> dict:
+            """识别差异化机会：价格带空白、上升中的小品牌、评分低洼竞品"""
+            brand_data = self._aggregate_brands(products)
+            total_sales = sum(b["total_sales"] for b in brand_data.values())
+            brand_list = []
+            for brand, b in brand_data.items():
+                share = b["total_sales"] / total_sales if total_sales > 0 else 0
+                brand_list.append({
+                    "brand": brand, "market_share": share, "product_count": b["count"],
+                    "avg_price": round(b["_price_sum"] / b["count"], 2) if b["count"] else 0,
+                    "avg_rating": round(b["_rating_sum"] / b["_rating_count"], 2) if b["_rating_count"] else None,
+                    "total_reviews": b["total_reviews"], "bsr_trends": b["bsr_trends"],
+                    "min_price": b["min_price"], "max_price": b["max_price"],
+                })
+            brand_list.sort(key=lambda x: x["market_share"], reverse=True)
+            return self._identify_differentiation(brand_list, products)
+
+        return [
+            analyze_brand_market_share, analyze_head_to_head,
+            analyze_listing_quality, analyze_competitive_landscape,
+            analyze_differentiation_opportunities,
+        ]
 
     # ── 定价策略识别 ──────────────────────────────────────────────────
 
@@ -286,102 +362,7 @@ class CompetitorAnalystAgent(Agent):
             },
         }
 
-    # ── 竞品分析主函数 ────────────────────────────────────────────────
-
-    def _analyze_competitors(self, products: List[Dict]) -> Dict[str, Any]:
-        # 品牌聚合
-        brand_data = self._aggregate_brands(products)
-        total_sales = sum(b["total_sales"] for b in brand_data.values())
-
-        # 市场份额排序
-        brand_list = []
-        for brand, b in brand_data.items():
-            share = b["total_sales"] / total_sales if total_sales > 0 else 0
-            brand_list.append({
-                "brand": brand,
-                "market_share": round(share, 4),
-                "product_count": b["count"],
-                "total_monthly_sales": b["total_sales"],
-                "avg_price": round(b["_price_sum"] / b["count"], 2) if b["count"] else 0,
-                "min_price": b["min_price"],
-                "max_price": b["max_price"],
-                "avg_bsr": round(b["_bsr_sum"] / b["_bsr_count"]) if b["_bsr_count"] else None,
-                "best_bsr": b["best_bsr"],
-                "best_bsr_asin": b["best_bsr_asin"],
-                "avg_rating": round(b["_rating_sum"] / b["_rating_count"], 2) if b["_rating_count"] else None,
-                "total_reviews": b["total_reviews"],
-                "avg_seller_count": round(b["_seller_sum"] / b["count"]) if b["count"] else 0,
-                "bsr_trends": b["bsr_trends"],
-            })
-        brand_list.sort(key=lambda x: x["total_monthly_sales"], reverse=True)
-
-        # 竞争格局分层
-        landscape = self._analyze_landscape(brand_list)
-
-        # head-to-head 对比（新增）
-        head_to_head = self._analyze_head_to_head(products)
-
-        # listing 质量对比（新增）
-        listing_quality = self._compare_listing_quality(products)
-
-        # 差异化机会
-        differentiation = self._identify_differentiation(brand_list, products)
-
-        # 评分对比
-        rating_comparison = sorted(
-            [{"brand": b["brand"], "avg_rating": b["avg_rating"], "total_reviews": b["total_reviews"]}
-             for b in brand_list if b["avg_rating"] is not None],
-            key=lambda x: x["avg_rating"], reverse=True,
-        )
-
-        # 价格区间对比
-        price_comparison = [
-            {
-                "brand": b["brand"],
-                "min_price": b["min_price"],
-                "max_price": b["max_price"],
-                "avg_price": b["avg_price"],
-                "price_span": round(b["max_price"] - b["min_price"], 2) if b["max_price"] and b["min_price"] else 0,
-            }
-            for b in brand_list
-        ]
-
-        # 集中度
-        top3_share = sum(b["market_share"] for b in brand_list[:3])
-        leader_share = brand_list[0]["market_share"] if brand_list else 0
-
-        return {
-            "analysis_type": "competitor_benchmark",
-            "summary": {
-                "total_brands_analyzed": len(brand_list),
-                "total_products": len(products),
-                "total_monthly_sales": total_sales,
-                "market_concentration": "高" if leader_share > 0.3 else ("中" if top3_share > 0.5 else "低"),
-                "top_3_market_share": round(top3_share, 4),
-            },
-            "market_share_distribution": [
-                {
-                    "rank": i + 1,
-                    "brand": b["brand"],
-                    "market_share": b["market_share"],
-                    "market_share_percent": f"{b['market_share']*100:.1f}%",
-                    "product_count": b["product_count"],
-                    "total_monthly_sales": b["total_monthly_sales"],
-                    "avg_price": b["avg_price"],
-                    "avg_bsr": b["avg_bsr"],
-                }
-                for i, b in enumerate(brand_list)
-            ],
-            "head_to_head": head_to_head,
-            "listing_quality": listing_quality,
-            "price_comparison": price_comparison,
-            "rating_comparison": rating_comparison,
-            "differentiation_opportunities": differentiation,
-            "competitive_landscape": landscape,
-            "generated_at": datetime.now().isoformat(),
-        }
-
-    # ── 品牌聚合 ──────────────────────────────────────────────────────
+    # ── 从 amazon_products 本地表加载 ──
 
     def _aggregate_brands(self, products: List[Dict]) -> Dict[str, Dict]:
         brands: Dict[str, Dict] = {}

@@ -6,9 +6,8 @@ from contextlib import asynccontextmanager
 import logging
 
 from backend.foundation.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.foundation.communication.api.v1 import models, tree, amazon_monitor, agent_chat, analysis_tree_api, market_analysis
+from backend.foundation.communication.api.v1 import models, tree, amazon_monitor, agent_chat, analysis_tree_api
 from backend.foundation.communication.api.v1 import router as api_router
-from backend.foundation.communication.api.v1 import competitor_analysis, selection_analysis
 from backend.config.config import settings
 from backend.foundation.communication.message_bus import message_bus
 from backend.foundation.communication.audit import audit_logger                      # ✅ 已迁移
@@ -182,15 +181,6 @@ app.include_router(agent_chat.router, prefix=settings.API_V1_PREFIX, tags=["Agen
 
 # 注册分析树 API 路由 - 选品分析树查询/回溯/追加维度
 app.include_router(analysis_tree_api.router, prefix=settings.API_V1_PREFIX, tags=["分析树"])
-
-# 注册市场分析 API 路由 - 对标卖家精灵市场类 API
-app.include_router(market_analysis.router, prefix=settings.API_V1_PREFIX, tags=["Amazon 市场分析"])
-
-# 注册竞品分析 API 路由 - 对标卖家精灵竞品类 API
-app.include_router(competitor_analysis.router, prefix=settings.API_V1_PREFIX, tags=["Amazon 竞品分析"])
-
-# 注册选品分析 API 路由 - 对标卖家精灵选品类 API
-app.include_router(selection_analysis.router, prefix=settings.API_V1_PREFIX, tags=["Amazon 选品分析"])
 
 
 # 健康检查端点
