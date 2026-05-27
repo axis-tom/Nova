@@ -7,11 +7,11 @@ import os
 from typing import Optional
 from functools import lru_cache
 
-from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient
-from backend.foundation.perception.connectors.amazon.product_search import AmazonProductSearch
-from backend.foundation.perception.connectors.amazon.product_detail import AmazonProductDetail
-from backend.foundation.perception.connectors.amazon.review_analyzer import AmazonReviewAnalyzer
-from backend.foundation.perception.connectors.amazon.price_tracker import AmazonPriceTracker
+from backend.connectors.amazon.client import AmazonPAAPIClient
+from backend.connectors.amazon.product_search import AmazonProductSearch
+from backend.connectors.amazon.product_detail import AmazonProductDetail
+from backend.connectors.amazon.review_analyzer import AmazonReviewAnalyzer
+from backend.connectors.amazon.price_tracker import AmazonPriceTracker
 from backend.utils.logger import logger
 
 

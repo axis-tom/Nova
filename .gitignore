@@ -34,3 +34,5 @@ docs/mvp_plan.md
 # 本地测试脚本与数据
 test/amazon_products.csv
 test/collect_amazon_products.py
+# Redis AOF persistence files
+backend/infrastructure/data/redis/

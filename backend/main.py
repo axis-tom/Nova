@@ -5,13 +5,13 @@ import uvicorn
 from contextlib import asynccontextmanager
 import logging
 
-from backend.foundation.communication.api.v1 import auth, data_sources, briefings, logs, conversation, settings, market, scheduler, graph, trace
-from backend.foundation.communication.api.v1 import models, tree, amazon_monitor, agent_chat, analysis_tree_api
-from backend.foundation.communication.api.v1 import router as api_router
+from backend.api.routes import auth, data_sources, briefings, logs, conversation, settings, market, scheduler
+from backend.api.routes import models, amazon_monitor, agent_chat, analysis_tree_api
+from backend.api.routes import router as api_router
 from backend.config.config import settings
-from backend.foundation.communication.message_bus import message_bus
-from backend.foundation.communication.audit import audit_logger                      # ✅ 已迁移
-from backend.foundation.perception.connectors.crawler_pool import crawler_pool       # ✅ 已迁移
+from backend.infrastructure.message_bus import message_bus
+from backend.infrastructure.audit_logger import audit_logger
+from backend.connectors.crawler_pool import crawler_pool
 from backend.utils.logger import logger                                   # ✅ 保留原位
 
 # 新增导入，用于建表
@@ -20,11 +20,11 @@ import backend.data.models.db  # 确保所有模型被加载
 import backend.data.models.amazon_product  # Amazon 产品 ETL 模型
 
 # 新增导入，用于 ToolRegistry
-from backend.foundation.action.tools.registry import ToolRegistry                    # ✅ 已迁移
-from backend.foundation.action.tools.mock_tool import MockTool                       # ✅ 已迁移
+from backend.core.tools.registry import ToolRegistry
+from backend.core.tools.mock_tool import MockTool
 
 # 新增导入，用于调度管理器
-from backend.foundation.communication.scheduler_manager import scheduler_manager      # ✅ 已迁移
+from backend.infrastructure.scheduler_manager import scheduler_manager      # ✅ 已迁移
 
 # 生命周期管理
 @asynccontextmanager
@@ -167,18 +167,6 @@ app.include_router(conversation.router, prefix=settings.API_V1_PREFIX)
 app.include_router(market.router, prefix=settings.API_V1_PREFIX)
 app.include_router(scheduler.router, prefix=settings.API_V1_PREFIX)
 
-# 注册Graph API路由 - 统一AI行为入口
-app.include_router(graph.router, prefix=f"{settings.API_V1_PREFIX}/graph", tags=["Graph"])
-
-# 注册Trace API路由 - 执行追踪和调试
-app.include_router(trace.router, prefix=f"{settings.API_V1_PREFIX}/trace", tags=["Trace"])
-
-# 注册Amazon Monitor API路由 - 亚马逊市场监控
-app.include_router(amazon_monitor.router, prefix=f"{settings.API_V1_PREFIX}/amazon-monitor", tags=["Amazon 市场监控"])
-
-# 注册Agent Chat API路由 - 智能体对话（SSE流式）
-app.include_router(agent_chat.router, prefix=settings.API_V1_PREFIX, tags=["Agent 对话"])
-
 # 注册分析树 API 路由 - 选品分析树查询/回溯/追加维度
 app.include_router(analysis_tree_api.router, prefix=settings.API_V1_PREFIX, tags=["分析树"])
 
@@ -224,6 +212,6 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.DEBUG,
         reload_dirs=["/home/nova/projects/Nova/backend"],
-        reload_excludes=["/home/nova/projects/Nova/backend/infrastructure/data"],
+        reload_excludes=[settings.DATA_DIR],
         log_level=settings.LOG_LEVEL.lower()
     )

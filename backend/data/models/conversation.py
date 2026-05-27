@@ -1,68 +1,81 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List, Literal
-from enum import Enum
+from typing import Optional
 
-class MessageRole(str, Enum):
-    """消息角色"""
-    USER = "user"
-    ASSISTANT = "assistant"
-    SYSTEM = "system"
-
-class MessageBase(BaseModel):
-    """消息基础信息"""
-    role: MessageRole
-    content: str = Field(..., min_length=1)
-
-class MessageCreate(MessageBase):
-    """创建消息（用户输入）"""
-    pass
-
-class MessageInDB(MessageBase):
-    """数据库中的消息模型"""
-    id: int
-    user_id: int
-    conversation_id: str
-    timestamp: datetime
-
-class MessageOut(MessageBase):
-    """返回给前端的消息模型"""
-    id: int
-    conversation_id: str
-    timestamp: datetime
 
 class ConversationCreate(BaseModel):
-    """创建会话"""
-    message: str
+    """创建对话请求"""
+    project_id: int
+    name: str
+    scene_id: Optional[str] = None
+    model_id: Optional[str] = None
+
+
+class ConversationUpdate(BaseModel):
+    """更新对话"""
+    name: Optional[str] = None
+    scene_id: Optional[str] = None
+    model_id: Optional[str] = None
+
 
 class ConversationResponse(BaseModel):
     """会话响应"""
     reply: str
     conversation_id: str
 
-class ConversationHistoryResponse(BaseModel):
-    """会话历史响应"""
-    messages: List[MessageOut]
-    conversation_id: str
+
+class MessageOut(BaseModel):
+    """返回给前端的消息模型"""
+    id: int
+    conversation_id: int
     user_id: int
+    role: str
+    content: str
+    timestamp: Optional[datetime] = None
+    scene_id: Optional[str] = None
+    function: Optional[str] = None
+    model_id: Optional[str] = None
 
-class ConversationUpdate(BaseModel):
-    """更新会话的请求模型（例如修改标题）"""
-    title: Optional[str] = Field(None, description="会话标题")
-    # 可添加其他可更新字段
+    class Config:
+        from_attributes = True
 
-class ConversationOut(BaseModel):
-    """会话的响应模型（用于列表或详情）"""
-    id: str  # 会话ID（字符串或整数）
-    type: str = "conversation"
-    user_id: int
-    title: Optional[str] = None
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    # 可选：包含最后一条消息等
 
-class ConversationInDB(BaseModel):
+class MessageInDB(BaseModel):
+    """数据库中的消息模型"""
     id: int
     user_id: int
-    created_at: datetime
-    updated_at: datetime
+    conversation_id: int
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ConversationOut(BaseModel):
+    """返回给前端的对话模型"""
+    id: int
+    user_id: int
+    project_id: Optional[int] = None
+    name: str
+    scene_id: Optional[str] = None
+    model_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ConversationInDB(BaseModel):
+    """数据库中的对话模型"""
+    id: int
+    user_id: int
+    project_id: Optional[int] = None
+    name: str
+    scene_id: Optional[str] = None
+    model_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

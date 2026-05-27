@@ -378,7 +378,7 @@ class KeepaConnector:
         asins = asins[:100]
 
         # ── 缓存查询 ──
-        from nova_agent_system.keepa_cache import get_cache
+        from backend.core.cache.keepa import get_cache
         cache = get_cache()
         cached: Dict[str, Dict] = cache.get_many(asins, domain) if cache else {}
         uncached = [a for a in asins if a not in cached]

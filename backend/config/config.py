@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     # 显式设为 1/true/yes 才会在启动时拉起后台定时任务
     ENABLE_AMAZON_SCHEDULER: bool = False
 
+    # 运行时数据目录（SQLite / 缓存等）
+    DATA_DIR: str = str(Path(__file__).resolve().parent.parent / "infrastructure" / "data")
+
     class Config:
         env_file = Path(__file__).resolve().parent / ".env"
         env_file_encoding = "utf-8"

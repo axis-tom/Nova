@@ -2,7 +2,7 @@
 from typing import Dict, Any, Optional, Callable
 from pydantic import BaseModel
 import httpx
-from backend.foundation.perception.connectors.email.imap_client import IMAPClient
+from backend.connectors.email.imap_client import IMAPClient
 # from backend.foundation.perception.connectors.rss import RSSClient
 # 其他 connector 按需导入
 

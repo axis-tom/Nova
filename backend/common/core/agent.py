@@ -59,7 +59,7 @@ class Agent(ABC):
                 input_tokens = getattr(usage, "input_tokens", 0)
                 output_tokens = getattr(usage, "output_tokens", 0)
             if input_tokens or output_tokens:
-                from nova_agent_system.llm_config import record_token_usage
+                from backend.core.llm.config import record_token_usage
                 record_token_usage(self.name, input_tokens, output_tokens)
         except Exception:
             pass
@@ -140,7 +140,7 @@ class Agent(ABC):
         调用模型服务的辅助方法（子类可使用）
         实际应通过 model_clients 模块实现
         """
-        from backend.foundation.communication.model_clients.ollama import ollama_client
+        from backend.core.llm.clients.ollama import ollama_client
         # 示例调用
         response = await ollama_client.generate(prompt, model=model)
         return response

@@ -30,7 +30,7 @@ async def test_aws_signature():
     """测试 AWS Signature V4 签名生成"""
     print_separator("测试 AWS Signature V4 签名")
 
-    from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient
+    from backend.connectors.amazon.client import AmazonPAAPIClient
 
     client = AmazonPAAPIClient(
         access_key="AKIAIOSFODNN7EXAMPLE",
@@ -78,7 +78,7 @@ async def test_models():
     """测试数据模型"""
     print_separator("测试数据模型")
 
-    from backend.foundation.perception.connectors.amazon.models import (
+    from backend.connectors.amazon.models import (
         AmazonProduct, AmazonSearchResult, AmazonPrice, AmazonRating,
         AmazonReview, AmazonPriceHistory, AmazonCompetitor
     )
@@ -155,8 +155,8 @@ async def test_parse_search_result():
     """测试搜索结果解析"""
     print_separator("测试搜索结果解析")
 
-    from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient
-    from backend.foundation.perception.connectors.amazon.product_search import AmazonProductSearch
+    from backend.connectors.amazon.client import AmazonPAAPIClient
+    from backend.connectors.amazon.product_search import AmazonProductSearch
 
     client = AmazonPAAPIClient(
         access_key="test",
@@ -291,9 +291,9 @@ async def test_review_analyzer():
     """测试评论分析器"""
     print_separator("测试评论分析器")
 
-    from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient
-    from backend.foundation.perception.connectors.amazon.review_analyzer import AmazonReviewAnalyzer
-    from backend.foundation.perception.connectors.amazon.models import AmazonRating
+    from backend.connectors.amazon.client import AmazonPAAPIClient
+    from backend.connectors.amazon.review_analyzer import AmazonReviewAnalyzer
+    from backend.connectors.amazon.models import AmazonRating
 
     client = AmazonPAAPIClient(
         access_key="test",
@@ -343,8 +343,8 @@ async def test_price_tracker():
     """测试价格追踪器"""
     print_separator("测试价格追踪器")
 
-    from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient
-    from backend.foundation.perception.connectors.amazon.price_tracker import AmazonPriceTracker
+    from backend.connectors.amazon.client import AmazonPAAPIClient
+    from backend.connectors.amazon.price_tracker import AmazonPriceTracker
 
     client = AmazonPAAPIClient(
         access_key="test",
@@ -416,7 +416,7 @@ async def test_env_config():
     """测试环境变量配置"""
     print_separator("测试环境变量配置")
 
-    from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient
+    from backend.connectors.amazon.client import AmazonPAAPIClient
 
     # 测试从环境变量创建客户端
     client = AmazonPAAPIClient(
@@ -445,7 +445,7 @@ async def test_marketplace_config():
     """测试多站点配置"""
     print_separator("测试多站点配置")
 
-    from backend.foundation.perception.connectors.amazon.client import AmazonPAAPIClient, REGION_MAP, PAAPI_ENDPOINTS
+    from backend.connectors.amazon.client import AmazonPAAPIClient, REGION_MAP, PAAPI_ENDPOINTS
 
     # 测试日本站点
     jp_client = AmazonPAAPIClient(
