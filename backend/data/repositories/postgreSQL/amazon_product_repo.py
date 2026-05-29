@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, desc, or_, and_, func as sql_func
 
 from backend.data.models.amazon_product import AmazonProduct, AmazonETLLog
+from backend.data.models.change_log import AmazonChangeLog
+from backend.data.models.anomaly_log import AmazonAnomalyLog
 from backend.aqueduct.importance_score import (
     calc_importance_score,
     calc_manual_override_tier,
@@ -312,6 +314,52 @@ class AmazonProductRepository:
             .order_by(desc(AmazonETLLog.created_at))
             .limit(limit)
         )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    # ── 变更日志 ──
+
+    async def create_change_log(self, entry: Dict) -> AmazonChangeLog:
+        """写入变更日志"""
+        log = AmazonChangeLog(**entry)
+        self.db.add(log)
+        await self.db.commit()
+        await self.db.refresh(log)
+        return log
+
+    async def get_change_logs(self, asin: Optional[str] = None,
+                              limit: int = 50) -> List[AmazonChangeLog]:
+        """查询变更日志"""
+        stmt = select(AmazonChangeLog)
+        if asin:
+            stmt = stmt.where(AmazonChangeLog.asin == asin)
+        stmt = stmt.order_by(desc(AmazonChangeLog.detected_at)).limit(limit)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    # ── 异常日志 ──
+
+    async def create_anomaly_log(self, entry: Dict) -> AmazonAnomalyLog:
+        """写入异常事件"""
+        log = AmazonAnomalyLog(**entry)
+        self.db.add(log)
+        await self.db.commit()
+        await self.db.refresh(log)
+        return log
+
+    async def get_anomaly_logs(self, asin: Optional[str] = None,
+                               severity: Optional[str] = None,
+                               limit: int = 50) -> List[AmazonAnomalyLog]:
+        """查询异常事件"""
+        conditions = []
+        if asin:
+            conditions.append(AmazonAnomalyLog.asin == asin)
+        if severity:
+            conditions.append(AmazonAnomalyLog.severity == severity)
+        stmt = select(AmazonAnomalyLog)
+        if conditions:
+            stmt = stmt.where(and_(*conditions))
+        stmt = stmt.order_by(desc(AmazonAnomalyLog.detected_at)).limit(limit)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 

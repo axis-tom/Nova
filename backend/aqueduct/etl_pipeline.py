@@ -31,6 +31,8 @@ from backend.aqueduct.connectors.canopy_connector import (
     CanopyConnector,
     CanopyError as CNError,
 )
+from backend.data.models.change_log import detect_changes, changes_to_log_entries, TRACKED_FIELDS
+from backend.data.models.anomaly_log import detect_anomalies
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 from backend.config.config import settings
 
@@ -586,9 +588,19 @@ class ETLPipeline:
     # ── Load ──
 
     async def _load_asin(self, asin: str, product_data: Dict, merged: Dict) -> bool:
-        """加载单个 ASIN 数据到数据库"""
+        """加载单个 ASIN 数据到数据库，写入变更检测 + 异常检测"""
         try:
-            # 更新对应源的数据
+            # 1. 获取旧数据（用于变更检测）
+            old_product = await self.repo.get_by_asin(asin, product_data.get("domain", "US"))
+            old_dict = {}
+            if old_product:
+                from sqlalchemy.orm import class_mapper
+                for col in class_mapper(type(old_product)).mapped_table.columns:
+                    val = getattr(old_product, col.name, None)
+                    if val is not None:
+                        old_dict[col.name] = val
+
+            # 2. 更新对应源的数据
             sources = product_data.get("data_source", [])
             for s in sources:
                 if s == "keepa":
@@ -597,6 +609,37 @@ class ETLPipeline:
                     await self.repo.upsert(product_data, "rainforest")
                 elif s == "canopy":
                     await self.repo.upsert(product_data, "canopy")
+
+            # 3. 变更检测（仅在旧数据存在时对比）
+            if old_dict and merged:
+                changes = detect_changes(old_dict, product_data, TRACKED_FIELDS)
+                if changes:
+                    domain = product_data.get("domain", "US")
+                    entries = changes_to_log_entries(asin, domain, changes)
+                    for entry in entries:
+                        try:
+                            await self.repo.create_change_log(entry)
+                        except Exception as e:
+                            logger.warning(f"Change log write failed for {asin}.{entry['field']}: {e}")
+
+                    # 4. 异常检测
+                    anomalies = detect_anomalies(changes)
+                    for anomaly in anomalies:
+                        try:
+                            await self.repo.create_anomaly_log({
+                                "asin": asin,
+                                "domain": domain,
+                                "field": anomaly["field"],
+                                "old_value": anomaly.get("old_value"),
+                                "new_value": anomaly.get("new_value"),
+                                "delta_pct": anomaly.get("delta_pct"),
+                                "alert_type": anomaly["alert_type"],
+                                "severity": anomaly["severity"],
+                                "description": anomaly.get("description"),
+                            })
+                        except Exception as e:
+                            logger.warning(f"Anomaly log write failed for {asin}.{anomaly['field']}: {e}")
+
             return True
         except Exception as e:
             logger.error(f"Load failed for {asin}: {e}")
