@@ -103,6 +103,17 @@ class DataProvider:
             results[asin] = await self.get_product(asin, domain, with_trust)
         return results
 
+    async def get_product_multi_domain(
+        self, asin: str, domains: List[str] = None, with_trust: bool = True,
+    ) -> Dict[str, Optional[Dict]]:
+        """同时获取多个站点的商品数据"""
+        if domains is None:
+            domains = ["US", "DE", "JP"]
+        results = {}
+        for d in domains:
+            results[d] = await self.get_product(asin, d, with_trust)
+        return results
+
     # ── 冷启动 ─────────────────────────────────────────────────────
 
     async def _cold_start(self, asin: str, domain: str = "US") -> Optional[Dict]:

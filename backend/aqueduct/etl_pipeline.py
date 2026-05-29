@@ -34,6 +34,9 @@ from backend.aqueduct.connectors.canopy_connector import (
 from backend.data.models.change_log import detect_changes, changes_to_log_entries, TRACKED_FIELDS
 from backend.data.models.anomaly_log import detect_anomalies
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
+from backend.aqueduct.metrics import (
+    etl_run_duration, etl_asins_processed, structured_log,
+)
 from backend.config.config import settings
 
 logger = logging.getLogger(__name__)
@@ -142,10 +145,15 @@ class ETLPipeline:
         success = 0
         data = {}
         errors = []
+        keepa_domain = None
+        for k, v in _KEEPA_TO_RF_MAP.items():
+            if v == domain:
+                keepa_domain = k
+                break
         for asin in asins:
             try:
                 result = await self.rainforest.async_get_product(asin, domain)
-                result["domain"] = "US"  # domain 映射在外部处理
+                result["domain"] = keepa_domain or "US"
                 data[asin] = result
                 success += 1
             except RFError as e:
@@ -158,10 +166,15 @@ class ETLPipeline:
         success = 0
         data = {}
         errors = []
+        keepa_domain = None
+        for k, v in _KEEPA_TO_RF_MAP.items():
+            if v == domain:
+                keepa_domain = k
+                break
         for asin in asins:
             try:
                 result = await self.canopy.async_get_product(asin, domain)
-                result["domain"] = "US"
+                result["domain"] = keepa_domain or "US"
                 data[asin] = result
                 success += 1
             except CNError as e:
@@ -443,7 +456,7 @@ class ETLPipeline:
         logger.info(f"[ColdStart] Phase 2: Rainforest /product for {asin}")
         rf_raw = {}
         try:
-            rf_domain = _keepa_to_rainforest_domain(domain)
+            rf_domain = keepa_to_rf_domain(domain)
             rf_result = await self.rainforest.async_get_product(asin, rf_domain)
             if rf_result:
                 rf_result["domain"] = domain
@@ -455,7 +468,7 @@ class ETLPipeline:
         logger.info(f"[ColdStart] Phase 3: Canopy for {asin}")
         cn_raw = {}
         try:
-            cn_domain = _keepa_to_rainforest_domain(domain)
+            cn_domain = keepa_to_rf_domain(domain)
             cn_result = await self.canopy.async_get_product(asin, cn_domain)
             if cn_result:
                 cn_result["domain"] = domain
@@ -580,6 +593,20 @@ class ETLPipeline:
             # ── coverage_map + freshness_map ──
             product["coverage_map"] = self._calc_coverage(product)
             product["freshness_map"] = self._calc_freshness(product, raw_by_source or {})
+
+            # ── 数据一致性校验 ──
+            consistency = validate_consistency(kp, rf, cn)
+            if consistency:
+                product["_consistency"] = consistency
+                # 把不一致标记写入 coverage_map
+                cm = product.get("coverage_map", {})
+                if isinstance(cm, dict):
+                    cm["_consistency"] = consistency
+                    for field, check in consistency.items():
+                        if isinstance(check, dict) and check.get("divergent"):
+                            logger.warning(
+                                f"[Consistency] {asin} {field} 不一致: {check.get('alert', '')}"
+                            )
 
             merged[asin] = product
 
@@ -708,10 +735,10 @@ class ETLPipeline:
             if "keepa" in sources:
                 tasks.append(("keepa", self.extract_keepa(asins, domain)))
             if "rainforest" in sources:
-                rf_domain = _keepa_to_rainforest_domain(domain)
+                rf_domain = keepa_to_rf_domain(domain)
                 tasks.append(("rainforest", self.extract_rainforest(asins, rf_domain)))
             if "canopy" in sources:
-                cn_domain = _keepa_to_rainforest_domain(domain)
+                cn_domain = keepa_to_rf_domain(domain)
                 tasks.append(("canopy", self.extract_canopy(asins, cn_domain)))
 
             # 并发执行 Extract
@@ -746,8 +773,25 @@ class ETLPipeline:
                     except Exception as e:
                         logger.warning(f"Importance calc failed for {asin}: {e}")
 
-            # 6. 记录 ETL 日志
+            # 6. 度量 + 结构化日志
             duration = (datetime.now(timezone.utc) - started_at).total_seconds()
+            etl_run_duration.observe(duration)
+            etl_asins_processed.labels(status="success").inc(success)
+            if failed:
+                etl_asins_processed.labels(status="failed").inc(len(failed))
+            structured_log("etl_run_completed",
+                run_id=self.run_id,
+                asins_total=result["asins_total"],
+                asins_success=success,
+                asins_failed=len(failed),
+                keepa_consumed=result["keepa_consumed"],
+                rainforest_consumed=result["rainforest_consumed"],
+                canopy_consumed=result["canopy_consumed"],
+                duration_s=round(duration, 1),
+                sources=",".join(sources) if sources else "none",
+            )
+
+            # 7. 记录 ETL 日志
             await self._log_result(result, "success", duration)
 
             result["status"] = "success"
@@ -783,15 +827,70 @@ class ETLPipeline:
             logger.warning(f"Failed to log ETL result: {e}")
 
 
-def _keepa_to_rainforest_domain(keepa_domain: str) -> str:
+# ── 三源域映射 ──────────────────────────────────────────────────────
+# Keepa 用 US/DE/JP 代码；Rainforest/Canopy 用 amazon.com/amazon.de
+
+_KEEPA_TO_RF_MAP = {
+    "US": "amazon.com", "GB": "amazon.co.uk", "DE": "amazon.de",
+    "FR": "amazon.fr", "JP": "amazon.co.jp", "CA": "amazon.ca",
+    "IT": "amazon.it", "ES": "amazon.es", "IN": "amazon.in",
+    "MX": "amazon.com.mx", "BR": "amazon.com.br", "AU": "amazon.com.au",
+    "NL": "amazon.nl", "SG": "amazon.sg", "AE": "amazon.ae",
+    "SA": "amazon.sa", "TR": "amazon.com.tr", "SE": "amazon.se",
+    "PL": "amazon.pl",
+}
+_RF_TO_KEEPA_MAP = {v: k for k, v in _KEEPA_TO_RF_MAP.items()}
+
+
+def keepa_to_rf_domain(keepa_domain: str) -> str:
     """Keepa 的 US → Rainforest 的 amazon.com"""
-    _MAP = {
-        "US": "amazon.com", "GB": "amazon.co.uk", "DE": "amazon.de",
-        "FR": "amazon.fr", "JP": "amazon.co.jp", "CA": "amazon.ca",
-        "IT": "amazon.it", "ES": "amazon.es", "IN": "amazon.in",
-        "MX": "amazon.com.mx", "BR": "amazon.com.br", "AU": "amazon.com.au",
-        "NL": "amazon.nl", "SG": "amazon.sg", "AE": "amazon.ae",
-        "SA": "amazon.sa", "TR": "amazon.com.tr", "SE": "amazon.se",
-        "PL": "amazon.pl",
-    }
-    return _MAP.get(keepa_domain.upper(), "amazon.com")
+    return _KEEPA_TO_RF_MAP.get(keepa_domain.upper(), "amazon.com")
+
+
+def rf_to_keepa_domain(rf_domain: str) -> str:
+    """Rainforest 的 amazon.com → Keepa 的 US"""
+    return _RF_TO_KEEPA_MAP.get(rf_domain, "US")
+
+
+# ── 数据一致性校验 ──────────────────────────────────────────────────
+
+_PRICE_FIELDS = ["current_price", "buybox_price", "list_price"]
+
+
+def validate_consistency(keepa: Dict, rainforest: Dict, canopy: Dict) -> Dict:
+    """
+    校验三源数据的关键字段一致性。
+
+    Returns:
+        {field: {keepa: ..., rainforest: ..., canopy: ..., divergent: bool, alert: str}}
+    """
+    checks = {}
+
+    for field in _PRICE_FIELDS:
+        prices = {
+            "keepa": keepa.get(field),
+            "rainforest": rainforest.get(field),
+            "canopy": canopy.get(field),
+        }
+        valid = [v for v in prices.values() if v and isinstance(v, (int, float))]
+        if len(valid) >= 2:
+            avg = sum(valid) / len(valid)
+            for source, price in prices.items():
+                if price and isinstance(price, (int, float)) and abs(price - avg) / max(avg, 0.01) > 0.2:
+                    checks[field] = {
+                        "values": prices, "divergent": True,
+                        "alert": f"{source} {field}={price} deviates >20% from avg={avg:.2f}",
+                    }
+                    break
+        if field not in checks:
+            checks[field] = {"values": prices, "divergent": False}
+
+    old_bsr = {"keepa": keepa.get("current_bsr"), "rainforest": rainforest.get("current_bsr")}
+    valid_bsr = [v for v in old_bsr.values() if v and isinstance(v, (int, float))]
+    if len(valid_bsr) >= 2 and max(valid_bsr) / max(min(valid_bsr), 1) > 3:
+        checks["current_bsr"] = {
+            "values": old_bsr, "divergent": True,
+            "alert": f"BSR differs >3x between sources: {old_bsr}",
+        }
+
+    return checks

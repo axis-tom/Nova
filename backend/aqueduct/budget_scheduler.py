@@ -27,6 +27,7 @@ from backend.aqueduct.connectors.keepa_connector import (
 from backend.aqueduct.acquisition_queue import acquisition_queue, QueueItem
 from backend.aqueduct.cost_controller import cost_controller
 from backend.aqueduct.etl_pipeline import ETLPipeline
+from backend.aqueduct.metrics import token_remaining, acquisition_queue_depth
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,11 @@ class BudgetAwareScheduler:
                                 )
                 queue_items = await acquisition_queue.dequeue_batch(batch_size)
 
-                # 3. 执行 ETL
+                # 3. 上报指标
+                token_remaining.set(bucket_level)
+                acquisition_queue_depth.set(acquisition_queue.size)
+
+                # 4. 执行 ETL
                 await self._execute_etl_from_queue(db, queue_items, bucket_level)
 
         except Exception as e:
