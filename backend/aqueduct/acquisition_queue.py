@@ -93,3 +93,7 @@ class AcquisitionQueue:
         if tokens_left > 10:
             return 5
         return 0
+
+
+# 全局单例 — DataProvider 和 BudgetAwareScheduler 共享同一队列
+acquisition_queue = AcquisitionQueue()

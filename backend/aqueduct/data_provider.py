@@ -14,7 +14,9 @@ from typing import Any, Dict, List, Optional
 
 from backend.data.database import AsyncSessionLocal
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
-from backend.aqueduct.acquisition_queue import AcquisitionQueue
+from backend.aqueduct.acquisition_queue import acquisition_queue
+from backend.aqueduct.cost_catalog import estimate_min_cost
+from backend.aqueduct.cost_controller import cost_controller
 from backend.aqueduct.etl_pipeline import ETLPipeline
 from backend.aqueduct.quality_scorer import enrich_with_trust
 
@@ -56,7 +58,7 @@ class DataProvider:
     """
 
     def __init__(self):
-        self._queue = AcquisitionQueue()
+        self._queue = acquisition_queue  # 共享全局队列
         self._cold_start_locks: Dict[str, asyncio.Event] = {}
         self._cold_start_results: Dict[str, Optional[Dict]] = {}
 
@@ -69,7 +71,10 @@ class DataProvider:
             product = await repo.get_by_asin(asin, domain)
 
         if product is None:
-            return await self._cold_start(asin, domain)
+            result = await self._cold_start(asin, domain)
+            if result and with_trust:
+                result = enrich_with_trust(result, result.get("freshness_map", {}))
+            return result
 
         result = self._product_to_dict(product)
 
@@ -131,8 +136,20 @@ class DataProvider:
 
     async def _refresh(self, asin: str, domain: str, stale_dims: List[str]):
         """异步刷新过期维度"""
-        logger.info(f"[DataProvider] Async refresh {asin}: {stale_dims}")
-        await self._queue.enqueue(asin, priority=1, domain=domain, dimensions=stale_dims)
+        # 预估本次刷新成本
+        cost_plan = estimate_min_cost(stale_dims)
+        logger.info(
+            f"[DataProvider] Async refresh {asin}: {stale_dims} "
+            f"(cost={cost_plan['total']}, feasible={cost_plan['feasible']})"
+        )
+        if not cost_plan["feasible"] and cost_plan["total"]:
+            logger.warning(f"[DataProvider] {asin} refresh 成本超出预算，降低优先级入队")
+        await acquisition_queue.enqueue(
+            asin,
+            priority=0 if cost_plan["feasible"] else 2,
+            domain=domain,
+            dimensions=stale_dims,
+        )
 
     # ── 新鲜度检查 ─────────────────────────────────────────────────
 

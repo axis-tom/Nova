@@ -3,14 +3,15 @@ Token-Budget-Aware 调度器
 
 核心策略：
   - 每 15 分钟检查一次 Keepa 桶水位
-  - 按 Freshess Score 排序，优先更新数据最旧的 ASIN
-  - ASIN Tier 加权调整
+  - 消费 AcquisitionQueue（DataProvider 异步刷新请求优先级最高）
+  - 主动扫描过期 ASIN 并入队（背景新鲜度维护）
+  - ASIN Tier 加权排序
   - 桶满时批量消费，桶低时只做 Rainforest/Canopy
 """
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -23,6 +24,8 @@ from backend.aqueduct.connectors.keepa_connector import (
     KeepaConnector,
     KeepaQuotaError,
 )
+from backend.aqueduct.acquisition_queue import acquisition_queue, QueueItem
+from backend.aqueduct.cost_controller import cost_controller
 from backend.aqueduct.etl_pipeline import ETLPipeline
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,26 @@ _MAX_PER_CYCLE = {
     "canopy": 30,
 }
 
+# 数据维度 → 所需 API 源映射（用于队列项 → 确定调哪些源）
+_DIM_TO_SOURCES = {
+    "has_price": ["keepa", "rainforest"],
+    "has_buybox": ["keepa", "rainforest"],
+    "has_price_stats": ["keepa"],
+    "has_bsr": ["keepa"],
+    "has_bsr_stats": ["keepa"],
+    "has_rating_history": ["keepa"],
+    "has_listing": ["rainforest"],
+    "has_aplus": ["rainforest"],
+    "has_videos": ["rainforest"],
+    "has_reviews_body": ["rainforest", "canopy"],
+    "has_rating_breakdown": ["rainforest"],
+    "has_sales_estimate": ["canopy"],
+    "has_stock_level": ["canopy"],
+    "has_offer_counts": ["keepa", "rainforest"],
+    "has_fba_fee": ["keepa"],
+    "has_referral_fee": ["keepa"],
+}
+
 
 class BudgetAwareScheduler:
     """
@@ -74,8 +97,6 @@ class BudgetAwareScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self._running = False
-        self._daily_keepa_usage = 0
-        self._keepa_last_run = self._now()
 
     def _now(self):
         return datetime.now(timezone.utc)
@@ -106,7 +127,7 @@ class BudgetAwareScheduler:
             logger.info("[BudgetAwareScheduler] 已停止")
 
     async def _tick(self):
-        """调度主循环"""
+        """调度主循环：消费 AcquisitionQueue + 主动发现过期 ASIN"""
         try:
             logger.info("[BudgetAwareScheduler] 开始调度检查...")
 
@@ -114,7 +135,7 @@ class BudgetAwareScheduler:
                 repo = AmazonProductRepository(db)
                 keepa = KeepaConnector()
 
-                # 1. 检查 Keepa 桶水位
+                # 1. 检查 Keepa 桶水位 + CostController
                 bucket_status = self._check_bucket(keepa)
                 if bucket_status["error"]:
                     logger.warning(f"Keepa bucket check failed: {bucket_status['error']}")
@@ -122,18 +143,50 @@ class BudgetAwareScheduler:
                 else:
                     bucket_level = bucket_status["tokens_left"]
 
-                # 2. 收集需要刷新的 ASIN
-                sheduled = await self._collect_stale_asins(repo, bucket_level)
+                # CostController 熔断检查
+                keepa_available = (
+                    bucket_level > _BUCKET_THRESHOLDS["protect_mode"]
+                    and not cost_controller.should_circuit_break("keepa")
+                    and await cost_controller.check_and_throttle("keepa", 1)
+                )
+                rf_available = (
+                    not cost_controller.should_circuit_break("rainforest")
+                    and await cost_controller.check_and_throttle("rainforest", 1)
+                )
+                cn_available = (
+                    not cost_controller.should_circuit_break("canopy")
+                    and await cost_controller.check_and_throttle("canopy", 1)
+                )
 
-                # 3. 在预算内执行 ETL
-                await self._execute_etl(db, sheduled, bucket_level)
+                # 2a. 消费 AcquisitionQueue（DataProvider 异步刷新请求）
+                batch_size = acquisition_queue.batch_size_by_budget(bucket_level)
+                queue_items = await acquisition_queue.dequeue_batch(batch_size)
 
-                # 4. 重置日用量（跨天时）
-                today = self._now().date()
-                if self._keepa_last_run.date() < today:
-                    self._daily_keepa_usage = 0
-                self._daily_keepa_usage += sheduled.get("keepa_count", 0)
-                self._keepa_last_run = self._now()
+                # 2b. 主动发现过期 ASIN（背景新鲜度维护）
+                stale_asins = await self._collect_stale_asins(repo, bucket_level)
+
+                # 2c. 合并：队列项优先，去重
+                queued_keys = {(i.asin, i.domain) for i in queue_items}
+                for source, items in stale_asins.items():
+                    if source == "keepa_count":
+                        continue
+                    if source == "keepa":
+                        for score, asin in items:
+                            if (asin, "US") not in queued_keys:
+                                await acquisition_queue.enqueue(
+                                    asin, priority=(-score), domain="US",
+                                    dimensions=self._staleness_dims(asin, repo),
+                                )
+                    else:
+                        for asin in items:
+                            if (asin, "US") not in queued_keys:
+                                await acquisition_queue.enqueue(
+                                    asin, priority=2, domain="US",
+                                )
+                queue_items = await acquisition_queue.dequeue_batch(batch_size)
+
+                # 3. 执行 ETL
+                await self._execute_etl_from_queue(db, queue_items, bucket_level)
 
         except Exception as e:
             logger.error(f"[BudgetAwareScheduler] 调度异常: {e}", exc_info=True)
@@ -157,6 +210,8 @@ class BudgetAwareScheduler:
         """
         收集需要刷新的 ASIN，按优先级排列。
 
+        通过 CostController 检查各源是否可用，已熔断/超配额的源跳过。
+
         返回：
         {
             "keepa": [(score, asin), ...],    # Keepa 需要
@@ -165,8 +220,12 @@ class BudgetAwareScheduler:
             "keepa_count": int,
         }
         """
-        # 判断 Keepa 是否可用
-        keepa_available = bucket_level > _BUCKET_THRESHOLDS["protect_mode"]
+        keepa_available = (
+            bucket_level > _BUCKET_THRESHOLDS["protect_mode"]
+            and not cost_controller.should_circuit_break("keepa")
+        )
+        rf_available = not cost_controller.should_circuit_break("rainforest")
+        cn_available = not cost_controller.should_circuit_break("canopy")
 
         result = {"keepa": [], "rainforest": [], "canopy": [], "keepa_count": 0}
 
@@ -204,54 +263,114 @@ class BudgetAwareScheduler:
 
         return result
 
-    async def _execute_etl(
-        self, db, sheduled: Dict, bucket_level: int,
-    ):
-        """在预算内执行 ETL"""
-        # 按桶水位决定 Keepa 批量大小
-        if bucket_level > _BUCKET_THRESHOLDS["burst_mode"]:
-            # 桶接近满 — 消费模式
-            keepa_batch = min(bucket_level - _BUCKET_THRESHOLDS["normal_mode"], len(sheduled["keepa"]))
-        elif bucket_level > _BUCKET_THRESHOLDS["protect_mode"]:
-            keepa_batch = min(10, len(sheduled["keepa"]))
-        else:
-            keepa_batch = 0
+    def _staleness_dims(self, asin: str, repo: AmazonProductRepository) -> List[str]:
+        """推断过期 ASIN 可能需要刷新的维度（基于默认 TTL）"""
+        # 简化实现：返回所有需要 keepa 的维度
+        # 后续 P2 cost_catalog 接入后可做精确推断
+        return []
 
-        # 提取需要执行的 ASIN
-        keepa_asins = [a for _, a in sheduled["keepa"][:keepa_batch]]
-        rf_asins = sheduled["rainforest"][:_MAX_PER_CYCLE["rainforest"]]
-        cn_asins = sheduled["canopy"][:_MAX_PER_CYCLE["canopy"]]
+    async def _execute_etl_from_queue(
+        self, db, queue_items: List[QueueItem], bucket_level: int,
+    ):
+        """从 AcquisitionQueue 出队执行 ETL"""
+        if not queue_items:
+            logger.info("[BudgetAwareScheduler] 队列为空，本次无执行项")
+            return
+
+        # 按来源分组并收集 ASIN
+        keepa_asins = []
+        rf_asins = []
+        cn_asins = []
+
+        for item in queue_items:
+            dims = item.dimensions or []
+            # 根据维度推断需要哪些源
+            if not dims:
+                # 无指定维度 → 全量刷新
+                keepa_asins.append(item.asin)
+                rf_asins.append(item.asin)
+                cn_asins.append(item.asin)
+            else:
+                for dim in dims:
+                    sources = _DIM_TO_SOURCES.get(dim, ["keepa"])
+                    for s in sources:
+                        if s == "keepa" and item.asin not in keepa_asins:
+                            keepa_asins.append(item.asin)
+                        elif s == "rainforest" and item.asin not in rf_asins:
+                            rf_asins.append(item.asin)
+                        elif s == "canopy" and item.asin not in cn_asins:
+                            cn_asins.append(item.asin)
+
+        # Keepa 按桶水位限速
+        if bucket_level > _BUCKET_THRESHOLDS["burst_mode"]:
+            keepa_batch_size = min(bucket_level - _BUCKET_THRESHOLDS["normal_mode"], len(keepa_asins))
+        elif bucket_level > _BUCKET_THRESHOLDS["protect_mode"]:
+            keepa_batch_size = min(10, len(keepa_asins))
+        else:
+            keepa_batch_size = 0
+
+        keepa_asins = keepa_asins[:keepa_batch_size]
+        rf_asins = rf_asins[:_MAX_PER_CYCLE["rainforest"]]
+        cn_asins = cn_asins[:_MAX_PER_CYCLE["canopy"]]
 
         if not (keepa_asins or rf_asins or cn_asins):
-            logger.info("[BudgetAwareScheduler] 本次无过期 ASIN")
+            logger.info("[BudgetAwareScheduler] 预算内无可用 ASIN 执行")
+            # 队列项放回（优先级降低）
+            for item in queue_items:
+                await acquisition_queue.enqueue(
+                    item.asin, priority=item.priority + 1,
+                    domain=item.domain, dimensions=item.dimensions,
+                )
             return
 
         # 确定本次涉及的数据源
         sources = []
-        if keepa_asins:
+        if keepa_asins and not cost_controller.should_circuit_break("keepa"):
             sources.append("keepa")
-        if rf_asins:
+        if rf_asins and not cost_controller.should_circuit_break("rainforest"):
             sources.append("rainforest")
-        if cn_asins:
+        if cn_asins and not cost_controller.should_circuit_break("canopy"):
             sources.append("canopy")
 
         # 合并所有 ASIN（去重）
         all_asins = list(set(keepa_asins + rf_asins + cn_asins))
 
         logger.info(
-            f"[BudgetAwareScheduler] 执行 ETL: "
+            f"[BudgetAwareScheduler] 执行 ETL（队列模式）: "
             f"Keepa={len(keepa_asins)}, RF={len(rf_asins)}, CN={len(cn_asins)}, "
             f"桶水位={bucket_level}"
         )
 
-        # 运行 ETL Pipeline
         pipeline = ETLPipeline(db)
         result = await pipeline.run(all_asins, sources=sources, calc_importance=True)
+
+        # 记录成本消耗到 CostController
+        keepa_cost = result.get("keepa_consumed", 0)
+        rf_cost = result.get("rainforest_consumed", 0)
+        cn_cost = result.get("canopy_consumed", 0)
+        if keepa_cost:
+            await cost_controller.record_usage("keepa", keepa_cost)
+        if rf_cost:
+            await cost_controller.record_usage("rainforest", rf_cost)
+        if cn_cost:
+            await cost_controller.record_usage("canopy", cn_cost)
+
+        # 成功/失败 → 通知 CostController（用于熔断判断）
+        for source in sources:
+            await cost_controller.record_success(source)
+
+        # 未成功处理的 ASIN 重新入队
+        failed = result.get("asins_failed", [])
+        if failed:
+            for asin in failed:
+                await acquisition_queue.enqueue(asin, priority=3, domain="US")
+                logger.info(f"[BudgetAwareScheduler] {asin} 失败，重入队列")
 
         logger.info(
             f"[BudgetAwareScheduler] ETL 完成: "
             f"status={result['status']}, "
-            f"success={result['asins_success']}/{result['asins_total']}"
+            f"success={result['asins_success']}/{result['asins_total']}, "
+            f"queued_items={len(queue_items)}"
         )
 
 
