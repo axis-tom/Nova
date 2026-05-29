@@ -11,7 +11,7 @@ Keepa 集成后新增能力：
   - 每日：更新已追踪 ASIN 的历史数据快照
 
 使用方式：
-  from backend.business.ecommerce.amazon_monitor.monitor_scheduler import AmazonMonitorScheduler
+  from backend.aqueduct.monitor_scheduler import AmazonMonitorScheduler
   scheduler = AmazonMonitorScheduler()
   scheduler.start()
 """
@@ -31,7 +31,7 @@ from backend.business.ecommerce.amazon_monitor.agents import (
     TrafficAnalyzerAgent,
     OpportunityJudgeAgent,
 )
-from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import (
+from backend.aqueduct.connectors.keepa_connector import (
     KeepaError,
     KeepaConfigError,
     KeepaQuotaError,
@@ -364,7 +364,7 @@ class AmazonMonitorScheduler:
         """
         alerts = []
         try:
-            from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import KeepaConnector
+            from backend.aqueduct.connectors.keepa_connector import KeepaConnector
             keepa = KeepaConnector()
             
             min_reviews = self.config.get("deal_min_reviews", 50)
@@ -430,7 +430,7 @@ class AmazonMonitorScheduler:
         """
         alerts = []
         try:
-            from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import KeepaConnector
+            from backend.aqueduct.connectors.keepa_connector import KeepaConnector
             keepa = KeepaConnector()
             
             products = await keepa.async_query_products(

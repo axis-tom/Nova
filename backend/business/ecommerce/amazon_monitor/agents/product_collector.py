@@ -23,20 +23,20 @@ from datetime import datetime
 from backend.common.core.agent import Agent
 from backend.common.core.state import State
 from backend.utils.logger import logger
-from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import (
+from backend.aqueduct.connectors.keepa_connector import (
     KeepaError,
     KeepaConfigError,
     KeepaQuotaError,
     KeepaRejectedError,
     KeepaNetworkError,
 )
-from backend.business.ecommerce.amazon_monitor.tools.rainforest_connector import (
+from backend.aqueduct.connectors.rainforest_connector import (
     RainforestError,
     RainforestConfigError,
     RainforestQuotaError,
     RainforestNetworkError,
 )
-from backend.business.ecommerce.amazon_monitor.tools.canopy_connector import (
+from backend.aqueduct.connectors.canopy_connector import (
     CanopyError,
     CanopyConfigError,
     CanopyQuotaError,
@@ -893,7 +893,7 @@ class ProductCollectorAgent(Agent):
     def _get_keepa(self):
         """获取 Keepa 连接器"""
         try:
-            from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import KeepaConnector
+            from backend.aqueduct.connectors.keepa_connector import KeepaConnector
             return KeepaConnector()
         except KeepaConfigError as e:
             logger.warning(f"[ProductCollector] Keepa not configured: {e}")
@@ -905,7 +905,7 @@ class ProductCollectorAgent(Agent):
     def _get_rainforest(self):
         """获取 Rainforest 连接器"""
         try:
-            from backend.business.ecommerce.amazon_monitor.tools.rainforest_connector import RainforestConnector
+            from backend.aqueduct.connectors.rainforest_connector import RainforestConnector
             return RainforestConnector()
         except RainforestConfigError as e:
             logger.warning(f"[ProductCollector] Rainforest not configured: {e}")
@@ -917,7 +917,7 @@ class ProductCollectorAgent(Agent):
     def _get_canopy(self):
         """获取 Canopy 连接器"""
         try:
-            from backend.business.ecommerce.amazon_monitor.tools.canopy_connector import CanopyConnector
+            from backend.aqueduct.connectors.canopy_connector import CanopyConnector
             return CanopyConnector()
         except CanopyConfigError as e:
             logger.warning(f"[ProductCollector] Canopy not configured: {e}")

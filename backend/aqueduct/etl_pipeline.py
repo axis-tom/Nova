@@ -19,15 +19,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import (
+from backend.aqueduct.connectors.keepa_connector import (
     KeepaConnector,
     KeepaError as KError,
 )
-from backend.business.ecommerce.amazon_monitor.tools.rainforest_connector import (
+from backend.aqueduct.connectors.rainforest_connector import (
     RainforestConnector,
     RainforestError as RFError,
 )
-from backend.business.ecommerce.amazon_monitor.tools.canopy_connector import (
+from backend.aqueduct.connectors.canopy_connector import (
     CanopyConnector,
     CanopyError as CNError,
 )

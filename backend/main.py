@@ -80,14 +80,14 @@ async def lifespan(app: FastAPI):
     # 默认关闭：通过 ENABLE_AMAZON_SCHEDULER=1 显式开启
     if settings.ENABLE_AMAZON_SCHEDULER:
         try:
-            from backend.business.ecommerce.amazon_monitor.budget_scheduler import budget_scheduler
+            from backend.aqueduct.budget_scheduler import budget_scheduler
             budget_scheduler.start()
             logger.info("Token-Budget-Aware ETL scheduler started")
         except Exception as e:
             logger.error(f"Failed to start BudgetAwareScheduler: {e}")
 
         try:
-            from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
+            from backend.aqueduct.monitor_scheduler import get_monitor_scheduler
             amazon_scheduler = get_monitor_scheduler()
             amazon_scheduler.start()
             logger.info("Amazon market monitor scheduler started")
@@ -104,14 +104,14 @@ async def lifespan(app: FastAPI):
     # 停止 Amazon 市场监控调度器
     if settings.ENABLE_AMAZON_SCHEDULER:
         try:
-            from backend.business.ecommerce.amazon_monitor.budget_scheduler import budget_scheduler
+            from backend.aqueduct.budget_scheduler import budget_scheduler
             budget_scheduler.stop()
             logger.info("Token-Budget-Aware ETL scheduler stopped")
         except Exception as e:
             logger.error(f"Error stopping BudgetAwareScheduler: {e}")
 
         try:
-            from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
+            from backend.aqueduct.monitor_scheduler import get_monitor_scheduler
             amazon_scheduler = get_monitor_scheduler()
             amazon_scheduler.stop()
             logger.info("Amazon market monitor scheduler stopped")

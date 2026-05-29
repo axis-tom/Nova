@@ -90,7 +90,7 @@ async def trigger_monitor(
     logger.info(f"[AmazonMonitorAPI] Manual trigger: task={request.task}")
 
     try:
-        from backend.business.ecommerce.amazon_monitor.monitor_scheduler import AmazonMonitorScheduler
+        from backend.aqueduct.monitor_scheduler import AmazonMonitorScheduler
 
         config = {}
         if request.config:
@@ -137,7 +137,7 @@ async def get_monitor_status():
     返回所有定时任务的运行状态和下次执行时间
     """
     try:
-        from backend.business.ecommerce.amazon_monitor.monitor_scheduler import get_monitor_scheduler
+        from backend.aqueduct.monitor_scheduler import get_monitor_scheduler
         scheduler = get_monitor_scheduler()
         status = scheduler.get_status()
         return SchedulerStatusResponse(**status)

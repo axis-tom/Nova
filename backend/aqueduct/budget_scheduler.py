@@ -19,11 +19,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from backend.data.database import AsyncSessionLocal
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
-from backend.business.ecommerce.amazon_monitor.tools.keepa_connector import (
+from backend.aqueduct.connectors.keepa_connector import (
     KeepaConnector,
     KeepaQuotaError,
 )
-from backend.business.ecommerce.amazon_monitor.etl_pipeline import ETLPipeline
+from backend.aqueduct.etl_pipeline import ETLPipeline
 
 logger = logging.getLogger(__name__)
 

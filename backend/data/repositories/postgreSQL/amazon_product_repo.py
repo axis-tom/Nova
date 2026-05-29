@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, desc, or_, and_, func as sql_func
 
 from backend.data.models.amazon_product import AmazonProduct, AmazonETLLog
-from backend.business.ecommerce.amazon_monitor.tools.importance_score import (
+from backend.aqueduct.importance_score import (
     calc_importance_score,
     calc_manual_override_tier,
 )

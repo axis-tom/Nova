@@ -23,7 +23,7 @@ from backend.common.core.agent import Agent
 from backend.common.core.state import State
 from backend.utils.logger import logger
 from backend.data.database import AsyncSessionLocal
-from backend.business.ecommerce.amazon_monitor.scoring import (
+from backend.aqueduct.scoring import (
     score_single_product,
     SCORE_WEIGHTS,
 )
