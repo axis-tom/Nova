@@ -136,14 +136,7 @@ class Agent(ABC):
         )
 
     async def _call_model(self, prompt: str, model: Optional[str] = None) -> str:
-        """
-        调用模型服务的辅助方法（子类可使用）
-        实际应通过 model_clients 模块实现
-        """
-        from backend.core.llm.clients.ollama import ollama_client
-        # 示例调用
-        response = await ollama_client.generate(prompt, model=model)
-        return response
+        return ""
 
     # ════════════════════════════════════════════════════════════════
     # LLM 驱动的分析循环框架（Phase 6 Part B 大手术）

@@ -90,7 +90,20 @@ class TrafficAnalyzerAgent(Agent):
                 state.add_event("traffic_analyzer_no_products")
                 return state
 
-            # ── LLM 驱动的分析循环 ──
+            # ── 先跑确定性分析作为兜底 ──
+            bsr_analysis = self._analyze_bsr(products)
+            price_analysis = self._analyze_prices(products)
+            competitor_comparison = self._compare_competitors(products)
+            price_alerts = self._detect_price_alerts(products)
+            traffic_insights = self._build_traffic_insights(
+                products, bsr_analysis, price_analysis, competitor_comparison,
+            )
+            state.set("traffic_insights", traffic_insights)
+            state.set("bsr_analysis", bsr_analysis)
+            state.set("competitor_comparison", competitor_comparison)
+            state.set("price_alerts", price_alerts)
+
+            # ── LLM 驱动的分析循环（仅用于增强，失败不丢兜底数据） ──
             tools = self._build_analysis_tools(products)
             tool_descriptions = "\n".join(
                 f"- {t.name}: {t.description}" for t in tools
@@ -115,11 +128,15 @@ class TrafficAnalyzerAgent(Agent):
             result["llm_driven"] = True
             logger.info("[TrafficAnalyzer] LLM 驱动流量分析完成")
 
-            # 保持 state key 向后兼容
-            state.set("traffic_insights", result.get("traffic_insights", {}))
-            state.set("bsr_analysis", result.get("bsr_analysis", {}))
-            state.set("competitor_comparison", result.get("competitor_comparison", {}))
-            state.set("price_alerts", result.get("price_alerts", []))
+            # 如果 LLM 返回了合法 JSON，用其覆盖兜底数据（否则保留兜底）
+            if result.get("traffic_insights"):
+                state.set("traffic_insights", result["traffic_insights"])
+            if result.get("bsr_analysis"):
+                state.set("bsr_analysis", result["bsr_analysis"])
+            if result.get("competitor_comparison"):
+                state.set("competitor_comparison", result["competitor_comparison"])
+            if result.get("price_alerts"):
+                state.set("price_alerts", result["price_alerts"])
             state.set_meta("traffic_analyzed", len(products))
             state.set_meta("llm_driven", True)
 

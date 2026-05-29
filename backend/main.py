@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from backend.api.routes import auth, data_sources, briefings, logs, conversation, settings, market, scheduler
-from backend.api.routes import models, amazon_monitor, agent_chat, analysis_tree_api
+from backend.api.routes import amazon_monitor, agent_chat, analysis_tree_api
 from backend.api.routes import router as api_router
 from backend.config.config import settings
 from backend.infrastructure.message_bus import message_bus
@@ -169,6 +169,9 @@ app.include_router(scheduler.router, prefix=settings.API_V1_PREFIX)
 
 # 注册分析树 API 路由 - 选品分析树查询/回溯/追加维度
 app.include_router(analysis_tree_api.router, prefix=settings.API_V1_PREFIX, tags=["分析树"])
+
+# 注册 Agent 对话 API 路由 - 会话管理/流式对话/成本报告
+app.include_router(agent_chat.router, prefix=settings.API_V1_PREFIX)
 
 
 # 健康检查端点

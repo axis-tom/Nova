@@ -78,7 +78,20 @@ class CompetitorAnalystAgent(Agent):
                 state.add_event("competitor_analyst_no_products")
                 return state
 
-            # ── LLM 驱动的分析循环 ──
+            # ── 先跑确定性分析作为兜底 ──
+            brand_list = self._aggregate_brands(products)
+            state.set("result", {
+                "analysis_type": "competitor_benchmark",
+                "market_share_distribution": brand_list,
+                "head_to_head": self._analyze_head_to_head(products),
+                "listing_quality": self._analyze_listing_quality(products),
+                "brand_landscape": self._analyze_brand_landscape(brand_list, products),
+                "differentiation_opportunities": self._identify_differentiation(brand_list, products),
+            })
+            state.set("competitor_analysis_result", state.get("result"))
+            state.set_meta("analysis_completed", True)
+
+            # ── LLM 驱动的分析循环（仅用于增强，失败不丢兜底数据） ──
             tools = self._build_analysis_tools(products)
             tool_descriptions = "\n".join(
                 f"- {t.name}: {t.description}" for t in tools
@@ -106,9 +119,10 @@ class CompetitorAnalystAgent(Agent):
             result["llm_driven"] = True
             logger.info("[CompetitorAnalyst] LLM 驱动竞品分析完成")
 
-            state.set("result", result)
-            state.set("competitor_analysis_result", result)
-            state.set_meta("analysis_completed", True)
+            # 如果 LLM 返回了合法 JSON，用其覆盖兜底数据（否则保留兜底）
+            if result.get("market_share_distribution") or result.get("head_to_head"):
+                state.set("result", result)
+                state.set("competitor_analysis_result", result)
             state.set_meta("llm_driven", True)
             state.add_event("competitor_analyst_success")
 
@@ -303,8 +317,38 @@ class CompetitorAnalystAgent(Agent):
 
     def _analyze_head_to_head(self, products: List[Dict]) -> Dict[str, Any]:
         """BSR 最好的 3 个产品做逐项对比"""
-        sorted_prods = sorted(products, key=lambda p: p.get("current_bsr") or 999999)
-        top3 = sorted_prods[:3]
+        def _to_num(v):
+                """安全转数字，非数字返回 999999"""
+                if v is None:
+                    return 999999
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return 999999
+
+            sorted_prods = sorted(products, key=lambda p: _to_num(p.get("current_bsr")))
+            top3 = sorted_prods[:3]
+
+            def _safe_price(p):
+                v = p.get("current_price")
+                if v is None:
+                    return None
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+
+            top3_prices = [_safe_price(p) for p in top3]
+            top3_prices = [p for p in top3_prices if p is not None]
+
+            def _safe_rating(p):
+                v = p.get("rating")
+                if v is None:
+                    return 0
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return 0
 
         def _extract_key_specs(specs: Dict) -> Dict:
             """提取关键规格"""
@@ -345,14 +389,14 @@ class CompetitorAnalystAgent(Agent):
             ],
             "cross_comparison": {
                 "price_range": {
-                    "min": min(p.get("current_price") for p in top3 if p.get("current_price")),
-                    "max": max(p.get("current_price") for p in top3 if p.get("current_price")),
+                    "min": min(top3_prices) if top3_prices else None,
+                    "max": max(top3_prices) if top3_prices else None,
                 },
                 "all_prime": all(p.get("is_prime") for p in top3),
                 "all_fba": all(p.get("fulfillment") == "FBA" for p in top3),
                 "avg_rating": round(
-                    sum(p.get("rating") for p in top3 if p.get("rating")) /
-                    max(1, sum(1 for p in top3 if p.get("rating"))),
+                    sum(_safe_rating(p) for p in top3) /
+                    max(1, sum(1 for p in top3 if _safe_rating(p) > 0)),
                     2,
                 ),
                 "total_monthly_sold": sum(p.get("monthly_sold", 0) for p in top3),
@@ -459,7 +503,16 @@ class CompetitorAnalystAgent(Agent):
             ("$100-200", 100, 200), ("$200+", 200, float("inf")),
         ]
         for label, lo, hi in price_bands:
-            in_band = [p for p in products if p.get("current_price") and lo <= p["current_price"] < hi]
+            def _safe_price_band(p):
+                v = p.get("current_price")
+                if v is None:
+                    return None
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return None
+
+            in_band = [p for p in products if _safe_price_band(p) is not None and lo <= _safe_price_band(p) < hi]
             if len(in_band) == 0:
                 opportunities.append({
                     "type": "价格带空白",

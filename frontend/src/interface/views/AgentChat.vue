@@ -1,275 +1,186 @@
 <template>
   <div class="agent-chat">
-    <el-container class="chat-layout">
-      <!-- 左侧：会话列表 -->
-      <el-aside width="260px" class="conversation-sidebar">
-        <div class="sidebar-header">
-          <span class="sidebar-title">对话</span>
+    <!-- 左侧：会话列表 -->
+    <div v-show="showSidebar" class="panel panel-left" :style="{ width: sidebarWidth + 'px' }">
+      <div class="sidebar-header">
+        <span class="sidebar-title">对话</span>
+        <div class="sidebar-header-actions">
           <el-button size="small" type="primary" plain @click="handleNewChat">
             + 新对话
           </el-button>
+          <el-button size="small" circle @click="showSidebar = false">
+            ✕
+          </el-button>
         </div>
-        <div class="conversation-list">
-          <div
-            v-for="conv in store.conversations"
-            :key="conv.id"
-            class="conversation-item"
-            :class="{ active: conv.id === store.currentConversationId }"
-            @click="handleSelectConversation(conv.id)"
-          >
-            <div class="conv-title">{{ conv.title }}</div>
-            <div class="conv-meta">
-              <span>{{ conv.message_count }} 条消息</span>
-              <el-dropdown trigger="click" @command="(cmd: string) => handleConvAction(cmd, conv)">
-                <span class="conv-more" @click.stop>...</span>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="rename">重命名</el-dropdown-item>
-                    <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-            </div>
-          </div>
-          <div v-if="store.conversations.length === 0" class="no-conversations">
-            暂无对话记录
+      </div>
+      <div class="conversation-list">
+        <div
+          v-for="conv in store.conversations"
+          :key="conv.id"
+          class="conversation-item"
+          :class="{ active: conv.id === store.currentConversationId }"
+          @click="handleSelectConversation(conv.id)"
+        >
+          <div class="conv-title">{{ conv.title }}</div>
+          <div class="conv-meta">
+            <span>{{ conv.message_count }} 条消息</span>
+            <el-dropdown trigger="click" @command="(cmd: string) => handleConvAction(cmd, conv)">
+              <span class="conv-more" @click.stop>...</span>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
-      </el-aside>
+        <div v-if="store.conversations.length === 0" class="no-conversations">
+          暂无对话记录
+        </div>
+      </div>
+      <!-- 拖拽手柄 -->
+      <div class="resize-handle" @mousedown.stop="(e: MouseEvent) => startResize(e, 'sidebar')"></div>
+    </div>
 
-      <!-- 中间：聊天区域 -->
-      <el-main class="chat-main">
-        <!-- 消息列表 -->
-        <div class="messages" ref="messagesRef" v-loading="isLoading">
-          <!-- 空状态：推荐问题 -->
-          <div v-if="messages.length === 0 && !isLoading" class="empty-state">
-            <div class="welcome-section">
-              <h2 class="welcome-title">Nova Agent</h2>
-              <p class="welcome-desc">电商选品分析助手，试试以下问题：</p>
-              <div class="quick-actions">
-                <div
-                  v-for="action in quickActions"
-                  :key="action.text"
-                  class="quick-action-card"
-                  @click="handleQuickAction(action.text)"
-                >
-                  <span class="action-icon">{{ action.icon }}</span>
-                  <span class="action-text">{{ action.label }}</span>
-                </div>
+    <!-- 中间：聊天区域 -->
+    <div class="panel panel-center">
+      <!-- 显示/隐藏侧栏按钮 -->
+      <button v-if="!showSidebar" class="sidebar-toggle-btn" @click="showSidebar = true">
+        ☰
+      </button>
+      <!-- 消息列表 -->
+      <div class="messages" ref="messagesRef" v-loading="isLoading">
+        <!-- 空状态：推荐问题 -->
+        <div v-if="messages.length === 0 && !isLoading" class="empty-state">
+          <div class="welcome-section">
+            <h2 class="welcome-title">Nova Agent</h2>
+            <p class="welcome-desc">电商选品分析助手，试试以下问题：</p>
+            <div class="quick-actions">
+              <div
+                v-for="action in quickActions"
+                :key="action.text"
+                class="quick-action-card"
+                @click="handleQuickAction(action.text)"
+              >
+                <span class="action-icon">{{ action.icon }}</span>
+                <span class="action-text">{{ action.label }}</span>
               </div>
             </div>
           </div>
+        </div>
 
-          <!-- 消息 -->
-          <div v-for="msg in messages" :key="msg.id" class="message-wrapper">
-            <!-- 用户消息 -->
-            <div v-if="msg.role === 'user'" class="message user">
-              <div class="avatar">👤</div>
-              <div class="bubble user-bubble">
-                <div class="content" v-html="renderMarkdown(msg.content)"></div>
-              </div>
-            </div>
-
-            <!-- Assistant 消息 -->
-            <div v-else-if="msg.role === 'assistant'" class="message assistant">
-              <div class="avatar">🤖</div>
-              <div class="bubble assistant-bubble">
-                <div class="content" v-html="renderMarkdown(msg.content)"></div>
-                <div class="message-meta">
-                  <span v-if="msg.tokenUsage" class="token-usage">
-                    ⚡ {{ msg.tokenUsage }} tokens
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 工具调用提示 -->
-            <div v-else-if="msg.role === 'tool'" class="message tool">
-              <div class="tool-badge">🔧 {{ msg.toolName || '工具' }}</div>
-              <div v-if="msg.content" class="tool-result">
-                <pre>{{ msg.content.slice(0, 300) }}{{ msg.content.length > 300 ? '...' : '' }}</pre>
-              </div>
+        <!-- 消息 -->
+        <div v-for="msg in messages" :key="msg.id" class="message-wrapper">
+          <!-- 用户消息 -->
+          <div v-if="msg.role === 'user'" class="message user">
+            <div class="avatar">👤</div>
+            <div class="bubble user-bubble">
+              <div class="content" v-html="renderMarkdown(msg.content)"></div>
             </div>
           </div>
 
-          <!-- 流式输出中的当前消息 -->
-          <div v-if="streamingContent" class="message assistant">
+          <!-- Assistant 消息 -->
+          <div v-else-if="msg.role === 'assistant'" class="message assistant">
             <div class="avatar">🤖</div>
-            <div class="bubble assistant-bubble streaming">
-              <div class="content" v-html="renderMarkdown(streamingContent)"></div>
-              <div class="cursor-blink">▍</div>
-            </div>
-          </div>
-
-          <!-- 简报可视化图表 -->
-          <BriefingCard v-if="briefingData" :data="briefingData" />
-
-          <!-- 状态提示 -->
-          <div v-if="currentStatus && !streamingContent" class="status-indicator">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            {{ currentStatus }}
-          </div>
-        </div>
-
-        <!-- 输入区域 -->
-        <div class="input-area">
-          <!-- 快捷指令菜单 -->
-          <div v-if="showCommandMenu" class="command-menu">
-            <div
-              v-for="opt in commandOptions"
-              :key="opt.command"
-              class="command-item"
-              @click="selectCommand(opt.command)"
-            >
-              <span class="cmd-name">{{ opt.command }}</span>
-              <span class="cmd-desc">{{ opt.desc }}</span>
-            </div>
-          </div>
-          <div class="input-wrapper">
-            <el-input
-              v-model="inputText"
-              type="textarea"
-              :rows="2"
-              placeholder="输入你的问题，或输入 / 查看快捷指令..."
-              :disabled="isSending"
-              @keydown.enter.prevent="handleEnter"
-              @keydown.shift.enter="handleShiftEnter"
-              @input="handleInputChange"
-            />
-            <div class="input-actions">
-              <el-button
-                v-if="isSending"
-                type="danger"
-                plain
-                :icon="Close"
-                @click="cancelStream"
-              >
-                停止
-              </el-button>
-              <el-button
-                v-else
-                type="primary"
-                :disabled="!inputText.trim()"
-                @click="sendMessage"
-              >
-                发送
-              </el-button>
-            </div>
-          </div>
-        </div>
-      </el-main>
-
-      <!-- 右侧：选品分析树面板 -->
-      <el-aside width="360px" class="tree-panel">
-        <div class="tree-header">
-          <h3>🌳 选品分析树</h3>
-          <span v-if="treeBranches.length > 0" class="tree-round-badge">
-            第 {{ treeRound }} 轮
-          </span>
-        </div>
-
-        <div class="tree-content">
-          <!-- 空状态 -->
-          <div v-if="treeBranches.length === 0" class="tree-empty">
-            <el-empty description="发送选品分析请求后，这里将实时展示分析树" :image-size="60" />
-          </div>
-
-          <!-- 分析树 -->
-          <div v-else class="tree-list">
-            <div
-              v-for="branch in treeBranches"
-              :key="branch.branch_id"
-              class="tree-branch"
-              :class="branch.status"
-            >
-              <!-- 分支头部 -->
-              <div class="branch-header">
-                <div class="branch-status-icon">
-                  <span v-if="branch.status === 'running'" class="status-spinner"></span>
-                  <span v-else-if="branch.status === 'completed'">✅</span>
-                  <span v-else-if="branch.status === 'error'">❌</span>
-                  <span v-else-if="branch.status === 'partial'">⚠️</span>
-                  <span v-else>⬜</span>
-                </div>
-                <span class="branch-label">{{ branch.label }}</span>
-                <div class="branch-actions">
-                  <el-tooltip content="追加维度" placement="top">
-                    <el-button
-                      link
-                      size="small"
-                      @click="handleAppendDimension(branch)"
-                      :disabled="isSending"
-                    >
-                      +维度
-                    </el-button>
-                  </el-tooltip>
-                  <el-tooltip content="回溯至此" placement="top">
-                    <el-button
-                      link
-                      size="small"
-                      @click="handleBacktrack(branch.invocations[branch.invocations.length - 1])"
-                      :disabled="isSending"
-                    >
-                      回溯
-                    </el-button>
-                  </el-tooltip>
-                </div>
-              </div>
-
-              <!-- 分支下的 invocation 节点 -->
-              <div class="branch-invocations">
-                <div
-                  v-for="inv in branch.invocations"
-                  :key="inv.invocation_id"
-                  class="tree-invocation"
-                  :class="inv.status"
-                >
-                  <div class="inv-header">
-                    <span class="inv-status-icon">
-                      <span v-if="inv.status === 'running'" class="status-spinner-sm"></span>
-                      <span v-else-if="inv.status === 'completed'">✅</span>
-                      <span v-else>❌</span>
-                    </span>
-                    <div class="inv-dimensions">
-                      <span
-                        v-for="dim in inv.dimensions"
-                        :key="dim"
-                        class="dim-tag"
-                      >{{ dim }}</span>
-                      <span v-if="inv.dimensions.length === 0" class="dim-tag dim-default">
-                        {{ inv.branch_label }}
-                      </span>
-                    </div>
-                  </div>
-                  <div v-if="inv.result_summary" class="inv-summary">
-                    {{ inv.result_summary }}
-                  </div>
-                  <div v-if="inv.error_message" class="inv-error">
-                    {{ inv.error_message }}
-                  </div>
-                  <div class="inv-meta">
-                    <span v-if="inv.started_at" class="inv-time">
-                      {{ formatTimeStr(inv.started_at) }}
-                    </span>
-                    <el-tooltip content="回溯到此节点" placement="top">
-                      <el-button
-                        link
-                        size="small"
-                        class="inv-backtrack-btn"
-                        @click="handleBacktrack(inv)"
-                        :disabled="isSending"
-                      >
-                        回溯
-                      </el-button>
-                    </el-tooltip>
-                  </div>
-                </div>
+            <div class="bubble assistant-bubble">
+              <div class="content" v-html="renderMarkdown(msg.content)"></div>
+              <div class="message-meta">
+                <span v-if="msg.tokenUsage" class="token-usage">
+                  ⚡ {{ msg.tokenUsage }} tokens
+                </span>
               </div>
             </div>
           </div>
+
+          <!-- 工具调用提示 -->
+          <div v-else-if="msg.role === 'tool'" class="message tool">
+            <div class="tool-badge">🔧 {{ msg.toolName || '工具' }}</div>
+            <div v-if="msg.content" class="tool-result">
+              <pre>{{ msg.content.slice(0, 300) }}{{ msg.content.length > 300 ? '...' : '' }}</pre>
+            </div>
+          </div>
         </div>
-      </el-aside>
-    </el-container>
+
+        <!-- 流式输出中的当前消息 -->
+        <div v-if="streamingContent" class="message assistant">
+          <div class="avatar">🤖</div>
+          <div class="bubble assistant-bubble streaming">
+            <div class="content" v-html="renderMarkdown(streamingContent)"></div>
+            <div class="cursor-blink">▍</div>
+          </div>
+        </div>
+
+        <!-- 简报可视化图表（兼容旧数据格式） -->
+        <BriefingCard v-if="briefingData" :data="briefingData" />
+
+        <!-- 状态提示 -->
+        <div v-if="currentStatus && !streamingContent" class="status-indicator">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          {{ currentStatus }}
+        </div>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="input-area">
+        <!-- 快捷指令菜单 -->
+        <div v-if="showCommandMenu" class="command-menu">
+          <div
+            v-for="opt in commandOptions"
+            :key="opt.command"
+            class="command-item"
+            @click="selectCommand(opt.command)"
+          >
+            <span class="cmd-name">{{ opt.command }}</span>
+            <span class="cmd-desc">{{ opt.desc }}</span>
+          </div>
+        </div>
+        <div class="input-wrapper">
+          <el-input
+            v-model="inputText"
+            type="textarea"
+            :rows="2"
+            placeholder="输入你的问题，或输入 / 查看快捷指令..."
+            :disabled="isSending"
+            @keydown.enter.prevent="handleEnter"
+            @keydown.shift.enter="handleShiftEnter"
+            @input="handleInputChange"
+          />
+          <div class="input-actions">
+            <el-button
+              v-if="isSending"
+              type="danger"
+              plain
+              :icon="Close"
+              @click="cancelStream"
+            >
+              停止
+            </el-button>
+            <el-button
+              v-else
+              type="primary"
+              :disabled="!inputText.trim()"
+              @click="sendMessage"
+            >
+              发送
+            </el-button>
+          </div>
+        </div>
+      </div>
+      <!-- 拖拽手柄 -->
+      <div class="resize-handle" @mousedown.stop="(e: MouseEvent) => startResize(e, 'cockpit')"></div>
+    </div>
+
+    <!-- 右侧：多维驾驶舱 -->
+    <div class="panel panel-right" :style="{ width: cockpitWidth + 'px' }">
+      <CockpitPanel
+        :categories="cockpitCategories"
+        @set-priority="handleCockpitSetPriority"
+        @toggle-dimension="handleCockpitToggleDimension"
+        @follow-up="handleCockpitFollowUp"
+        @supplement="handleCockpitSupplement"
+      />
+    </div>
   </div>
 </template>
 
@@ -277,20 +188,17 @@
 import { ref, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, Close } from '@element-plus/icons-vue'
+import { marked } from 'marked'
 import {
   streamChat,
   type SSEEvent,
   type ToolCallData,
-  type TreeBranchData,
-  type TreeInvocation,
-  type TreeNodeAddedData,
-  type TreeNodeStatusData,
-  type TreeFullData,
-  getAnalysisTree,
-  backtrackAnalysis,
-  appendDimension,
+  type CockpitCategory,
+  type CockpitUpdateData,
+  type CockpitDimension,
 } from '@/api/agentChat'
 import { useAgentChatStore } from '@/state/agentChat'
+import CockpitPanel from '@/interface/components/cockpit/CockpitPanel.vue'
 import BriefingCard from '@/interface/components/charts/BriefingCard.vue'
 
 const store = useAgentChatStore()
@@ -306,9 +214,50 @@ interface ChatMessage {
   tokenUsage?: number
 }
 
-// ── 状态 ──
+// ── 可拖拽面板状态 ──
+const sidebarWidth = ref(240)
+const cockpitWidth = ref(420)
+const minPanelWidth = 180
+const showSidebar = ref(true)
+let isResizing = false
+let currentResizeTarget: 'sidebar' | 'cockpit' | null = null
+let startX = 0
+let startWidth = 0
 
-const messages = ref<ChatMessage[]>([])
+function startResize(e: MouseEvent, target: 'sidebar' | 'cockpit') {
+  isResizing = true
+  currentResizeTarget = target
+  startX = e.clientX
+  startWidth = target === 'sidebar' ? sidebarWidth.value : cockpitWidth.value
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', stopResize)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+function onMouseMove(e: MouseEvent) {
+  if (!isResizing || !currentResizeTarget) return
+  const delta = e.clientX - startX
+  if (currentResizeTarget === 'sidebar') {
+    const newWidth = Math.max(minPanelWidth, Math.min(500, startWidth + delta))
+    sidebarWidth.value = newWidth
+  } else if (currentResizeTarget === 'cockpit') {
+    // 驾驶舱从右边缘拖动
+    const newWidth = Math.max(minPanelWidth, Math.min(600, startWidth - delta))
+    cockpitWidth.value = newWidth
+  }
+}
+
+function stopResize() {
+  isResizing = false
+  currentResizeTarget = null
+  document.removeEventListener('mousemove', onMouseMove)
+  document.removeEventListener('mouseup', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+// ── 消息类型 ──
 const inputText = ref('')
 const isSending = ref(false)
 const isLoading = ref(false)
@@ -316,11 +265,10 @@ const streamingContent = ref('')
 const currentStatus = ref('')
 const conversationId = ref('')
 const briefingData = ref<Record<string, any> | null>(null)
+const messages = ref<ChatMessage[]>([])
 
-// ── 分析树状态 ──
-const treeBranches = ref<TreeBranchData[]>([])
-const treeRound = ref(0)
-const pendingInvocations = ref<Map<string, TreeNodeStatusData>>(new Map())
+// ── 多维驾驶舱状态 ──
+const cockpitCategories = ref<CockpitCategory[]>([])
 
 let abortController: AbortController | null = null
 let msgCounter = 0
@@ -408,6 +356,12 @@ function handleSSEEvent(event: SSEEvent) {
       break
     }
 
+    case 'cockpit_update': {
+      const cockpitData = data as unknown as CockpitUpdateData
+      handleCockpitUpdate(cockpitData)
+      break
+    }
+
     case 'tool_call': {
       const tc = data as unknown as ToolCallData
       currentStatus.value = `🔧 调用 ${tc.name}...`
@@ -416,28 +370,6 @@ function handleSSEEvent(event: SSEEvent) {
 
     case 'tool_result':
       currentStatus.value = data as string
-      break
-
-    case 'tree_node_status': {
-      const statusData = data as unknown as TreeNodeStatusData
-      handleTreeNodeStatus(statusData)
-      break
-    }
-
-    case 'tree_node_added': {
-      const addedData = data as unknown as TreeNodeAddedData
-      handleTreeNodeAdded(addedData)
-      break
-    }
-
-    case 'tree_full': {
-      const treeData = data as unknown as TreeFullData
-      handleTreeFull(treeData)
-      break
-    }
-
-    case 'briefing_data':
-      briefingData.value = data as unknown as Record<string, any>
       break
 
     case 'start_response':
@@ -467,9 +399,6 @@ function handleSSEEvent(event: SSEEvent) {
       store.setCurrentConversationId(conversationId.value)
       store.loadConversations()
 
-      // 清空运行中的 invocation
-      pendingInvocations.value.clear()
-
       scrollToBottom()
       break
 
@@ -479,182 +408,6 @@ function handleSSEEvent(event: SSEEvent) {
       currentStatus.value = ''
       abortController = null
       break
-  }
-}
-
-function cancelStream() {
-  if (abortController) {
-    abortController.abort()
-    abortController = null
-  }
-  isSending.value = false
-  currentStatus.value = '已取消'
-  streamingContent.value = ''
-}
-
-// ── 分析树面板 ──
-
-function handleTreeNodeStatus(statusData: TreeNodeStatusData) {
-  // 记录 pending invocation（状态为 running）
-  pendingInvocations.value.set(statusData.invocation_id, statusData)
-
-  // 查找或创建分支
-  let branch = treeBranches.value.find(b => b.branch_id === statusData.agent_name)
-  if (!branch) {
-    branch = {
-      branch_id: statusData.agent_name,
-      agent_name: statusData.agent_name,
-      label: statusData.branch_label,
-      status: 'running',
-      invocations: [],
-    }
-    treeBranches.value.push(branch)
-  } else {
-    branch.status = 'running'
-  }
-
-  // 添加运行中的 invocation
-  const existing = branch.invocations.find(
-    inv => inv.invocation_id === statusData.invocation_id
-  )
-  if (!existing) {
-    branch.invocations.push({
-      invocation_id: statusData.invocation_id,
-      agent_name: statusData.agent_name,
-      branch_label: statusData.branch_label,
-      params: {},
-      dimensions: statusData.dimensions,
-      result_summary: '',
-      status: 'running',
-      parent_invocation_id: null,
-      checkpoint_id: null,
-      conversation_round: 0,
-      started_at: new Date().toISOString(),
-      completed_at: null,
-      error_message: null,
-    })
-  }
-}
-
-function handleTreeNodeAdded(addedData: TreeNodeAddedData) {
-  pendingInvocations.value.delete(addedData.invocation_id)
-
-  // 查找分支
-  let branch = treeBranches.value.find(b => b.branch_id === addedData.agent_name)
-  if (!branch) {
-    branch = {
-      branch_id: addedData.agent_name,
-      agent_name: addedData.agent_name,
-      label: addedData.branch_label,
-      status: addedData.status === 'completed' ? 'completed' : 'error',
-      invocations: [],
-    }
-    treeBranches.value.push(branch)
-  }
-
-  // 查找或更新 invocation
-  const existing = branch.invocations.find(
-    inv => inv.invocation_id === addedData.invocation_id
-  )
-  if (existing) {
-    existing.status = addedData.status
-    existing.result_summary = addedData.result_summary
-    existing.checkpoint_id = addedData.checkpoint_id
-    existing.completed_at = addedData.completed_at
-    existing.error_message = addedData.error_message
-    existing.dimensions = addedData.dimensions
-  } else {
-    branch.invocations.push({
-      invocation_id: addedData.invocation_id,
-      agent_name: addedData.agent_name,
-      branch_label: addedData.branch_label,
-      params: {},
-      dimensions: addedData.dimensions,
-      result_summary: addedData.result_summary,
-      status: addedData.status,
-      parent_invocation_id: addedData.parent_invocation_id,
-      checkpoint_id: addedData.checkpoint_id,
-      conversation_round: addedData.conversation_round,
-      started_at: addedData.started_at,
-      completed_at: addedData.completed_at,
-      error_message: addedData.error_message,
-    })
-  }
-
-  // 更新分支状态
-  updateBranchStatus(branch)
-}
-
-function handleTreeFull(treeData: TreeFullData) {
-  treeBranches.value = treeData.branches
-  treeRound.value = treeData.conversation_round
-}
-
-function updateBranchStatus(branch: TreeBranchData) {
-  const statuses = branch.invocations.map(inv => inv.status)
-  if (statuses.includes('running')) {
-    branch.status = 'running'
-  } else if (statuses.every(s => s === 'completed')) {
-    branch.status = 'completed'
-  } else if (statuses.every(s => s === 'error')) {
-    branch.status = 'error'
-  } else if (statuses.includes('completed')) {
-    branch.status = 'partial'
-  } else {
-    branch.status = 'pending'
-  }
-}
-
-async function handleBacktrack(inv: TreeInvocation) {
-  if (!inv.invocation_id || !conversationId.value) return
-  try {
-    await ElMessageBox.confirm(
-      `确定回溯到 [${inv.branch_label}] 节点？该节点之后的所有分析将被撤销。`,
-      '回溯确认',
-      { confirmButtonText: '确定回溯', cancelButtonText: '取消', type: 'warning' }
-    )
-    const result = await backtrackAnalysis(conversationId.value, inv.invocation_id)
-    ElMessage.success(result.message)
-    // 从树中移除该 invocation 之后的所有节点
-    treeBranches.value.forEach(branch => {
-      const idx = branch.invocations.findIndex(i => i.invocation_id === inv.invocation_id)
-      if (idx >= 0) {
-        branch.invocations = branch.invocations.slice(0, idx + 1)
-      }
-    })
-    // 移除后面分支的所有 invocation
-    const branchIdx = treeBranches.value.findIndex(b => b.branch_id === inv.agent_name)
-    if (branchIdx >= 0) {
-      // 标记后续分支为 pending
-      for (let i = branchIdx + 1; i < treeBranches.value.length; i++) {
-        treeBranches.value[i].status = 'pending'
-        treeBranches.value[i].invocations = []
-      }
-    }
-    // 更新分支状态
-    treeBranches.value.forEach(b => updateBranchStatus(b))
-  } catch {
-    // 用户取消
-  }
-}
-
-async function handleAppendDimension(branch: TreeBranchData) {
-  if (!conversationId.value || branch.invocations.length === 0) return
-  try {
-    const { value: dimLabel } = await ElMessageBox.prompt(
-      '请输入要追加的分析维度（例如："Q4旺季对比"、"价格弹性分析"）',
-      `追加维度 - ${branch.label}`,
-      { confirmButtonText: '追加', cancelButtonText: '取消' }
-    )
-    if (!dimLabel || !dimLabel.trim()) return
-    const result = await appendDimension(
-      conversationId.value,
-      branch.agent_name,
-      dimLabel.trim(),
-    )
-    ElMessage.success(result.message)
-  } catch {
-    // 用户取消
   }
 }
 
@@ -683,42 +436,80 @@ function formatTimeStr(isoStr: string) {
   if (!isoStr) return ''
   const d = new Date(isoStr)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
 }
 
-function escapeHtml(text: string): string {
-  const map: Record<string, string> = {
-    '&': '&' + 'amp;',
-    '<': '&' + 'lt;',
-    '>': '&' + 'gt;',
+function cancelStream() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
   }
-  return text.replace(/[&<>]/g, ch => map[ch])
+  isSending.value = false
+  currentStatus.value = '已取消'
+  streamingContent.value = ''
 }
 
 function renderMarkdown(text: string): string {
   if (!text) return ''
-  
-  // 第一步：先逃逸 HTML 特殊字符
-  let html = escapeHtml(text)
-  
-  // 代码块 (```code```) — 必须在逃逸后执行
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
-  
-  // 行内代码 (`code`)
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  
-  // 粗体 **text**
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-  
-  // 无序列表
-  html = html.replace(/^- (.*)$/gm, '<li>$1</li>')
-  
-  // 有序列表
-  html = html.replace(/^\d+\.\s+(.*)$/gm, '<li>$1</li>')
-  
-  // 换行
-  html = html.replace(/\n/g, '<br>')
-  
-  return html
+  return marked.parse(text, { breaks: true, gfm: true }) as string
+}
+
+// ── 多维驾驶舱 ──
+
+function handleCockpitUpdate(data: CockpitUpdateData) {
+  const idx = cockpitCategories.value.findIndex(c => c.agent_name === data.agent_name)
+  if (idx >= 0) {
+    const existing = cockpitCategories.value[idx]
+    for (const newDim of data.dimensions) {
+      const dimIdx = existing.dimensions.findIndex(d => d.dimension_id === newDim.dimension_id)
+      if (dimIdx >= 0) {
+        existing.dimensions[dimIdx] = { ...existing.dimensions[dimIdx], ...newDim }
+      } else {
+        existing.dimensions.push(newDim)
+      }
+    }
+  } else {
+    cockpitCategories.value.push({
+      agent_name: data.agent_name,
+      category_label: data.category_label,
+      priority: false,
+      collapsed: false,
+      dimensions: data.dimensions,
+    })
+  }
+}
+
+// ── 驾驶舱交互 ──
+
+function handleCockpitSetPriority(agentName: string) {
+  const cat = cockpitCategories.value.find(c => c.agent_name === agentName)
+  if (cat) {
+    cat.priority = !cat.priority
+    // 可扩展：发送 API 请求通知后端
+  }
+}
+
+function handleCockpitToggleDimension(agentName: string, dimId: string) {
+  const cat = cockpitCategories.value.find(c => c.agent_name === agentName)
+  if (!cat) return
+  const dim = cat.dimensions.find(d => d.dimension_id === dimId)
+  if (dim) {
+    dim.enabled = !dim.enabled
+    // 可扩展：发送 POST /api/dimension/disable
+  }
+}
+
+function handleCockpitFollowUp(agentName: string, _dimId: string) {
+  const cat = cockpitCategories.value.find(c => c.agent_name === agentName)
+  if (cat) {
+    cat.priority = true
+    // 可扩展：在输入框预填"继续分析 {category_label}"
+  }
+}
+
+function handleCockpitSupplement(agentName: string, _dimId: string) {
+  // 可扩展：触发文件上传
+  ElMessage.info('补充数据功能开发中')
 }
 
 // ── 生命周期 ──
@@ -733,9 +524,7 @@ function handleNewChat() {
   store.newConversation()
   messages.value = []
   conversationId.value = ''
-  treeBranches.value = []
-  treeRound.value = 0
-  pendingInvocations.value.clear()
+  cockpitCategories.value = []
   briefingData.value = null
 }
 
@@ -748,26 +537,7 @@ async function handleSelectConversation(convId: string) {
     content: m.content,
     createdAt: m.createdAt,
   }))
-  // 加载该对话的树
-  loadTreeForConversation(convId)
   scrollToBottom()
-}
-
-async function loadTreeForConversation(convId: string) {
-  try {
-    const res = await getAnalysisTree(convId)
-    if (res.tree) {
-      treeBranches.value = res.tree.branches
-      treeRound.value = res.tree.conversation_round
-    } else {
-      treeBranches.value = []
-      treeRound.value = 0
-    }
-    pendingInvocations.value.clear()
-  } catch {
-    treeBranches.value = []
-    treeRound.value = 0
-  }
 }
 
 function handleConvAction(cmd: string, conv: { id: string; title: string }) {
@@ -804,23 +574,61 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-chat {
-  height: calc(100vh - 60px);
+  height: 100vh;
   background-color: #f5f7fa;
+  display: flex;
+  overflow: hidden;
 }
 
-.chat-layout {
-  height: 100%;
+/* ── 三栏 flex 布局 ── */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.panel-left {
+  background: #fff;
+  border-right: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.panel-center {
+  background: white;
+  flex: 1;
+  min-width: 0;
+}
+
+.panel-right {
+  background: #fafbfc;
+  border-left: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+/* ── 拖拽手柄 ── */
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.resize-handle:hover {
+  background: #3b82f6;
+}
+.panel-left .resize-handle {
+  right: -3px;
+}
+.panel-center .resize-handle {
+  right: -3px;
 }
 
 /* ── 会话侧边栏 ── */
-
-.conversation-sidebar {
-  background: #fff;
-  border-right: 1px solid #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
 
 .sidebar-header {
   display: flex;
@@ -831,10 +639,41 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.sidebar-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .sidebar-title {
   font-size: 15px;
   font-weight: 600;
   color: #334155;
+}
+
+/* 侧栏显示/隐藏按钮 */
+.sidebar-toggle-btn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: white;
+  color: #64748b;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.sidebar-toggle-btn:hover {
+  background: #f1f5f9;
+  border-color: #3b82f6;
+  color: #3b82f6;
 }
 
 .conversation-list {
@@ -898,14 +737,6 @@ onBeforeUnmount(() => {
 }
 
 /* ── 聊天主区域 ── */
-
-.chat-main {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-  background: white;
-}
 
 .messages {
   flex: 1;
@@ -975,31 +806,83 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 
-.content :deep(pre.code-block) {
-  background: #1e293b;
-  color: #e2e8f0;
-  padding: 12px;
-  border-radius: 8px;
-  overflow-x: auto;
-  font-size: 13px;
-  line-height: 1.4;
+/* GitHub-flavored Markdown 样式 */
+.content :deep(h1),
+.content :deep(h2),
+.content :deep(h3),
+.content :deep(h4) {
+  margin: 14px 0 8px;
+  font-weight: 600;
+  color: #1e293b;
 }
-
+.content :deep(h1) { font-size: 18px; border-bottom: 1px solid #e8ecf1; padding-bottom: 6px; }
+.content :deep(h2) { font-size: 16px; border-bottom: 1px solid #e8ecf1; padding-bottom: 4px; }
+.content :deep(h3) { font-size: 14px; }
+.content :deep(p) { margin: 6px 0; line-height: 1.7; }
+.content :deep(ul),
+.content :deep(ol) { padding-left: 20px; margin: 6px 0; }
+.content :deep(li) { margin: 3px 0; }
 .content :deep(code) {
-  background: #f1f5f9;
+  background: #f1f3f5;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 13px;
-  color: #dc2626;
+  color: #d63384;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, monospace;
 }
-
-.content :deep(strong) {
+.content :deep(pre) {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 10px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.content :deep(pre code) {
+  background: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+.content :deep(table) {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 13px;
+  width: 100%;
+}
+.content :deep(th),
+.content :deep(td) {
+  border: 1px solid #d0d5dd;
+  padding: 6px 10px;
+  text-align: left;
+}
+.content :deep(th) {
+  background: #f8fafc;
   font-weight: 600;
 }
-
-.content :deep(li) {
-  margin: 4px 0;
-  padding-left: 8px;
+.content :deep(blockquote) {
+  border-left: 4px solid #3b82f6;
+  padding-left: 14px;
+  color: #64748b;
+  margin: 8px 0;
+}
+.content :deep(hr) {
+  border: none;
+  border-top: 1px solid #e8ecf1;
+  margin: 16px 0;
+}
+.content :deep(img) {
+  max-width: 100%;
+  border-radius: 6px;
+}
+.content :deep(a) {
+  color: #3b82f6;
+  text-decoration: none;
+}
+.content :deep(a:hover) {
+  text-decoration: underline;
 }
 
 .cursor-blink {
@@ -1079,238 +962,6 @@ onBeforeUnmount(() => {
 .input-actions {
   display: flex;
   justify-content: flex-end;
-}
-
-/* ── 分析树面板 ── */
-
-.tree-panel {
-  background: #fafbfc;
-  border-left: 1px solid #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.tree-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  border-bottom: 1px solid #e2e8f0;
-  flex-shrink: 0;
-}
-
-.tree-header h3 {
-  margin: 0;
-  font-size: 15px;
-  color: #334155;
-}
-
-.tree-round-badge {
-  font-size: 12px;
-  color: #64748b;
-  background: #e2e8f0;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.tree-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-.tree-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
-
-.tree-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-/* ── Tree Branch ── */
-
-.tree-branch {
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  overflow: hidden;
-  transition: border-color 0.2s;
-}
-
-.tree-branch.running {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 1px #bfdbfe;
-}
-
-.tree-branch.completed {
-  border-color: #86efac;
-}
-
-.tree-branch.error {
-  border-color: #fca5a5;
-}
-
-.branch-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #f8fafc;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.branch-status-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-}
-
-.branch-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1e293b;
-  flex: 1;
-}
-
-.branch-actions {
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.tree-branch:hover .branch-actions {
-  opacity: 1;
-}
-
-/* ── Tree Invocation ── */
-
-.branch-invocations {
-  padding: 6px 12px 6px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.tree-invocation {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: #f8fafc;
-  border-left: 3px solid #e2e8f0;
-  transition: border-color 0.2s;
-}
-
-.tree-invocation.running {
-  border-left-color: #3b82f6;
-  background: #eff6ff;
-}
-
-.tree-invocation.completed {
-  border-left-color: #22c55e;
-}
-
-.tree-invocation.error {
-  border-left-color: #ef4444;
-  background: #fef2f2;
-}
-
-.inv-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.inv-status-icon {
-  font-size: 12px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.inv-dimensions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  flex: 1;
-}
-
-.dim-tag {
-  font-size: 11px;
-  padding: 1px 6px;
-  background: #dbeafe;
-  color: #1e40af;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-
-.dim-tag.dim-default {
-  background: #f1f5f9;
-  color: #64748b;
-}
-
-.inv-summary {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #475569;
-  line-height: 1.5;
-}
-
-.inv-error {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #dc2626;
-}
-
-.inv-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 6px;
-}
-
-.inv-time {
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.inv-backtrack-btn {
-  font-size: 11px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.tree-invocation:hover .inv-backtrack-btn {
-  opacity: 1;
-}
-
-/* ── Status Spinner ── */
-
-.status-spinner {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border: 2px solid #e2e8f0;
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.status-spinner-sm {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 2px solid #e2e8f0;
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 /* ── 推荐问题卡片 ── */

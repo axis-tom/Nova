@@ -1,7 +1,7 @@
 <template>
   <div id="app">
-    <!-- 工作区和认证页面使用独立布局 -->
-    <template v-if="$route.name === 'Workspace' || $route.name === 'Login' || $route.name === 'Register'">
+    <!-- 工作区、认证页面和 Agent 对话使用独立布局 -->
+    <template v-if="$route.name === 'Workspace' || $route.name === 'Login' || $route.name === 'Register' || $route.name === 'AgentChat'">
       <router-view />
     </template>
 
@@ -45,7 +45,7 @@ watch(sidebarCollapsed, (val: boolean) => {
 
 // 判断当前是否在认证页面（登录或注册）或Console页面或Workspace页面
 const isAuthPage = computed(() => {
-  return route.name === 'Login' || route.name === 'Register' || route.name === 'Console' || route.name === 'Workspace' || route.path === '/workspace';
+  return route.name === 'Login' || route.name === 'Register' || route.name === 'Console' || route.name === 'Workspace' || route.name === 'AgentChat' || route.path === '/workspace';
 });
 
 // 切换侧边栏（由 NavBar 触发）

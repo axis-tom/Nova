@@ -36,3 +36,5 @@ test/amazon_products.csv
 test/collect_amazon_products.py
 # Redis AOF persistence files
 backend/infrastructure/data/redis/
+
+/field_list

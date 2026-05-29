@@ -75,7 +75,21 @@ class AmazonReviewAnalyzerAgent(Agent):
                 state.add_event("review_analyzer_no_products")
                 return state
 
-            # ── LLM 驱动的分析循环 ──
+            # ── 先跑确定性分析作为兜底（LLM 即使失败也不丢数据） ──
+            benchmark = self._compute_benchmark(products)
+            products_with_reviews = sorted(
+                [p for p in products if (p.get("review_count") or 0) > 0],
+                key=lambda p: p.get("review_count", 0),
+                reverse=True,
+            )[:max_analyze]
+            if not products_with_reviews:
+                products_with_reviews = products[:max_analyze]
+            fallback_insights = [self._analyze_single(p, benchmark) for p in products_with_reviews]
+            state.set("review_insights", fallback_insights)
+            state.set("sentiment_summary", self._build_sentiment_summary(fallback_insights))
+            state.set("customer_needs", self._infer_customer_needs(fallback_insights, benchmark))
+
+            # ── LLM 驱动的分析循环（仅用于增强评论，失败不丢兜底数据） ──
             tools = self._build_analysis_tools(products, max_analyze)
             tool_descriptions = "\n".join(
                 f"- {t.name}: {t.description}" for t in tools
@@ -101,11 +115,14 @@ class AmazonReviewAnalyzerAgent(Agent):
             result["llm_driven"] = True
             logger.info("[ReviewAnalyzer] LLM 驱动评论分析完成")
 
-            # 保持 state key 向后兼容
-            state.set("review_insights", result.get("review_insights", []))
-            state.set("sentiment_summary", result.get("sentiment_summary", {}))
-            state.set("customer_needs", result.get("customer_needs", []))
-            state.set_meta("reviews_analyzed", len(result.get("review_insights", [])))
+            # 如果 LLM 返回了合法 JSON，用其覆盖兜底数据（否则保留兜底）
+            if result.get("review_insights"):
+                state.set("review_insights", result["review_insights"])
+            if result.get("sentiment_summary"):
+                state.set("sentiment_summary", result["sentiment_summary"])
+            if result.get("customer_needs"):
+                state.set("customer_needs", result["customer_needs"])
+            state.set_meta("reviews_analyzed", len(state.get("review_insights", [])))
             state.set_meta("llm_driven", True)
 
             logger.info(f"[ReviewAnalyzer] LLM 分析完成")

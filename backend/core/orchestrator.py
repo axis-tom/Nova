@@ -36,6 +36,7 @@ from backend.core.memory.durable import get_durable_session
 from backend.core.memory.summarizer import summarize_conversation
 from backend.core.llm.config import get_llm_for_agent
 from backend.core.tracking.analysis_tree import analysis_tree_manager
+from backend.core.cockpit_extractor import extract_cockpit_data, AGENT_CATEGORY_LABELS
 
 # ── 全局记忆实例 ──
 memory = MemoryStore()
@@ -623,14 +624,14 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                             elapsed = round(time.time() - _agent_timers.pop(tool_name), 2)
                         yield {"type": "agent_end", "data": {"name": tool_name, "elapsed_s": elapsed}}
                         yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
-                        # 如果是 briefing_generator，额外发送结构化数据供前端图表渲染
-                        if tool_name == "briefing_generator":
+                        # 从 SessionStore 提取驾驶舱数据
+                        if tool_name in AGENT_CATEGORY_LABELS:   # 只对业务 Agent
                             try:
-                                tool_content = json.loads(msg.get("content", "{}"))
-                                briefing_data = tool_content.get("data", {})
-                                if briefing_data:
-                                    yield {"type": "briefing_data", "data": briefing_data}
-                            except (json.JSONDecodeError, TypeError):
+                                state = session_store.get_or_create(conv_id)
+                                cockpit = extract_cockpit_data(tool_name, state.data)
+                                if cockpit:
+                                    yield {"type": "cockpit_update", "data": cockpit}
+                            except Exception:
                                 pass
                         # Step 2: 持久化工具结果
                         await durable.append_message(

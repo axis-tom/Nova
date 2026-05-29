@@ -31,9 +31,62 @@ export interface ToolResult {
 // ── SSE 事件类型 ──
 
 export interface SSEEvent {
-  type: 'status' | 'tool_call' | 'tool_result' | 'start_response' | 'response_chunk' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'briefing_data' | 'tree_node_status' | 'tree_node_added' | 'tree_full'
-  data: string | ToolCallData | TreeNodeStatusData | TreeNodeAddedData | TreeFullData
+  type: 'status' | 'tool_call' | 'tool_result' | 'start_response' | 'response_chunk' | 'done' | 'error' | 'agent_start' | 'agent_end' | 'briefing_data' | 'cockpit_update' | 'tree_node_status' | 'tree_node_added' | 'tree_full'
+  data: string | ToolCallData | TreeNodeStatusData | TreeNodeAddedData | TreeFullData | CockpitUpdateData
   conversation_id: string
+}
+
+// ── 多维驾驶舱类型 ──
+
+export interface CockpitSufficiency {
+  status: 'sufficient' | 'moderate' | 'insufficient'
+  percent: number
+  message: string
+}
+
+export interface ChartSeries {
+  name?: string
+  data: number[]
+  itemStyle?: Record<string, any>
+}
+
+export interface ChartConfig {
+  title?: string
+  type?: string
+  xAxis?: { name?: string; data: string[] }
+  yAxis?: { name?: string }
+  series: ChartSeries[]
+  data?: Array<{ name: string; value: number }>
+}
+
+export interface CockpitDimension {
+  dimension_id: string
+  name: string
+  sufficiency: CockpitSufficiency
+  charts: {
+    bar?: ChartConfig
+    pie?: ChartConfig
+    scatter?: ChartConfig
+    hist?: ChartConfig
+    line?: ChartConfig
+    wordcloud?: ChartConfig
+  }
+  default_chart: string
+  enabled: boolean
+}
+
+export interface CockpitCategory {
+  agent_name: string
+  category_label: string
+  priority: boolean
+  collapsed: boolean
+  dimensions: CockpitDimension[]
+}
+
+export interface CockpitUpdateData {
+  agent_name: string
+  category_label: string
+  dimensions: CockpitDimension[]
 }
 
 export interface ToolCallData {

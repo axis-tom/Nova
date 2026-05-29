@@ -126,39 +126,12 @@ def _update_conversation_title(conv_id: str, title: str) -> None:
 
 async def _call_llm_for_summary(conversation_text: str) -> str:
     """调用 LLM 生成摘要（复用 orchestrator 的 LLM 配置）"""
-    import os
-    from pathlib import Path
-    from dotenv import load_dotenv
-    from langchain_openai import ChatOpenAI
+    from backend.core.llm.config import get_llm_for_agent
 
-    env_path = Path(__file__).resolve().parent.parent.parent / "backend" / "config" / ".env"
-    if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
-
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ZHIPU_API_KEY")
-    base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL", "")
-    model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
-
-    # 确保 base_url 以 /v1 结尾
-    if base_url and not base_url.rstrip("/").endswith("/v1"):
-        base_url = base_url.rstrip("/") + "/v1"
-
-    if os.getenv("ZHIPU_API_KEY"):
-        llm = ChatOpenAI(
-            model=model or "glm-4-flash",
-            api_key=api_key,
-            base_url=base_url or "https://open.bigmodel.cn/api/paas/v4/",
-            temperature=0.3,
-            use_responses_api=False,
-        )
-    else:
-        llm = ChatOpenAI(
-            model=model,
-            api_key=api_key,
-            base_url=base_url or "",
-            temperature=0.3,
-            use_responses_api=False,
-        )
+    llm = get_llm_for_agent("orchestrator")
+    if llm is None:
+        logger.error("[Summarizer] Failed to get orchestrator LLM, cannot generate summary")
+        return ""
 
     prompt = SUMMARIZE_PROMPT.format(conversation=conversation_text[:3000])
     response = await llm.ainvoke(prompt)
