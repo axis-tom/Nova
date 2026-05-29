@@ -288,6 +288,61 @@ class AmazonProductRepository:
         result = await self.db.execute(stmt)
         return list(result.scalars().all()), total
 
+    # ── 数据生命周期 ──
+
+    async def get_products_by_lifecycle(
+        self, status: str, last_accessed_before: Optional[datetime] = None,
+        domain: str = "US", limit: int = 100,
+    ) -> List[AmazonProduct]:
+        """按生命周期状态查询 ASIN"""
+        conditions = [
+            AmazonProduct.lifecycle_status == status,
+            AmazonProduct.domain == domain,
+        ]
+        if last_accessed_before:
+            conditions.append(
+                or_(
+                    AmazonProduct.last_accessed_at.is_(None),
+                    AmazonProduct.last_accessed_at < last_accessed_before,
+                )
+            )
+        stmt = (
+            select(AmazonProduct)
+            .where(and_(*conditions))
+            .order_by(AmazonProduct.last_accessed_at.asc().nullsfirst())
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def update_lifecycle(self, asin: str, domain: str, status: str) -> bool:
+        """更新 ASIN 的生命周期状态"""
+        stmt = (
+            update(AmazonProduct)
+            .where(
+                AmazonProduct.asin == asin,
+                AmazonProduct.domain == domain,
+            )
+            .values(lifecycle_status=status, updated_at=datetime.now(timezone.utc))
+        )
+        result = await self.db.execute(stmt)
+        await self.db.commit()
+        return result.rowcount > 0
+
+    async def update_last_accessed(self, asin: str, domain: str = "US") -> bool:
+        """记录 ASIN 被 Agent 访问的时间（用于生命周期判断）"""
+        stmt = (
+            update(AmazonProduct)
+            .where(
+                AmazonProduct.asin == asin,
+                AmazonProduct.domain == domain,
+            )
+            .values(last_accessed_at=datetime.now(timezone.utc))
+        )
+        result = await self.db.execute(stmt)
+        await self.db.commit()
+        return result.rowcount > 0
+
     # ── ETL 日志 ──
 
     async def create_etl_log(self, log_data: Dict[str, Any]) -> AmazonETLLog:

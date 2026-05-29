@@ -19,6 +19,7 @@ from backend.aqueduct.cost_catalog import estimate_min_cost
 from backend.aqueduct.cost_controller import cost_controller
 from backend.aqueduct.etl_pipeline import ETLPipeline
 from backend.aqueduct.quality_scorer import enrich_with_trust
+from backend.aqueduct.roi_tracker import roi_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,14 @@ class DataProvider:
             if result and with_trust:
                 result = enrich_with_trust(result, result.get("freshness_map", {}))
             return result
+
+        # 记录访问时间（用于生命周期降级判断）
+        async with AsyncSessionLocal() as db:
+            repo = AmazonProductRepository(db)
+            await repo.update_last_accessed(asin, domain)
+
+        # 记录 ROI 查询
+        await roi_tracker.record_query(asin)
 
         result = self._product_to_dict(product)
 

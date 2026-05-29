@@ -27,28 +27,16 @@ from backend.aqueduct.connectors.keepa_connector import (
 from backend.aqueduct.acquisition_queue import acquisition_queue, QueueItem
 from backend.aqueduct.cost_controller import cost_controller
 from backend.aqueduct.etl_pipeline import ETLPipeline
+from backend.aqueduct.lifecycle_manager import LIFECYCLE_TTL
 from backend.aqueduct.metrics import token_remaining, acquisition_queue_depth
+from backend.aqueduct.roi_tracker import roi_tracker
 
 logger = logging.getLogger(__name__)
 
-# 各源 TTL（小时）
-_TTL = {
-    "hot": {
-        "keepa": 6,       # Hot 价格趋势每 6h
-        "rainforest": 12,  # Hot 基础信息每 12h
-        "canopy": 12,      # Hot 评论/评分每 12h
-    },
-    "active": {
-        "keepa": 24,
-        "rainforest": 72,
-        "canopy": 48,
-    },
-    "passive": {
-        "keepa": 72,
-        "rainforest": 240,  # 10 天
-        "canopy": 168,       # 7 天
-    },
-}
+# TTL 由 LifecycleManager 按生命周期状态管理
+# lifecycle_status=active: 价格 24h, listing 72h
+# lifecycle_status=passive: 价格 168h, listing 720h
+# lifecycle_status=archived: 不刷新
 
 # Keepa 桶水位阈值
 _BUCKET_THRESHOLDS = {
@@ -234,14 +222,20 @@ class BudgetAwareScheduler:
 
         result = {"keepa": [], "rainforest": [], "canopy": [], "keepa_count": 0}
 
-        for tier, ttl in _TTL.items():
+        # 按生命周期状态各自 TTL 扫描过期 ASIN
+        lifecycle_statuses = ("active", "passive")
+        for lifecycle_status in lifecycle_statuses:
+            ttl = LIFECYCLE_TTL.get(lifecycle_status, {})
             for source, hours in ttl.items():
+                if hours is None:
+                    continue  # archived 不刷新
                 if source == "keepa" and not keepa_available:
                     continue
 
                 max_cycle = _MAX_PER_CYCLE.get(source, 20)
                 stale = await repo.get_stale_asins(
-                    source=source, max_age_hours=hours, tier=tier, limit=max_cycle,
+                    source=source, max_age_hours=hours,
+                    tier=lifecycle_status, limit=max_cycle,
                 )
 
                 for p in stale:
@@ -355,10 +349,13 @@ class BudgetAwareScheduler:
         cn_cost = result.get("canopy_consumed", 0)
         if keepa_cost:
             await cost_controller.record_usage("keepa", keepa_cost)
+            await roi_tracker.record_acquisition("batch", "keepa", keepa_cost)
         if rf_cost:
             await cost_controller.record_usage("rainforest", rf_cost)
+            await roi_tracker.record_acquisition("batch", "rainforest", rf_cost)
         if cn_cost:
             await cost_controller.record_usage("canopy", cn_cost)
+            await roi_tracker.record_acquisition("batch", "canopy", cn_cost)
 
         # 成功/失败 → 通知 CostController（用于熔断判断）
         for source in sources:

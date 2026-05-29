@@ -167,6 +167,10 @@ class AmazonProduct(Base):
     importance_tier = Column(String(10), nullable=True)  # hot / active / passive
     importance_details = Column(JSON, nullable=True)
 
+    # ── 数据生命周期 ★ ─────────────────────────────────────────────
+    lifecycle_status = Column(String(10), nullable=True, default="active")  # active / passive / archived / deleted
+    last_accessed_at = Column(DateTime(timezone=True), nullable=True)  # 最近一次被 Agent 查询的时间
+
     # ── 9. 数据源元信息 ─────────────────────────────────────────
     data_source = Column(JSON, nullable=True)  # {"keepa": true, "rainforest": true, "canopy": true}
     keepa_updated_at = Column(DateTime(timezone=True), nullable=True)
