@@ -3,9 +3,9 @@
 
 Agent 通过此 Provider 读取数据，不直接访问任何 API 连接器。
 内部路由：
-  amazon_products 表里有且新鲜 → 直接返回（0 次 API 调用）
+  amazon_products 表里有且新鲜 → 直接返回（附可信度标记）
   表里有但过期 → enqueue 异步刷新 → 返回现有数据
-  表里没有 → enqueue 冷启动 → 阻塞等待 → 返回
+  表里没有 → ETL Pipeline 冷启动（4 阶段递进）→ 返回
 """
 import asyncio
 import logging
@@ -16,6 +16,7 @@ from backend.data.database import AsyncSessionLocal
 from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
 from backend.aqueduct.acquisition_queue import AcquisitionQueue
 from backend.aqueduct.etl_pipeline import ETLPipeline
+from backend.aqueduct.quality_scorer import enrich_with_trust
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class DataProvider:
 
     # ── 公开入口 ───────────────────────────────────────────────────
 
-    async def get_product(self, asin: str, domain: str = "US") -> Optional[Dict]:
+    async def get_product(self, asin: str, domain: str = "US", with_trust: bool = True) -> Optional[Dict]:
         """读优先：有且新鲜 → 直接返回；过期 → 异步刷新；无 → 冷启动"""
         async with AsyncSessionLocal() as db:
             repo = AmazonProductRepository(db)
@@ -77,26 +78,32 @@ class DataProvider:
         if stale_dims:
             asyncio.create_task(self._refresh(asin, domain, stale_dims))
 
+        # 附可信度
+        if with_trust:
+            result = enrich_with_trust(result, product.freshness_map or {})
+
         return result
 
-    async def get_product_blocking(self, asin: str, domain: str = "US") -> Optional[Dict]:
+    async def get_product_blocking(self, asin: str, domain: str = "US", with_trust: bool = True) -> Optional[Dict]:
         """阻塞模式：等数据采集完毕再返回（用于冷启动）"""
-        return await self._cold_start(asin, domain)
+        result = await self._cold_start(asin, domain)
+        if result and with_trust:
+            result = enrich_with_trust(result, result.get("freshness_map", {}))
+        return result
 
-    async def get_products(self, asins: List[str], domain: str = "US") -> Dict[str, Optional[Dict]]:
-        """批量查（不阻塞，各自异步刷新）"""
+    async def get_products(self, asins: List[str], domain: str = "US", with_trust: bool = True) -> Dict[str, Optional[Dict]]:
+        """批量查"""
         results = {}
         for asin in asins:
-            results[asin] = await self.get_product(asin, domain)
+            results[asin] = await self.get_product(asin, domain, with_trust)
         return results
 
     # ── 冷启动 ─────────────────────────────────────────────────────
 
     async def _cold_start(self, asin: str, domain: str = "US") -> Optional[Dict]:
-        """冷启动：入队并等待结果"""
+        """冷启动：走 ETL Pipeline 的 4 阶段递进冷启动"""
         lock_key = f"{asin}:{domain}"
 
-        # 重复冷启动去重
         if lock_key in self._cold_start_locks:
             event = self._cold_start_locks[lock_key]
             await asyncio.wait_for(event.wait(), timeout=_COLD_START_TIMEOUT)
@@ -106,26 +113,19 @@ class DataProvider:
         self._cold_start_locks[lock_key] = event
 
         try:
-            # 入队冷启动任务
-            await self._queue.enqueue(asin, priority=0, domain=domain, cold_start=True)
-
-            # 等待采集完成（由 ETL 回调通知）
-            await asyncio.wait_for(event.wait(), timeout=_COLD_START_TIMEOUT)
-            return self._cold_start_results.get(lock_key)
-        except asyncio.TimeoutError:
-            logger.warning(f"[DataProvider] Cold start timeout for {asin}")
+            # 直接调 ETL Pipeline 的 cold_start（不走队列——冷启动是同步阻塞的）
+            async with AsyncSessionLocal() as db:
+                pipeline = ETLPipeline(db)
+                product_data = await pipeline.cold_start(asin, domain)
+                self._cold_start_results[lock_key] = product_data
+                return product_data
+        except Exception as e:
+            logger.error(f"[DataProvider] Cold start failed for {asin}: {e}")
             return None
         finally:
+            event.set()
             self._cold_start_locks.pop(lock_key, None)
             self._cold_start_results.pop(lock_key, None)
-
-    def _notify_cold_start_done(self, asin: str, domain: str, data: Optional[Dict]):
-        """ETL Pipeline 完成后回调，通知等待的冷启动"""
-        lock_key = f"{asin}:{domain}"
-        self._cold_start_results[lock_key] = data
-        event = self._cold_start_locks.get(lock_key)
-        if event:
-            event.set()
 
     # ── 异步刷新 ───────────────────────────────────────────────────
 

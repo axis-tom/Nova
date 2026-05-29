@@ -353,7 +353,164 @@ class ETLPipeline:
 
         return freshness
 
-    # ── Merge（按字段级优先级合并） ──
+    # ── 降级链配置 ───────────────────────────────────────────────
+
+    _DEGRADATION_CHAINS = {
+        "reviews_body": [
+            ("canopy", "get_reviews"),            # 首选：Canopy /reviews
+            ("rainforest", "get_product"),         # 降级：RF product.top_reviews
+        ],
+        "buybox_info": [
+            ("rainforest", "get_product"),         # 首选：RF buybox_winner
+            ("keepa", "query_products"),           # 降级：Keepa stats.buyBoxPrice
+        ],
+        "price": [
+            ("keepa", "query_products"),           # 首选：Keepa csv[1]
+            ("rainforest", "get_product"),         # 降级：RF buybox_winner.price
+            ("canopy", "get_product"),             # 再降级：Canopy product
+        ],
+        "listing": [
+            ("rainforest", "get_product"),         # 首选：RF listing
+            ("canopy", "get_product"),             # 降级：Canopy listing
+        ],
+        "sales_estimate": [
+            ("canopy", "get_sales"),               # 首选：Canopy /sales
+        ],
+        "stock_level": [
+            ("canopy", "get_stock"),               # 首选：Canopy /stock
+            ("rainforest", "get_product"),         # 降级：RF availability
+        ],
+        "rating_breakdown": [
+            ("rainforest", "get_product"),         # 独占，无降级
+        ],
+        "bsr_history": [
+            ("keepa", "query_products"),           # 独占
+        ],
+    }
+
+    def _get_degradation_plan(self, needed_dims: List[str]) -> List[tuple]:
+        """
+        根据冷启动/刷新需要的维度，生成降级采集计划。
+        返回 [(source, endpoint, dims), ...] 去重合并后的计划。
+        """
+        plan = []
+        seen = set()
+        for dim in needed_dims:
+            chain = self._DEGRADATION_CHAINS.get(dim, [])
+            for source, endpoint in chain:
+                key = f"{source}:{endpoint}"
+                if key not in seen:
+                    seen.add(key)
+                    plan.append((source, endpoint, [dim]))
+                else:
+                    # 合并到已有条目
+                    for i, (s, e, dims) in enumerate(plan):
+                        if s == source and e == endpoint:
+                            plan[i] = (s, e, dims + [dim])
+                            break
+        return plan
+
+    # ── 冷启动（4 阶段递进） ────────────────────────────────────
+
+    async def cold_start(self, asin: str, domain: str = "US") -> Optional[Dict]:
+        """
+        4 阶段递进式冷启动。
+
+        Phase 1 (必选): Keepa /product — 验证 ASIN 存在 + 历史曲线
+        Phase 2 (必选): Rainforest /product — listing + buy box + A+ + 评分
+        Phase 3 (可选): Canopy /product + /reviews + /sales + /stock
+        Phase 4 (可选): Keepa offers=20 — Offer 阵列 + FBA 费用
+        """
+        started_at = datetime.now(timezone.utc)
+        logger.info(f"[ColdStart] Begin {asin}@{domain}")
+
+        # Phase 1: Keepa（必选）
+        logger.info(f"[ColdStart] Phase 1: Keepa /product for {asin}")
+        try:
+            keepa_result = await self.keepa.async_query_products([asin], domain, history=True, stats=180)
+            if not keepa_result:
+                logger.warning(f"[ColdStart] Phase 1 failed: {asin} not found on Keepa")
+                return None
+            kp_raw = keepa_result[0]
+            kp_raw["domain"] = domain
+        except KError as e:
+            logger.warning(f"[ColdStart] Phase 1 error: {e}")
+            return None
+
+        # Phase 2: Rainforest（必选）
+        logger.info(f"[ColdStart] Phase 2: Rainforest /product for {asin}")
+        rf_raw = {}
+        try:
+            rf_domain = _keepa_to_rainforest_domain(domain)
+            rf_result = await self.rainforest.async_get_product(asin, rf_domain)
+            if rf_result:
+                rf_result["domain"] = domain
+                rf_raw = rf_result
+        except RFError as e:
+            logger.warning(f"[ColdStart] Phase 2 failed (degraded): {e}")
+
+        # Phase 3: Canopy（可选）
+        logger.info(f"[ColdStart] Phase 3: Canopy for {asin}")
+        cn_raw = {}
+        try:
+            cn_domain = _keepa_to_rainforest_domain(domain)
+            cn_result = await self.canopy.async_get_product(asin, cn_domain)
+            if cn_result:
+                cn_result["domain"] = domain
+                cn_raw = cn_result
+        except CNError as e:
+            logger.warning(f"[ColdStart] Phase 3 failed (optional): {e}")
+
+        # Phase 4: Keepa offers=20（可选）
+        logger.info(f"[ColdStart] Phase 4: Keepa offers for {asin}")
+        kp_offers_raw = {}
+        try:
+            offers_result = await self.keepa.async_query_products([asin], domain, offers=20)
+            if offers_result:
+                kp_offers_raw = offers_result[0]
+                # 合并 offers 数据到 keepa 主数据
+                if kp_offers_raw:
+                    for key in ("offerCount", "offerCountFBA", "buyboxSellerId",
+                                "buyboxIsFBA", "fbaFee", "referralFeePercent",
+                                "salesRankDrops30", "salesRankDrops90"):
+                        if key in kp_offers_raw and kp_offers_raw[key] is not None:
+                            kp_raw[key] = kp_offers_raw[key]
+        except Exception as e:
+            logger.warning(f"[ColdStart] Phase 4 failed (optional): {e}")
+
+        # Normalize
+        kp_norm = self._normalize_keepa(kp_raw)
+        rf_norm = self._normalize_rainforest(rf_raw)
+        cn_norm = self._normalize_canopy(cn_raw)
+
+        # Merge + coverage + freshness
+        merged = self._merge_products({asin: kp_norm}, {asin: rf_norm}, {asin: cn_norm})
+        product_data = merged.get(asin, {})
+
+        # 标记降级
+        if not rf_raw:
+            if "coverage_map" in product_data:
+                for dim in ("has_aplus", "has_videos", "has_rating_breakdown"):
+                    if isinstance(product_data["coverage_map"], dict):
+                        product_data["coverage_map"][dim] = {
+                            "available": False,
+                            "degraded": True,
+                            "reason": "rainforest_product_unavailable"
+                        }
+            coverage_map = product_data.get("coverage_map", {})
+            if isinstance(coverage_map, dict):
+                coverage_map.setdefault("has_listing", False)
+
+        # 写入 DB
+        async with self.repo.db as session:
+            repo = AmazonProductRepository(session)
+            for s in product_data.get("data_source", ["keepa"]):
+                await repo.upsert(product_data, s)
+
+        elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+        logger.info(f"[ColdStart] Done {asin}@{domain} in {elapsed:.1f}s (sources={product_data.get('data_source', [])})")
+
+        return product_data
 
     def _merge_products(
         self, keepa_data: Dict, rf_data: Dict, cn_data: Dict,
