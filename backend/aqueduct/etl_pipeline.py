@@ -15,7 +15,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -251,15 +251,122 @@ class ETLPipeline:
                 result[dst_key] = raw[src_key]
         return result
 
+    # ── 字段级覆盖度维度检查 ──────────────────────────────────
+
+    _COVERAGE_DIMS = {
+        "has_basic_info": {"asin", "title", "brand"},
+        "has_listing": {"feature_bullets", "main_image", "images"},
+        "has_aplus": {"aplus_content"},
+        "has_videos": {"videos_count"},
+        "has_price": {"current_price"},
+        "has_buybox": {"buybox_price", "buybox_seller_id"},
+        "has_price_stats": {"avg_price_30d", "avg_price_90d"},
+        "has_bsr": {"current_bsr"},
+        "has_bsr_stats": {"avg_bsr_30d", "avg_bsr_90d"},
+        "has_bsr_drops": {"sales_rank_drops_30d"},
+        "has_reviews_body": {"top_reviews"},           # Canopy /reviews 的评论正文
+        "has_rating_breakdown": {"rating_breakdown"},
+        "has_rating_history": {"rating_history"},
+        "has_sales_estimate": {"monthly_sold"},
+        "has_stock_level": {"stock_level"},
+        "has_offer_counts": {"offer_count", "seller_count"},
+        "has_fba_fee": {"fba_fee"},
+        "has_referral_fee": {"referral_fee_percent"},
+        "has_price_history": {"price_history"},
+        "has_bsr_history": {"bsr_history"},
+    }
+
+    def _calc_coverage(self, product: Dict) -> Dict[str, bool]:
+        """
+        根据合并后的 product dict 计算覆盖度。
+        True=有数据 / False=真没有 / 不在 dict 中=从未尝试
+        """
+        coverage = {}
+        for dim, required_fields in self._COVERAGE_DIMS.items():
+            has = all(product.get(f) is not None for f in required_fields)
+            if has:
+                coverage[dim] = True
+            else:
+                # 检查是否至少在某个源的原始数据中出现过（真没有 vs 未尝试）
+                any_source_has = any(
+                    product.get(f) is not None
+                    for f in required_fields
+                )
+                if any_source_has:
+                    coverage[dim] = True  # 部分有也算有
+        return coverage
+
+    def _calc_freshness(self, product: Dict, raw_sources: Dict[str, Dict]) -> Dict:
+        """
+        计算每个数据维度的新鲜度元信息：
+        来源、端点、采集时间、cost。
+        """
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        freshness = {}
+
+        has_aplus = product.get("aplus_content") is not None
+        has_buybox = product.get("buybox_price") is not None or product.get("buybox_seller_id") is not None
+
+        # — 源头映射：每个维度来自哪个源的哪个端点 —
+        _DIM_SOURCE = {
+            "has_basic_info": ("keepa", "/product", 1, 0, 0),
+            "has_listing": ("rainforest", "/product", 0, 1, 0),
+            "has_aplus": ("rainforest", "/product", 0, 1, 0),
+            "has_videos": ("rainforest", "/product", 0, 1, 0),
+            "has_price": ("canopy", "/product", 0, 0, 1),
+            "has_buybox": ("rainforest", "/product", 0, 1, 0),
+            "has_price_stats": ("keepa", "/product", 1, 0, 0),
+            "has_bsr": ("keepa", "/product", 1, 0, 0),
+            "has_bsr_stats": ("keepa", "/product", 1, 0, 0),
+            "has_bsr_drops": ("keepa", "/product", 1, 0, 0),
+            "has_reviews_body": ("canopy", "/reviews", 0, 0, 1),
+            "has_rating_breakdown": ("rainforest", "/product", 0, 1, 0),
+            "has_rating_history": ("keepa", "/product", 1, 0, 0),
+            "has_sales_estimate": ("canopy", "/sales", 0, 0, 1),
+            "has_stock_level": ("canopy", "/stock", 0, 0, 1),
+            "has_offer_counts": ("keepa", "/product", 1, 0, 0),
+            "has_fba_fee": ("keepa", "/product", 1, 0, 0),
+            "has_referral_fee": ("keepa", "/product", 1, 0, 0),
+            "has_price_history": ("keepa", "/product", 1, 0, 0),
+            "has_bsr_history": ("keepa", "/product", 1, 0, 0),
+        }
+
+        for dim, (source, endpoint, k_cost, rf_cost, cn_cost) in _DIM_SOURCE.items():
+            required = self._COVERAGE_DIMS.get(dim, set())
+            has_data = any(product.get(f) is not None for f in required)
+            if not has_data:
+                continue
+
+            entry = {
+                "updated_at": now_iso,
+                "source": source,
+                "endpoint": endpoint,
+                "cost": {},
+            }
+            if k_cost:
+                entry["cost"]["keepa_token"] = k_cost
+            if rf_cost:
+                entry["cost"]["rf_credit"] = rf_cost
+            if cn_cost:
+                entry["cost"]["canopy_credit"] = cn_cost
+            freshness[dim] = entry
+
+        return freshness
+
     # ── Merge（按字段级优先级合并） ──
 
-    def _merge_products(self, keepa_data: Dict, rf_data: Dict, cn_data: Dict) -> Dict[str, Dict]:
+    def _merge_products(
+        self, keepa_data: Dict, rf_data: Dict, cn_data: Dict,
+        raw_by_source: Dict[str, Dict] = None,
+    ) -> Dict[str, Dict]:
         """
         按字段级优先级合并三源数据为一个统一的 product dict。
         规则：
           - 独占字段（如 price_history）只来自一个源，直接保留
           - 共享字段按 _SOURCE_PRIORITY 中定义的源优先级写入
           - 三源都有的字段，优先级最高源的覆盖其他
+        新增：
+          - 写入 coverage_map + freshness_map
         """
         all_asins = set()
         all_asins.update(keepa_data.keys())
@@ -293,7 +400,6 @@ class ETLPipeline:
             all_fields.difference_update(_EXCLUDED_KEYS)
 
             for field in all_fields:
-                # 按优先级确定该字段的来源
                 preferred = _SOURCE_PRIORITY.get(field)
 
                 val = None
@@ -304,7 +410,6 @@ class ETLPipeline:
                 elif preferred == "canopy":
                     val = cn.get(field)
                 else:
-                    # 无明确优先级：取第一个非空值
                     for src in [kp, rf, cn]:
                         if field in src and src[field] is not None:
                             val = src[field]
@@ -312,6 +417,10 @@ class ETLPipeline:
 
                 if val is not None:
                     product[field] = val
+
+            # ── coverage_map + freshness_map ──
+            product["coverage_map"] = self._calc_coverage(product)
+            product["freshness_map"] = self._calc_freshness(product, raw_by_source or {})
 
             merged[asin] = product
 
