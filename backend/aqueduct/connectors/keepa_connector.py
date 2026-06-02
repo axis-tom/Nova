@@ -669,10 +669,152 @@ class KeepaConnector:
             features = p.get("features") or []
             description = p.get("description", "") or ""
             images_csv = p.get("imagesCSV", "") or ""
+            feature_bullets = features  # 别名：与模型列名一致
 
             # ── 变体关系 ──
             parent_asin = p.get("parentAsin", "") or ""
             variation_csv = p.get("variationCSV", "") or ""
+
+            # ── 额外字段 ──
+            sales_rank_history = p.get("salesRanks") or p.get("salesRankHistory") or []
+            parent_asin_history = p.get("parentAsinHistory") or []
+            whats_in_the_box = p.get("includedComponents") or []
+            availability_text = p.get("availability") or ""  # Keepa /product 顶层
+            unit_count = p.get("unitCount") or {}
+
+            # ── 扩展字段提取 ─────────────────────────────────────────
+            # 物理属性
+            style = p.get("style", "") or ""
+            material = p.get("material", "") or ""
+            item_weight_g = (p.get("itemWeight", 0) or 0) / 100 if p.get("itemWeight") else None
+            item_height_mm = p.get("itemHeight")
+            item_length_mm = p.get("itemLength")
+            item_width_mm = p.get("itemWidth")
+            package_weight_g = (p.get("packageWeight", 0) or 0) / 100 if p.get("packageWeight") else None
+            package_dimensions_mm = p.get("packageDimensions")
+            number_of_items = p.get("numberOfItems")
+            item_type_keyword = p.get("itemTypeKeyword", "") or ""
+
+            # unit count
+            unit_count_raw = p.get("unitCount") or {}
+            unit_count_type = None
+            unit_count_value = None
+            if isinstance(unit_count_raw, dict):
+                unit_count_type = unit_count_raw.get("type") or unit_count_raw.get("unitType")
+                unit_count_value = unit_count_raw.get("value") or unit_count_raw.get("unitValue")
+
+            # BuyBox 扩展 — 用模型列名
+            is_lowest_price = p.get("isLowestPrice")
+            buybox_price = _cents_to_usd(p.get("buyBoxPrice"))
+            buybox_seller_id = p.get("buyBoxSellerId", "") or ""
+            buybox_seller_name = p.get("buyBoxSellerName", "") or ""
+            buybox_is_amazon = p.get("buyBoxIsAmazon", False)
+            buybox_is_prime_eligible = p.get("buyBoxIsPrimeEligible", False)
+            buybox_shipping = _cents_to_usd(p.get("buyBoxShipping"))
+            is_fba = p.get("buyBoxIsFBA", False)
+
+            # Offer 统计
+            offer_count_p = p.get("offerCount", 0) or 0
+            offer_count_fba_p = p.get("offerCountFBA", 0) or 0
+            offer_count_fbm_p = p.get("offerCountFBM", 0) or 0
+            seller_ids_lowest_fba_p = p.get("sellerIdsLowestFBA", []) or []
+            seller_ids_lowest_fbm_p = p.get("sellerIdsLowestFBM", []) or []
+            buybox_eligible_offer_counts_p = p.get("buyBoxEligibleOfferCounts", {}) or {}
+
+            # 商品标记
+            is_warehouse_deal_p = p.get("isWarehouseDeal", False)
+            is_preorder_p = p.get("isPreorder", False)
+            is_map_restricted_p = p.get("isMapRestricted", False)
+            batteries_included_p = p.get("batteriesIncluded", False)
+            batteries_required_p = p.get("batteriesRequired", False)
+            is_sns_p = p.get("isSNS", False)
+            is_heat_sensitive_p = p.get("isHeatSensitive", False)
+            is_adult_product_p = p.get("isAdultProduct", False)
+            is_eligible_for_trade_in_p = p.get("isEligibleForTradeIn", False)
+            is_redirect_asin_p = p.get("isRedirectASIN", False)
+            launchpad_p = p.get("launchpad", False)
+
+            # 时间戳
+            tracking_since_raw = p.get("trackingSince")
+            tracking_since = _keepa_minutes_to_dt(tracking_since_raw) if isinstance(tracking_since_raw, int) else None
+            listed_since_raw = p.get("listedSince")
+            listed_since = _keepa_minutes_to_dt(listed_since_raw) if isinstance(listed_since_raw, int) else None
+
+            # 品牌/链接/促销
+            brand_store_p = p.get("brandStore", {}) or {}
+            url_slug_p = p.get("urlSlug", "") or ""
+            coupon_text_p = p.get("coupon", "") or ""
+            promotions_json_p = p.get("promotions", {}) or {}
+            lightning_deal_info_p = p.get("lightningDealInfo", {}) or {}
+            shipping_origin_p = p.get("shippingOrigin", "") or ""
+            is_eligible_for_free_shipping_p = p.get("isEligibleForFreeShipping", False)
+            isEligibleForSuperSaverShipping_p = p.get("isEligibleForSuperSaverShipping", False)
+            available_prime_exclusive_p = p.get("availablePrimeExclusive", False)
+            hazardous_materials_p = p.get("hazardousMaterials", {}) or {}
+
+            # 费用
+            fba_fees = p.get("fbaFees") or {}
+            fba_fee_p = _cents_to_usd(fba_fees.get("pickAndPackFee")) if isinstance(fba_fees, dict) else None
+            referral_fee_percent_p = p.get("referralFeePercent", 0) or 0
+
+            # Sales Rank Reference
+            sales_rank_reference_id_p = p.get("salesRankReference", 0) or 0
+            root_category_id_p = p.get("rootCategory", 0) or 0
+            sales_rank_reference_history_p = p.get("salesRankReferenceHistory", []) or []
+
+            # Offer history (keepa offers=20 时可用)
+            offer_history_p = p.get("offers", []) or []
+
+            # 扩展统计价格
+            avg_price_180d = _cents_to_usd(_stats_scalar("avg180", _CSV_AMAZON))
+            avg_price_365d = _cents_to_usd(_stats_scalar("avg365", _CSV_AMAZON))
+            min_price_30d = _cents_to_usd(_stats_scalar("min", _CSV_AMAZON))
+            min_price_180d = _cents_to_usd(_stats_scalar("min180", _CSV_AMAZON))
+            max_price_180d = _cents_to_usd(_stats_scalar("max", _CSV_AMAZON))
+
+            # 扩展 BSR 统计
+            avg_bsr_180d = _stats_scalar("avg180", _CSV_SALES)
+            avg_bsr_365d = _stats_scalar("avg365", _CSV_SALES)
+
+            # Sales Rank Drops
+            sales_rank_drops_30d_p = p.get("salesRankDrops30") or _stats_scalar("salesRankDrops30", 0)
+            sales_rank_drops_90d_p = p.get("salesRankDrops90") or _stats_scalar("salesRankDrops90", 0)
+            sales_rank_drops_180d_p = p.get("salesRankDrops180") or 0
+            sales_rank_drops_365d_p = p.get("salesRankDrops365") or 0
+
+            # 扩展历史序列
+            rating_history = []
+            review_count_history = []
+            rating_csv_full = _csv(_CSV_RATING)
+            review_csv_full = _csv(_CSV_COUNT_REVIEWS)
+            if rating_csv_full:
+                raw_rh = _decode_keepa_csv(rating_csv_full[-100:], is_price=False)
+                # rating 值需要 /10
+                rh = []
+                for pt in raw_rh:
+                    rh.append({"timestamp": pt["timestamp"], "value": round(pt["value"] / 10, 1)})
+                rating_history = rh[-50:]
+            if review_csv_full:
+                review_count_history = _decode_keepa_csv(review_csv_full[-100:], is_price=False)[-50:]
+
+            # 缺货统计
+            out_of_stock_pct_30d_p = p.get("outOfStockPercentage30", 0) or 0
+            out_of_stock_pct_90d_p = p.get("outOfStockPercentage90", 0) or 0
+            out_of_stock_pct_180d_p = p.get("outOfStockPercentage180", 0) or 0
+            out_of_stock_count_amazon_p = p.get("outOfStockCountAmazon", 0) or 0
+
+            # ── product_type_name ──
+            product_type_name = {0: "STANDARD", 1: "VARIATION_PARENT", 2: "VARIATION_CHILD"}.get(p.get("type"), "")
+            if not product_type_name:
+                product_type_name = p.get("productTypeName", "") or ""
+
+            # domain + currency
+            domain = p.get("domain", "US")
+            currency_map = {"US": "USD", "DE": "EUR", "GB": "GBP", "JP": "JPY", "CA": "CAD",
+                            "FR": "EUR", "IT": "EUR", "ES": "EUR", "IN": "INR", "MX": "MXN",
+                            "BR": "BRL", "AU": "AUD", "NL": "EUR", "SG": "SGD", "AE": "AED",
+                            "SA": "SAR", "TR": "TRY", "SE": "SEK", "PL": "PLN"}
+            currency = currency_map.get(domain, "USD")
 
             return {
                 # 基础信息
@@ -685,6 +827,7 @@ class KeepaConnector:
 
                 # 商品类型
                 "product_type": product_type,
+                "product_type_name": product_type_name,
                 "product_group": product_group,
                 "binding": binding,
 
@@ -701,30 +844,68 @@ class KeepaConnector:
                 # 变体属性
                 "color": color,
                 "size": size,
+                "style": style,
+                "material": material,
                 "weight": weight,
+                "item_weight_g": item_weight_g,
+                "item_height_mm": item_height_mm,
+                "item_length_mm": item_length_mm,
+                "item_width_mm": item_width_mm,
+                "package_weight_g": package_weight_g,
+                "package_dimensions_mm": package_dimensions_mm,
                 "package_quantity": package_quantity,
+                "number_of_items": number_of_items,
+                "item_type_keyword": item_type_keyword,
+                "unit_count_type": unit_count_type,
+                "unit_count_value": unit_count_value,
 
                 # Listing 内容
                 "features": features,
                 "description": description,
                 "images_csv": images_csv,
+                "brand_store": brand_store_p,
+                "url_slug": url_slug_p,
 
                 # 变体关系
                 "parent_asin": parent_asin,
                 "variation_csv": variation_csv,
+                "feature_bullets": feature_bullets,
+                "domain": domain,
 
                 # 价格
                 "current_price": current_price,
                 "avg_price_30d": avg_price_30d,
                 "avg_price_90d": avg_price_90d,
+                "avg_price_180d": avg_price_180d,
+                "avg_price_365d": avg_price_365d,
+                "min_price_30d": min_price_30d,
                 "min_price_90d": min_price_90d,
+                "min_price_180d": min_price_180d,
                 "max_price_90d": max_price_90d,
+                "max_price_180d": max_price_180d,
+                "is_lowest_price": is_lowest_price,
+                "buybox_price": buybox_price,
+                "buybox_seller_id": buybox_seller_id,
+                "buybox_seller_name": buybox_seller_name,
+                "buybox_is_amazon": buybox_is_amazon,
+                "buybox_is_prime_eligible": buybox_is_prime_eligible,
+                "buybox_shipping": buybox_shipping,
+                "currency": currency,
 
                 # BSR（排名越小越好）
                 "current_bsr": current_bsr,
                 "avg_bsr_30d": avg_bsr_30d,
                 "avg_bsr_90d": avg_bsr_90d,
-                "bsr_trend": bsr_trend,  # improving / declining / stable / unknown
+                "avg_bsr_180d": avg_bsr_180d,
+                "avg_bsr_365d": avg_bsr_365d,
+                "bsr_trend": bsr_trend,
+                "sales_rank_drops_30d": sales_rank_drops_30d_p,
+                "sales_rank_drops_90d": sales_rank_drops_90d_p,
+                "sales_rank_drops_180d": sales_rank_drops_180d_p,
+                "sales_rank_drops_365d": sales_rank_drops_365d_p,
+                "sales_rank_reference_id": sales_rank_reference_id_p,
+                "root_category_id": root_category_id_p,
+                "sales_rank_reference_history": sales_rank_reference_history_p,
 
                 # 销量
                 "monthly_sold": monthly_sold,
@@ -735,10 +916,67 @@ class KeepaConnector:
 
                 # 竞争
                 "seller_count": new_offer_count,
+                "offer_count": offer_count_p,
+                "offer_count_fba": offer_count_fba_p,
+                "offer_count_fbm": offer_count_fbm_p,
+                "seller_ids_lowest_fba": seller_ids_lowest_fba_p,
+                "seller_ids_lowest_fbm": seller_ids_lowest_fbm_p,
+                "buybox_eligible_offer_counts": buybox_eligible_offer_counts_p,
+
+                # 费用
+                "fba_fee": fba_fee_p,
+                "referral_fee_percent": referral_fee_percent_p,
+
+                # 商品标记
+                "is_warehouse_deal": is_warehouse_deal_p,
+                "is_preorder": is_preorder_p,
+                "is_map_restricted": is_map_restricted_p,
+                "batteries_included": batteries_included_p,
+                "batteries_required": batteries_required_p,
+                "is_fba": is_fba,
+                "is_sns": is_sns_p,
+                "is_heat_sensitive": is_heat_sensitive_p,
+                "is_adult_product": is_adult_product_p,
+                "is_eligible_for_trade_in": is_eligible_for_trade_in_p,
+                "is_redirect_asin": is_redirect_asin_p,
+                "launchpad": launchpad_p,
+                "shipping_origin": shipping_origin_p,
+                "is_eligible_for_free_shipping": is_eligible_for_free_shipping_p,
+                "isEligibleForSuperSaverShipping": isEligibleForSuperSaverShipping_p,
+                "available_prime_exclusive": available_prime_exclusive_p,
+                "hazardous_materials": hazardous_materials_p,
+
+                # 促销
+                "coupon_text": coupon_text_p,
+                "promotions_json": promotions_json_p,
+                "lightning_deal_info": lightning_deal_info_p,
+
+                # Listing 内容补充
+                "availability_text": availability_text,
+                "whats_in_the_box": whats_in_the_box,
 
                 # 历史曲线
                 "price_history": price_history,
                 "bsr_history": bsr_history,
+                "rating_history": rating_history,
+                "review_count_history": review_count_history,
+                "sales_rank_history": sales_rank_history,
+
+                # 父体变更历史
+                "parent_asin_history": parent_asin_history,
+
+                # 缺货统计
+                "out_of_stock_pct_30d": out_of_stock_pct_30d_p,
+                "out_of_stock_pct_90d": out_of_stock_pct_90d_p,
+                "out_of_stock_pct_180d": out_of_stock_pct_180d_p,
+                "out_of_stock_count_amazon": out_of_stock_count_amazon_p,
+
+                # Offer 历史（子表原始数据）
+                "offer_history": offer_history_p,
+
+                # 时间戳
+                "tracking_since": tracking_since,
+                "listed_since": listed_since,
 
                 # 数据来源
                 "data_source": "keepa",

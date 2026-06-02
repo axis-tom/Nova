@@ -151,6 +151,21 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
     # Seller
     seller = product.get("seller") or {}
     seller_name = seller.get("name", "") if isinstance(seller, dict) else ""
+    seller_id = seller.get("id", "") if isinstance(seller, dict) else ""
+
+    # 销量相关
+    monthly_sold = product.get("monthlySalesEstimate", 0)
+    weekly_sold = product.get("weeklySalesEstimate", 0)
+    annual_sold = product.get("annualSalesEstimate", 0)
+    stock_obj = product.get("stock") or {}
+    stock_level = product.get("stockLevel", 0) or (stock_obj.get("level", 0) if isinstance(stock_obj, dict) else 0)
+    review_velocity_30d = product.get("reviewVelocity", 0)
+    material = spec_dict.get("Material", "") or product.get("material", "")
+    style = spec_dict.get("Style", "") or product.get("style", "")
+    package_quantity = spec_dict.get("Package Quantity") or product.get("packageQuantity")
+    binding = spec_dict.get("Binding", "")
+    product_group = spec_dict.get("Product Group", "")
+    frequently_bought_together = product.get("frequentlyBoughtTogether", [])
 
     # 内嵌的 top reviews（Canopy 不提供单独的分页 reviews 端点）
     top_reviews = []
@@ -185,6 +200,7 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
         "ratings_total": ratings_total,
         "top_reviews": top_reviews,
         "seller_name": seller_name,
+        "seller_id": seller_id,
         "manufacturer": manufacturer,
         "model_number": model_number,
         "part_number": part_number,
@@ -195,6 +211,19 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
         "weight": weight,
         "dimensions": dimensions,
         "url": product.get("url", ""),
+
+        # 新增字段
+        "monthly_sold": monthly_sold,
+        "weekly_sold": weekly_sold,
+        "annual_sold": annual_sold,
+        "stock_level": stock_level,
+        "review_velocity_30d": review_velocity_30d,
+        "material": material,
+        "style": style,
+        "package_quantity": package_quantity,
+        "binding": binding,
+        "product_group": product_group,
+        "frequently_bought_together": frequently_bought_together,
     }
 
 

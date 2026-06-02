@@ -86,6 +86,7 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
     title = product.get("title", "") or ""
     brand = product.get("brand", "") or ""
     parent_asin = product.get("parent_asin", "") or ""
+    link = product.get("link", "") or ""
 
     # ── 类目 ──
     categories = product.get("categories") or []
@@ -102,10 +103,13 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
     feature_bullets = product.get("feature_bullets") or []
     if isinstance(feature_bullets, str):
         feature_bullets = feature_bullets.split("\n")
+    feature_bullets_count = len(feature_bullets) if feature_bullets else 0
     description = ""
     spec_flat = product.get("specifications_flat", "") or ""
     specifications = product.get("specifications") or []
     aplus = product.get("a_plus_content") or {}
+    brand_store_name = product.get("brand_store", {}).get("name", "") or ""
+    brand_store_url = product.get("brand_store", {}).get("link", "") or ""
 
     # ── 媒体 ──
     main_image = ""
@@ -154,6 +158,10 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
         first_bsr = bestseller_list[0] if isinstance(bestseller_list[0], dict) else {}
         bsr_rank = first_bsr.get("rank")
         bsr_category = first_bsr.get("category", "")
+    bestsellers_rank_flat = "; ".join(
+        f"{b.get('rank','')} in {b.get('category','')}"
+        for b in bestseller_list if isinstance(b, dict)
+    ) if bestseller_list else ""
 
     # ── 评分 ──
     rating = product.get("rating")
@@ -171,6 +179,7 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
     # ── 变体 ──
     variations = []
     child_asins = []
+    variant_asins_flat = ""
     for var in (product.get("variants") or []):
         if isinstance(var, dict):
             var_asin = var.get("asin", "")
@@ -189,6 +198,7 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
             })
             if var_asin and var_asin != asin:
                 child_asins.append(var_asin)
+    variant_asins_flat = ",".join(child_asins) if child_asins else ""
 
     # ── 评论预览 ──
     top_reviews = []
@@ -244,6 +254,59 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── 最近销量 ──
     recent_sales = product.get("recent_sales", "") or ""
+
+    # ── 新增字段 ──
+    sub_title = product.get("sub_title", {})
+    videos = product.get("videos", [])
+    return_policy = product.get("return_policy", {})
+    if not return_policy and isinstance(buybox, dict):
+        return_policy = buybox.get("return_policy", {})
+    protection_plans = product.get("protection_plans", [])
+
+    buybox_availability = ""
+    if isinstance(buybox, dict):
+        buybox_avail = buybox.get("availability") or {}
+        if isinstance(buybox_avail, dict):
+            buybox_availability = buybox_avail.get("raw", "")
+    buybox_condition = buybox.get("condition", "") if isinstance(buybox, dict) else ""
+    buybox_is_amazon = buybox.get("is_amazon", False) if isinstance(buybox, dict) else False
+    keywords_list = product.get("keywords_list") or product.get("search_keywords") or []
+    search_alias = product.get("search_alias", "") or ""
+    seller_profile = product.get("seller_profile", {})
+    first_available = product.get("first_available", "") or ""
+    rich_product_description = product.get("rich_product_description", {})
+    prices = raw.get("prices") if isinstance(raw, dict) else None
+    frequently_bought_together = product.get("frequently_bought_together", {})
+    product_type_name = product.get("product_type_name", "") or ""
+    also_bought = product.get("also_bought", []) or []
+    also_viewed = product.get("also_viewed", []) or []
+    dimensions = product.get("dimensions", "") or spec_dict.get("Product Dimensions", "") or ""
+    shipping_weight = product.get("shipping_weight", "") or ""
+    has_coupon = product.get("has_coupon", False)
+    amazons_choice = product.get("amazons_choice", {}) or {}
+    subscribe_and_save = product.get("subscribe_and_save", {}) or {}
+    trade_in_and_save = product.get("trade_in_and_save", False)
+    deal_badge = product.get("deal_badge", "") or ""
+    big_spring_deal_percentage = product.get("big_spring_deal_percentage")
+    has_reviews = bool(product.get("ratings_total", 0) > 0)
+    has_size_guide = product.get("has_size_guide", False)
+    has_360_view = product.get("has_360_view", False)
+    gift_guide_badge = product.get("gift_guide_badge", {}) or {}
+    is_amazon_brand = product.get("is_amazon_brand", False)
+    is_exclusive_to_amazon = product.get("is_exclusive_to_amazon", False)
+    is_small_business = product.get("is_small_business", False)
+    climate_pledge_friendly = product.get("climate_pledge_friendly", {}) or False
+    proposition_65_warning = product.get("proposition_65_warning", False)
+    sell_on_amazon = product.get("sell_on_amazon", False)
+    add_on_item = product.get("add_on_item", {}) or False
+    summarization_attributes = product.get("summarization_attributes", []) or []
+    customers_say = product.get("customers_say", []) or []
+    used_offers_count = product.get("used_offers_count")
+    new_offers_from_val = product.get("new_offers_from", {}).get("value") if isinstance(product.get("new_offers_from"), dict) else None
+    used_offers_from_val = product.get("used_offers_from", {}).get("value") if isinstance(product.get("used_offers_from"), dict) else None
+    unit_price = product.get("unit_price", "") or ""
+    free_shipping_minimum_spend = product.get("free_shipping_minimum_spend", {}).get("value") if isinstance(product.get("free_shipping_minimum_spend"), dict) else None
+    is_fulfilled_by_amazon_international = product.get("is_fulfilled_by_amazon_international", False)
 
     return {
         "asin": asin,
@@ -316,6 +379,67 @@ def _parse_product(raw: Dict[str, Any]) -> Dict[str, Any]:
 
         # 销量
         "recent_sales": recent_sales,
+
+        # 副标题/视频/退货/保护
+        "sub_title": sub_title,
+        "videos": videos,
+        "return_policy": return_policy,
+        "protection_plans": protection_plans,
+
+        # Buybox 额外字段
+        "buybox_availability": buybox_availability,
+        "buybox_condition": buybox_condition,
+        "buybox_is_amazon": buybox_is_amazon,
+
+        # 关键词/搜索
+        "keywords_list": keywords_list,
+        "search_alias": search_alias,
+
+        # 卖家/日期/描述
+        "seller_profile": seller_profile,
+        "first_available": first_available,
+        "rich_product_description": rich_product_description,
+
+        # 全局
+        "prices": prices,
+        "frequently_bought_together": frequently_bought_together,
+        "product_type_name": product_type_name,
+        "also_bought": also_bought,
+        "also_viewed": also_viewed,
+        "dimensions": dimensions,
+        "shipping_weight": shipping_weight,
+        "link": link,
+        "feature_bullets_count": feature_bullets_count,
+        "bestsellers_rank_flat": bestsellers_rank_flat,
+        "variant_asins_flat": variant_asins_flat,
+        "brand_store_name": brand_store_name,
+        "brand_store_url": brand_store_url,
+        "specifications_flat": spec_flat,
+        "has_coupon": has_coupon,
+        "amazons_choice": amazons_choice,
+        "subscribe_and_save": subscribe_and_save,
+        "trade_in_and_save": trade_in_and_save,
+        "deal_badge": deal_badge,
+        "big_spring_deal_percentage": big_spring_deal_percentage,
+        "has_reviews": has_reviews,
+        "has_size_guide": has_size_guide,
+        "has_360_view": has_360_view,
+        "gift_guide_badge": gift_guide_badge,
+        "is_amazon_brand": is_amazon_brand,
+        "is_exclusive_to_amazon": is_exclusive_to_amazon,
+        "is_small_business": is_small_business,
+        "climate_pledge_friendly": climate_pledge_friendly,
+        "proposition_65_warning": proposition_65_warning,
+        "sell_on_amazon": sell_on_amazon,
+        "add_on_item": add_on_item,
+        "summarization_attributes": summarization_attributes,
+        "customers_say": customers_say,
+        "used_offers_count": used_offers_count,
+        "new_offers_from": new_offers_from_val,
+        "used_offers_from": used_offers_from_val,
+        "unit_price": unit_price,
+        "free_shipping_minimum_spend": free_shipping_minimum_spend,
+        "is_fulfilled_by_amazon_international": is_fulfilled_by_amazon_international,
     }
 
 

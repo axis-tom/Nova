@@ -38,3 +38,12 @@ test/collect_amazon_products.py
 backend/infrastructure/data/redis/
 
 /field_list
+
+/.codegraph
+
+/.pytest_cache
+
+/tests
+
+/tmp
+

@@ -1,193 +1,291 @@
 """
-Amazon 产品数据模型 — 三源 ETL 合并后的统一存储
+Amazon 产品数据模型 — 12 语义组全覆盖版
 
-分组说明（7 组 + 2 组元数据）：
-  1. 基础标识  — ASIN、domain、parent
-  2. Listing   — 标题/品牌/图片/A+/视频/规格
-  3. 商业数据   — 价格 / BSR / 销量 / 评论 / 评分
-  4. 竞争数据   — Buy Box / Offer / FBA / 推荐费
-  5. 历史序列   — Keepa 独占的时间序列
-  6. 制造/规格  — 制造商/型号/条形码/颜色/尺寸
-  7. 配送/库存  — FBA/FBM/库存量/配送方式
-  8. 覆盖与新鲜度 — ★ 新增：数据质量追踪
-  9. 元信息     — 时间戳、数据源
+设计原则：
+  - 所有表使用 (asin, domain) 复合键，支持多站点
+  - 每个语义组标注支持的分析方向编号（#xx）
+  - domain 解决多域问题：US 行有 US 专有字段，DE 行对应 NULL
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Text, Float, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Text, Float, BigInteger, Index, UniqueConstraint
 from sqlalchemy.sql import func
 from backend.data.database import Base
 
 
 class AmazonProduct(Base):
-    """
-    亚马逊商品统一数据表。
-    三源 ETL Pipeline 的目标表，所有 Agent 查商品时查此表而非直接调 API。
-    """
+    """亚马逊商品统一数据表 — 12 语义组全覆盖"""
     __tablename__ = "amazon_products"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # ── 1. 基础标识 ───────────────────────────────────────────────
-    asin = Column(String(10), unique=True, nullable=False, index=True)
-    domain = Column(String(10), nullable=False, default="US", index=True)  # US/DE/JP
+    # ═══════════════════════════════════════════════════════════════
+    # Group 1: 基础标识 (8列)  #01 #02 #18 #19 #33
+    # ═══════════════════════════════════════════════════════════════
+    asin = Column(String(10), nullable=False, index=True)
+    domain = Column(String(10), nullable=False, default="US", index=True)
     parent_asin = Column(String(10), nullable=True, index=True)
-    child_asins = Column(JSON, nullable=True)  # 子 ASIN 列表（Rainforest/Keepa）
-    product_type = Column(String(50), nullable=True)  # 标准/变体父/子（Keepa productType）
+    child_asins = Column(JSON, nullable=True)  # 子 ASIN 列表
+    product_type = Column(String(50), nullable=True)  # STANDARD/VARIATION_PARENT/VARIATION_CHILD
+    product_type_name = Column(String(50), nullable=True)  # Keepa type 的文本描述
+    link = Column(String(500), nullable=True)  # 商品页面链接
 
-    # ── 2. Listing 内容 ──────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════
+    # Group 2: Listing 内容 (36列)
+    # #02 #06 #11 #18 #22 #26 #27 #32
+    # ═══════════════════════════════════════════════════════════════
     title = Column(String(500), nullable=True)
     brand = Column(String(200), nullable=True)
     brand_store = Column(JSON, nullable=True)  # {name, url, url_name}
-    sub_title = Column(JSON, nullable=True)  # {text, link} 店铺链接
-    feature_bullets = Column(JSON, nullable=True)  # 五点描述列表
+    brand_store_name = Column(String(200), nullable=True)
+    brand_store_url = Column(String(500), nullable=True)
+    sub_title = Column(JSON, nullable=True)  # {text, link}
+    feature_bullets = Column(JSON, nullable=True)
+    feature_bullets_count = Column(Integer, nullable=True)
     description = Column(Text, nullable=True)
-    specifications = Column(JSON, nullable=True)  # [{name, value}, ...] 规格参数
-    aplus_content = Column(JSON, nullable=True)  # A+ 品牌故事内容
-    whats_in_the_box = Column(JSON, nullable=True)  # 包装内容列表
+    specifications = Column(JSON, nullable=True)  # [{name, value}, ...]
+    specifications_flat = Column(Text, nullable=True)
+    aplus_content = Column(JSON, nullable=True)
+    whats_in_the_box = Column(JSON, nullable=True)
     main_image = Column(String(500), nullable=True)
-    images = Column(JSON, nullable=True)  # 图片 URL 列表
+    images = Column(JSON, nullable=True)
     images_count = Column(Integer, nullable=True)
     videos_count = Column(Integer, nullable=True)
-    videos = Column(JSON, nullable=True)  # 视频信息列表
+    videos = Column(JSON, nullable=True)
+    dimensions = Column(String(200), nullable=True)
+    shipping_weight = Column(String(100), nullable=True)
     color = Column(String(100), nullable=True)
     size = Column(String(100), nullable=True)
     style = Column(String(100), nullable=True)
     material = Column(String(200), nullable=True)
     weight = Column(String(100), nullable=True)
     item_weight_g = Column(Integer, nullable=True)  # Keepa 克数
-    package_weight_g = Column(Integer, nullable=True)  # Keepa 包装克数
-    package_dimensions_mm = Column(JSON, nullable=True)  # [L, W, H] 毫米
+    item_height_mm = Column(Integer, nullable=True)
+    item_length_mm = Column(Integer, nullable=True)
+    item_width_mm = Column(Integer, nullable=True)
+    package_weight_g = Column(Integer, nullable=True)
+    package_dimensions_mm = Column(JSON, nullable=True)  # [L, W, H]
     package_quantity = Column(Integer, nullable=True)
+    rich_product_description = Column(JSON, nullable=True)
+    keywords_list = Column(JSON, nullable=True)
+    url_slug = Column(String(500), nullable=True)
+    search_alias = Column(String(200), nullable=True)
     unit_count = Column(JSON, nullable=True)  # {unitType, unitValue}
+    unit_count_type = Column(String(50), nullable=True)
+    unit_count_value = Column(Integer, nullable=True)
+    number_of_items = Column(Integer, nullable=True)
+    has_size_guide = Column(Boolean, nullable=True, default=False)
+    has_360_view = Column(Boolean, nullable=True, default=False)
 
-    # ── 3. 商业数据 ──────────────────────────────────────────────
-    # 价格
+    # ═══════════════════════════════════════════════════════════════
+    # Group 3: 商业-价格 (19列)
+    # #01 #05 #08 #09 #10 #12 #19 #29 #33
+    # ═══════════════════════════════════════════════════════════════
     current_price = Column(Float, nullable=True)
     currency = Column(String(10), nullable=True, default="USD")
-    list_price = Column(Float, nullable=True)  # 厂商建议零售价
-    buybox_price = Column(Float, nullable=True)  # Buy Box 当前价
+    list_price = Column(Float, nullable=True)
+    buybox_price = Column(Float, nullable=True)
     avg_price_30d = Column(Float, nullable=True)
     avg_price_90d = Column(Float, nullable=True)
+    avg_price_180d = Column(Float, nullable=True)
+    avg_price_365d = Column(Float, nullable=True)
+    min_price_30d = Column(Float, nullable=True)
     min_price_90d = Column(Float, nullable=True)
+    min_price_180d = Column(Float, nullable=True)
     max_price_90d = Column(Float, nullable=True)
+    max_price_180d = Column(Float, nullable=True)
+    is_lowest_price = Column(Boolean, nullable=True)
+    buybox_is_amazon = Column(Boolean, nullable=True)
+    buybox_is_prime_eligible = Column(Boolean, nullable=True)
+    buybox_shipping = Column(Float, nullable=True)
+    has_coupon = Column(Boolean, nullable=True, default=False)
+    unit_price = Column(String(100), nullable=True)  # e.g. "$10.99/kg"
 
-    # BSR
+    # ═══════════════════════════════════════════════════════════════
+    # Group 4: 商业-BSR (18列)
+    # #01 #02 #09 #14 #19 #20 #33
+    # ═══════════════════════════════════════════════════════════════
     current_bsr = Column(Integer, nullable=True)
-    bsr_category = Column(String(200), nullable=True)  # BSR 所在类目名
-    bsr_category_id = Column(Integer, nullable=True)  # BSR 类目 ID（Keepa）
+    bsr_category = Column(String(200), nullable=True)
+    bsr_category_id = Column(Integer, nullable=True)
     avg_bsr_30d = Column(Float, nullable=True)
     avg_bsr_90d = Column(Float, nullable=True)
-    bsr_trend = Column(String(20), nullable=True)  # improving/declining/stable/unknown
+    avg_bsr_180d = Column(Float, nullable=True)
+    avg_bsr_365d = Column(Float, nullable=True)
+    bsr_trend = Column(String(20), nullable=True)
     sales_rank_drops_30d = Column(Integer, nullable=True)
     sales_rank_drops_90d = Column(Integer, nullable=True)
+    sales_rank_drops_180d = Column(Integer, nullable=True)
+    sales_rank_drops_365d = Column(Integer, nullable=True)
+    sales_rank_reference_id = Column(Integer, nullable=True)
+    root_category_id = Column(Integer, nullable=True)
+    sales_rank_reference_history = Column(JSON, nullable=True)
+    bestsellers_rank_flat = Column(String(500), nullable=True)
+    variant_asins_flat = Column(Text, nullable=True)
 
-    # 销量
-    weekly_sold = Column(Integer, nullable=True)  # Canopy 周销量
+    # ═══════════════════════════════════════════════════════════════
+    # Group 5: 商业-销量 (8列)
+    # #01 #02 #08 #10 #14 #22 #28 #33
+    # ═══════════════════════════════════════════════════════════════
+    weekly_sold = Column(Integer, nullable=True)  # Canopy
     monthly_sold = Column(Integer, nullable=True)
-    annual_sold = Column(Integer, nullable=True)  # Canopy 年销量
-    recent_sales = Column(String(100), nullable=True)  # "400+ bought in past month"
+    annual_sold = Column(Integer, nullable=True)  # Canopy
+    recent_sales = Column(String(100), nullable=True)
+    sales_rank_history = Column(JSON, nullable=True)
+    frequently_bought_together = Column(JSON, nullable=True)
+    sponsored_products = Column(JSON, nullable=True)
+    also_bought = Column(JSON, nullable=True)  # 经常一起购买（RF）
+    also_viewed = Column(JSON, nullable=True)  # 经常一起浏览
 
-    # 评论 & 评分
+    # ═══════════════════════════════════════════════════════════════
+    # Group 6: 评论/评分 (14列)
+    # #02 #06 #08 #09 #17 #29 #30 #33
+    # ═══════════════════════════════════════════════════════════════
     rating = Column(Float, nullable=True)
     review_count = Column(Integer, nullable=True)
-    rating_breakdown = Column(JSON, nullable=True)  # {5: {count, percentage}, 4: ...}
-    top_reviews = Column(JSON, nullable=True)  # 评论预览列表
+    rating_history = Column(JSON, nullable=True)
+    review_count_history = Column(JSON, nullable=True)
+    rating_breakdown = Column(JSON, nullable=True)
+    top_reviews = Column(JSON, nullable=True)
+    reviews = Column(JSON, nullable=True)  # Canopy 全文评论
     review_velocity_30d = Column(Integer, nullable=True, default=0)
+    coupon_text = Column(String(500), nullable=True)
+    promotions_json = Column(JSON, nullable=True)
+    lightning_deal_info = Column(JSON, nullable=True)
+    summarization_attributes = Column(JSON, nullable=True)
+    customers_say = Column(JSON, nullable=True)
+    has_reviews = Column(Boolean, nullable=True, default=False)
+    gift_guide_badge = Column(JSON, nullable=True)
+    amazons_choice = Column(JSON, nullable=True)
+    subscribe_and_save = Column(JSON, nullable=True)
+    trade_in_and_save = Column(Boolean, nullable=True, default=False)
+    deal_badge = Column(String(200), nullable=True)
+    big_spring_deal_percentage = Column(Float, nullable=True)
 
-    # 库存
-    stock_level = Column(Integer, nullable=True)  # Canopy product/stock
-    is_in_stock = Column(Boolean, nullable=True)
-    availability_text = Column(String(100), nullable=True)  # "In Stock"
-    out_of_stock_pct_30d = Column(Float, nullable=True)  # Keepa 30天缺货%
-
-    # ── 4. 竞争数据 ──────────────────────────────────────────────
-    seller_count = Column(Integer, nullable=True)  # 总 offer 数
-    offer_count = Column(Integer, nullable=True)  # 新品 offer 数
+    # ═══════════════════════════════════════════════════════════════
+    # Group 7: 竞争/Offer (22列)
+    # #03 #05 #12 #13 #21 #24
+    # ═══════════════════════════════════════════════════════════════
+    seller_count = Column(Integer, nullable=True)
+    offer_count = Column(Integer, nullable=True)
     offer_count_fba = Column(Integer, nullable=True)
     offer_count_fbm = Column(Integer, nullable=True)
     buybox_seller_id = Column(String(50), nullable=True)
     buybox_seller_name = Column(String(200), nullable=True)
+    buybox_availability = Column(String(100), nullable=True)
+    buybox_condition = Column(String(50), nullable=True)
+    buybox_is_amazon = Column(Boolean, nullable=True)
     is_fba = Column(Boolean, nullable=True)
     is_prime = Column(Boolean, nullable=True)
-    fulfillment = Column(JSON, nullable=True)  # {type, is_FBA, is_Amazon, seller, delivery_dates}
-    return_policy = Column(JSON, nullable=True)  # {duration_days, type}
-    fba_fee = Column(Float, nullable=True)  # Keepa FBA pick&pack fee
-    referral_fee_percent = Column(Float, nullable=True)  # Keepa referral fee %
-    protection_plans = Column(JSON, nullable=True)  # 延长保修
-    is_bundle = Column(Boolean, nullable=True)
+    fulfillment = Column(JSON, nullable=True)
+    return_policy = Column(JSON, nullable=True)
+    protection_plans = Column(JSON, nullable=True)
+    offer_history = Column(JSON, nullable=True)
+    seller_ids_lowest_fba = Column(JSON, nullable=True)
+    seller_ids_lowest_fbm = Column(JSON, nullable=True)
+    buybox_eligible_offer_counts = Column(JSON, nullable=True)
+    used_offers_count = Column(Integer, nullable=True)
+    new_offers_from = Column(Float, nullable=True)
+    used_offers_from = Column(Float, nullable=True)
 
-    # ── 5. 历史序列（Keepa 独占） ──────────────────────────────
-    price_history = Column(JSON, nullable=True)  # [{timestamp, value}]
-    bsr_history = Column(JSON, nullable=True)  # [{timestamp, value}]
-    rating_history = Column(JSON, nullable=True)  # 评分历史时间序列
-    review_count_history = Column(JSON, nullable=True)  # [{timestamp, value}]
-    sales_rank_history = Column(JSON, nullable=True)  # 多类目 BSR {catId: [{ts, val}]}
+    # ═══════════════════════════════════════════════════════════════
+    # Group 8: 卖家生态 (17列)
+    # #01 #03 #13 #24 #26
+    # ═══════════════════════════════════════════════════════════════
+    top_seller_id = Column(String(50), nullable=True)
+    top_seller_name = Column(String(200), nullable=True)
+    has_amazon_selling = Column(Boolean, nullable=True, default=False)
+    has_china_sellers = Column(Boolean, nullable=True, default=False)
+    is_warehouse_deal = Column(Boolean, nullable=True, default=False)
+    is_preorder = Column(Boolean, nullable=True, default=False)
+    is_map_restricted = Column(Boolean, nullable=True, default=False)
+    seller_profile = Column(JSON, nullable=True)
+    max_order_quantity = Column(Integer, nullable=True)
+    is_amazon_brand = Column(Boolean, nullable=True, default=False)
+    is_exclusive_to_amazon = Column(Boolean, nullable=True, default=False)
+    is_small_business = Column(Boolean, nullable=True, default=False)
+    climate_pledge_friendly = Column(Boolean, nullable=True, default=False)
+    add_on_item = Column(Boolean, nullable=True, default=False)
+    proposition_65_warning = Column(Boolean, nullable=True, default=False)
+    sell_on_amazon = Column(Boolean, nullable=True, default=False)
 
-    # ── 6. 制造/规格 ─────────────────────────────────────────────
-    manufacturer = Column(String(200), nullable=True)
-    model_number = Column(String(200), nullable=True)
-    part_number = Column(String(200), nullable=True)
-    upc = Column(String(50), nullable=True)
-    ean = Column(String(50), nullable=True)
-    isbn = Column(String(50), nullable=True)
-    product_group = Column(String(100), nullable=True)
-    binding = Column(String(100), nullable=True)
-    country_of_origin = Column(String(100), nullable=True)
-    item_type_keyword = Column(String(100), nullable=True)  # Keepa itemTypeKeyword
-
-    # ── 7. 配送/物流 ─────────────────────────────────────────────
-    available_prime_exclusive = Column(Boolean, nullable=True)  # Prime 专享价
-    shipping_origin = Column(String(100), nullable=True)  # 发货国家
+    # ═══════════════════════════════════════════════════════════════
+    # Group 9: 履约/库存 (17列)
+    # #04 #10 #16 #25 #28 #32
+    # ═══════════════════════════════════════════════════════════════
+    fba_fee = Column(Float, nullable=True)
+    referral_fee_percent = Column(Float, nullable=True)
+    stock_level = Column(Integer, nullable=True)
+    is_in_stock = Column(Boolean, nullable=True)
+    availability_text = Column(String(100), nullable=True)
+    out_of_stock_pct_30d = Column(Float, nullable=True)
+    out_of_stock_pct_90d = Column(Float, nullable=True)
+    out_of_stock_pct_180d = Column(Float, nullable=True)
+    out_of_stock_count_amazon = Column(Integer, nullable=True)
+    available_prime_exclusive = Column(Boolean, nullable=True)
+    shipping_origin = Column(String(100), nullable=True)
     is_eligible_for_free_shipping = Column(Boolean, nullable=True)
-    is_adult_product = Column(Boolean, nullable=True)
+    is_heat_sensitive = Column(Boolean, nullable=True)
+    hazardous_materials = Column(JSON, nullable=True)
+    is_fulfilled_by_amazon_international = Column(Boolean, nullable=True, default=False)
+    isEligibleForSuperSaverShipping = Column(Boolean, nullable=True, default=False)
+    free_shipping_minimum_spend = Column(Float, nullable=True)
 
-    # ── 8. 覆盖度与新鲜度 ★ ─────────────────────────────────────
-    freshness_map = Column(JSON, nullable=True)
-    # 每个源各类数据的最后成功采集时间
-    # {"keepa_product": "2026-05-28T12:00:00Z",
-    #  "rainforest_product": "2026-05-28T12:01:00Z",
-    #  "canopy_reviews": "2026-05-28T12:02:00Z",
-    #  "canopy_sales": "2026-05-28T12:03:00Z",
-    #  "canopy_stock": "2026-05-28T12:04:00Z"}
+    # ═══════════════════════════════════════════════════════════════
+    # Group 10: Listing 安全 (8列)
+    # #07 #15 #21 #23 #25 #30 #31
+    # ═══════════════════════════════════════════════════════════════
+    is_redirect_asin = Column(Boolean, nullable=True, default=False)
+    parent_asin_history = Column(JSON, nullable=True)
+    is_adult_product = Column(Boolean, nullable=True, default=False)
+    is_sns = Column(Boolean, nullable=True, default=False)
+    is_eligible_for_trade_in = Column(Boolean, nullable=True, default=False)
+    launchpad = Column(Boolean, nullable=True, default=False)
+    batteries_included = Column(Boolean, nullable=True, default=False)
+    batteries_required = Column(Boolean, nullable=True, default=False)
 
+    # ═══════════════════════════════════════════════════════════════
+    # Group 11: 历史序列 (6列)
+    # #09 #14
+    # ═══════════════════════════════════════════════════════════════
+    price_history = Column(JSON, nullable=True)
+    bsr_history = Column(JSON, nullable=True)
+    rating_history = Column(JSON, nullable=True)
+    review_count_history = Column(JSON, nullable=True)
+    sales_rank_history = Column(JSON, nullable=True)
+    raw_payload = Column(JSON, nullable=True)  # 三源原始数据快照
+
+    # ═══════════════════════════════════════════════════════════════
+    # Group 12: 元信息 (16列)
+    # #07 #15 #19 #31 #33
+    # ═══════════════════════════════════════════════════════════════
     coverage_map = Column(JSON, nullable=True)
-    # 这个 ASIN 在各源上实际获取到了什么数据
-    # {"has_reviews_body": true, "has_aplus": false,
-    #  "has_price_history": true, "has_stock_level": true,
-    #  "has_sales_estimate": true, "has_buybox_info": true,
-    #  "has_seller_profile": false}
-
-    raw_payload = Column(JSON, nullable=True)
-    # 三源各端点的原始数据快照，用于回填历史字段 + 数据血缘
-    # {"keepa_product": {...}, "rainforest_product": {...},
-    #  "canopy_product": {...}, "canopy_reviews": {...},
-    #  "canopy_sales": {...}, "canopy_stock": {...}}
-
-    # ── Importance Score ──────────────────────────────────────────
+    freshness_map = Column(JSON, nullable=True)
+    lifecycle_status = Column(String(10), nullable=True, default="active")
+    last_accessed_at = Column(DateTime(timezone=True), nullable=True)
     importance_score = Column(Float, nullable=True)
-    importance_tier = Column(String(10), nullable=True)  # hot / active / passive
+    importance_tier = Column(String(10), nullable=True)
     importance_details = Column(JSON, nullable=True)
-
-    # ── 数据生命周期 ★ ─────────────────────────────────────────────
-    lifecycle_status = Column(String(10), nullable=True, default="active")  # active / passive / archived / deleted
-    last_accessed_at = Column(DateTime(timezone=True), nullable=True)  # 最近一次被 Agent 查询的时间
-
-    # ── 9. 数据源元信息 ─────────────────────────────────────────
-    data_source = Column(JSON, nullable=True)  # {"keepa": true, "rainforest": true, "canopy": true}
+    data_source = Column(JSON, nullable=True)
     keepa_updated_at = Column(DateTime(timezone=True), nullable=True)
     rainforest_updated_at = Column(DateTime(timezone=True), nullable=True)
     canopy_updated_at = Column(DateTime(timezone=True), nullable=True)
     importance_updated_at = Column(DateTime(timezone=True), nullable=True)
-
-    # ── 通用时间戳 ────────────────────────────────────────────────
+    listed_since = Column(DateTime(timezone=True), nullable=True)
+    tracking_since = Column(DateTime(timezone=True), nullable=True)
+    first_available = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # ═══════════════════════════════════════════════════════════════
+    # 复合键 + 索引
+    # ═══════════════════════════════════════════════════════════════
+    __table_args__ = (
+        UniqueConstraint("asin", "domain", name="uq_asin_domain"),
+        Index("idx_asin_domain", "asin", "domain"),
+    )
+
 
 class AmazonETLLog(Base):
-    """
-    ETL 执行日志表 — 记录每次三源调用的执行情况。
-    用于 Token 预算审计、调度器监控、异常诊断。
-    """
+    """ETL 执行日志表"""
     __tablename__ = "amazon_etl_logs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -196,15 +294,15 @@ class AmazonETLLog(Base):
     started_at = Column(DateTime(timezone=True), nullable=False)
     finished_at = Column(DateTime(timezone=True), nullable=True)
     duration_seconds = Column(Float, nullable=True)
-    status = Column(String(20), nullable=False, default="running")  # running/success/failed/partial
+    status = Column(String(20), nullable=False, default="running")
 
-    source = Column(String(20), nullable=False)  # keepa/rainforest/canopy
+    source = Column(String(20), nullable=False)
     asins_queried = Column(Integer, nullable=True, default=0)
     asins_success = Column(Integer, nullable=True, default=0)
     asins_failed = Column(JSON, nullable=True)
 
     tokens_or_credits = Column(Integer, nullable=True)
-    tier = Column(String(10), nullable=True)  # hot/active/passive
+    tier = Column(String(10), nullable=True)
 
     error_message = Column(Text, nullable=True)
 

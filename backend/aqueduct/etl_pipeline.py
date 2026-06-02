@@ -49,14 +49,17 @@ _SOURCE_PRIORITY = {
     # Rainforest 独家或最优
     "aplus_content": "rainforest",
     "videos_count": "rainforest",
+    "videos": "rainforest",
     "rating_breakdown": "rainforest",
     "sponsored_products": "rainforest",
+    "frequently_bought_together": "rainforest",
     "fulfillment": "rainforest",
     "is_prime": "rainforest",
     "availability": "rainforest",
     "feature_bullets": "rainforest",
     "main_image": "rainforest",
     "images": "rainforest",
+    "images_count": "rainforest",
     "child_asins": "rainforest",
     "parent_asin": "rainforest",
     "specifications": "rainforest",
@@ -65,19 +68,102 @@ _SOURCE_PRIORITY = {
     "weight": "rainforest",
     "color": "rainforest",
     "size": "rainforest",
+    "style": "rainforest",
+    "material": "rainforest",
+    "sub_title": "rainforest",
+    "return_policy": "rainforest",
+    "protection_plans": "rainforest",
+    "buybox_availability": "rainforest",
+    "buybox_condition": "rainforest",
+    "keywords_list": "rainforest",
+    "search_alias": "rainforest",
+    "seller_profile": "rainforest",
+    "first_available": "rainforest",
+    "rich_product_description": "rainforest",
+    "list_price": "rainforest",
+    "recent_sales": "rainforest",
+    "max_order_quantity": "rainforest",
 
     # Keepa 独家字段（不会被覆盖）
     "price_history": "keepa",
     "bsr_history": "keepa",
+    "rating_history": "keepa",
+    "review_count_history": "keepa",
+    "sales_rank_history": "keepa",
     "monthly_sold": "keepa",
     "avg_price_30d": "keepa",
     "avg_price_90d": "keepa",
+    "avg_price_180d": "keepa",
+    "avg_price_365d": "keepa",
+    "min_price_30d": "keepa",
     "min_price_90d": "keepa",
+    "min_price_180d": "keepa",
     "max_price_90d": "keepa",
+    "max_price_180d": "keepa",
     "avg_bsr_30d": "keepa",
     "avg_bsr_90d": "keepa",
+    "avg_bsr_180d": "keepa",
+    "avg_bsr_365d": "keepa",
     "bsr_trend": "keepa",
-    "review_count_history": "keepa",
+    "sales_rank_drops_30d": "keepa",
+    "sales_rank_drops_90d": "keepa",
+    "sales_rank_drops_180d": "keepa",
+    "sales_rank_drops_365d": "keepa",
+    "is_lowest_price": "keepa",
+    "buybox_rrp": "keepa",
+    "buybox_is_amazon": "keepa",
+    "buybox_is_prime_eligible": "keepa",
+    "buybox_shipping": "keepa",
+    "offer_count": "keepa",
+    "offer_count_fba": "keepa",
+    "offer_count_fbm": "keepa",
+    "seller_ids_lowest_fba": "keepa",
+    "seller_ids_lowest_fbm": "keepa",
+    "buybox_eligible_offer_counts": "keepa",
+    "fba_fee": "keepa",
+    "referral_fee_percent": "keepa",
+    "out_of_stock_pct_30d": "keepa",
+    "out_of_stock_pct_90d": "keepa",
+    "out_of_stock_pct_180d": "keepa",
+    "out_of_stock_count_amazon": "keepa",
+    "sales_rank_reference_id": "keepa",
+    "root_category_id": "keepa",
+    "sales_rank_reference_history": "keepa",
+    "tracking_since": "keepa",
+    "listed_since": "keepa",
+    "parent_asin_history": "keepa",
+    "is_redirect_asin": "keepa",
+    "is_warehouse_deal": "keepa",
+    "is_preorder": "keepa",
+    "is_map_restricted": "keepa",
+    "batteries_included": "keepa",
+    "batteries_required": "keepa",
+    "is_sns": "keepa",
+    "is_heat_sensitive": "keepa",
+    "is_adult_product": "keepa",
+    "is_eligible_for_trade_in": "keepa",
+    "launchpad": "keepa",
+    "coupon_text": "keepa",
+    "promotions_json": "keepa",
+    "lightning_deal_info": "keepa",
+    "shipping_origin": "keepa",
+    "is_eligible_for_free_shipping": "keepa",
+    "available_prime_exclusive": "keepa",
+    "hazardous_materials": "keepa",
+    "brand_store": "keepa",
+    "url_slug": "keepa",
+    "item_type_keyword": "keepa",
+    "unit_count_type": "keepa",
+    "unit_count_value": "keepa",
+    "number_of_items": "keepa",
+    "item_weight_g": "keepa",
+    "item_height_mm": "keepa",
+    "item_length_mm": "keepa",
+    "item_width_mm": "keepa",
+    "package_weight_g": "keepa",
+    "package_dimensions_mm": "keepa",
+    "offer_history": "keepa",
+    "product_type_name": "keepa",
 
     # Canopy 优先（价格/评分经常更及时）
     "current_price": "canopy",
@@ -85,6 +171,10 @@ _SOURCE_PRIORITY = {
     "review_count": "canopy",
     "seller_name": "canopy",
     "current_bsr": "canopy",
+    "weekly_sold": "canopy",
+    "annual_sold": "canopy",
+    "stock_level": "canopy",
+    "review_velocity_30d": "canopy",
 
     # 通用字段 — RF 优先
     "title": "rainforest",
@@ -99,6 +189,43 @@ _SOURCE_PRIORITY = {
     "product_group": "rainforest",
     "binding": "rainforest",
     "description": "rainforest",
+    "product_type": "keepa",
+    "asin": "keepa",
+    "domain": "keepa",
+    "data_source": "keepa",
+    # RF 独有字段（新增）
+    "link": "rainforest",
+    "shipping_weight": "rainforest",
+    "also_bought": "rainforest",
+    "also_viewed": "rainforest",
+    "bestsellers_rank_flat": "rainforest",
+    "variant_asins_flat": "rainforest",
+    "brand_store_name": "rainforest",
+    "brand_store_url": "rainforest",
+    "specifications_flat": "rainforest",
+    "feature_bullets_count": "rainforest",
+    "has_coupon": "rainforest",
+    "amazons_choice": "rainforest",
+    "subscribe_and_save": "rainforest",
+    "trade_in_and_save": "rainforest",
+    "deal_badge": "rainforest",
+    "big_spring_deal_percentage": "rainforest",
+    "has_reviews": "rainforest",
+    "has_size_guide": "rainforest",
+    "has_360_view": "rainforest",
+    "gift_guide_badge": "rainforest",
+    "is_amazon_brand": "rainforest",
+    "is_exclusive_to_amazon": "rainforest",
+    "is_small_business": "rainforest",
+    "climate_pledge_friendly": "rainforest",
+    "proposition_65_warning": "rainforest",
+    "sell_on_amazon": "rainforest",
+    "add_on_item": "rainforest",
+    "summarization_attributes": "rainforest",
+    "customers_say": "rainforest",
+    "used_offers_count": "rainforest",
+    "new_offers_from": "rainforest",
+    "used_offers_from": "rainforest",
 }
 
 # 需要从 ETL 结果中排除的内部字段
@@ -106,7 +233,7 @@ _EXCLUDED_KEYS = {
     "id", "created_at", "updated_at",
     "keepa_updated_at", "rainforest_updated_at", "canopy_updated_at",
     "importance_updated_at", "importance_score", "importance_tier", "importance_details",
-    "data_source", "stock_level", "max_order_quantity",
+    "data_source",
 }
 
 
@@ -185,26 +312,99 @@ class ETLPipeline:
     # ── Normalize ──
 
     def _normalize_keepa(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """Keepa 数据归一化到 amazon_products 字段"""
-        fields = [
-            "asin", "title", "brand", "category_id", "root_category",
-            "category_tree", "current_price", "avg_price_30d", "avg_price_90d",
-            "min_price_90d", "max_price_90d", "current_bsr", "avg_bsr_30d",
-            "avg_bsr_90d", "bsr_trend", "monthly_sold", "rating", "review_count",
-            "seller_count", "price_history", "bsr_history", "parent_asin",
-            "product_group", "binding", "manufacturer", "model_number",
-            "part_number", "upc", "ean", "color", "size", "weight",
-            "package_quantity", "features", "description", "images_csv",
-            "variation_csv", "domain",
-        ]
+        """Keepa 数据归一化到 amazon_products 字段（全字段版）"""
+        # Keepa 连接器 _parse_product 已经把所有字段标准化了
+        # 这里只需要过滤出模型已定义的列
+        keepa_fields = {
+            "asin", "domain", "parent_asin", "product_type", "product_type_name",
+            "title", "brand", "brand_store", "feature_bullets", "description",
+            "images_csv", "color", "size", "style", "material",
+            "weight", "item_weight_g", "item_height_mm", "item_length_mm", "item_width_mm",
+            "package_weight_g", "package_dimensions_mm", "package_quantity",
+            "number_of_items", "item_type_keyword", "unit_count_type", "unit_count_value",
+            "current_price", "list_price", "buybox_price", "buybox_seller_id",
+            "buybox_seller_name", "currency",
+            "avg_price_30d", "avg_price_90d", "avg_price_180d", "avg_price_365d",
+            "min_price_30d", "min_price_90d", "min_price_180d",
+            "max_price_90d", "max_price_180d",
+            "is_lowest_price", "buybox_is_amazon", "buybox_is_prime_eligible", "buybox_shipping",
+            "current_bsr", "avg_bsr_30d", "avg_bsr_90d", "avg_bsr_180d", "avg_bsr_365d",
+            "bsr_trend",
+            "sales_rank_drops_30d", "sales_rank_drops_90d", "sales_rank_drops_180d", "sales_rank_drops_365d",
+            "sales_rank_reference_id", "root_category_id", "sales_rank_reference_history",
+            "monthly_sold", "sales_rank_history",
+            "rating", "review_count", "rating_history", "review_count_history",
+            "seller_count", "offer_count", "offer_count_fba", "offer_count_fbm",
+            "seller_ids_lowest_fba", "seller_ids_lowest_fbm", "buybox_eligible_offer_counts",
+            "is_fba", "is_prime",
+            "fba_fee", "referral_fee_percent",
+            "offer_history",
+            "is_warehouse_deal", "is_preorder", "is_map_restricted",
+            "batteries_included", "batteries_required", "is_sns", "is_heat_sensitive",
+            "is_adult_product", "is_eligible_for_trade_in", "is_redirect_asin", "launchpad",
+            "shipping_origin", "is_eligible_for_free_shipping", "available_prime_exclusive",
+            "hazardous_materials",
+            "coupon_text", "promotions_json", "lightning_deal_info",
+            "price_history", "bsr_history",
+            "out_of_stock_pct_30d", "out_of_stock_pct_90d", "out_of_stock_pct_180d",
+            "out_of_stock_count_amazon",
+            "tracking_since", "listed_since",
+            "url_slug",
+            "category_tree", "root_category", "product_group", "binding",
+            "manufacturer", "model", "part_number", "upc", "ean", "isbn",
+            "variation_csv",
+            # 新增 Keepa 解析字段
+            "availability_text", "whats_in_the_box", "sales_rank_history",
+            "parent_asin_history", "link", "dimensions", "shipping_weight",
+            "bestsellers_rank_flat", "variant_asins_flat",
+            "has_coupon", "unit_price", "used_offers_count",
+            "new_offers_from", "used_offers_from",
+            "has_reviews", "gift_guide_badge",
+            "amazons_choice", "subscribe_and_save", "trade_in_and_save",
+            "deal_badge", "big_spring_deal_percentage",
+            "is_fulfilled_by_amazon_international",
+            "isEligibleForSuperSaverShipping", "free_shipping_minimum_spend",
+            "is_amazon_brand", "is_exclusive_to_amazon", "is_small_business",
+            "climate_pledge_friendly", "add_on_item", "proposition_65_warning",
+            "sell_on_amazon",
+            "brand_store_name", "brand_store_url",
+            "feature_bullets_count", "specifications_flat",
+            "has_size_guide", "has_360_view",
+            "summarization_attributes", "customers_say",
+            "keywords_list",
+            # 字段名别名
+            "category_id",       # Keepa 返回 category_id → 模型叫 bsr_category_id
+        }
         result = {}
-        for f in fields:
-            if f in raw and raw[f] is not None:
-                result[f] = raw[f]
+        for key in keepa_fields:
+            if key in raw and raw[key] is not None:
+                # 字段名别名映射
+                aliases = {
+                    "category_id": "bsr_category_id",
+                }
+                dst_key = aliases.get(key, key)
+                result[dst_key] = raw[key]
+
+        # 衍生计算：images_count = len(images)
+        if "images" in result and isinstance(result["images"], (list, dict)):
+            try:
+                imgs = result["images"]
+                if isinstance(imgs, list):
+                    result["images_count"] = len(imgs)
+            except Exception:
+                pass
+
+        # unit_count JSON 组合
+        if result.get("unit_count_type") or result.get("unit_count_value"):
+            result["unit_count"] = {
+                "unitType": result.get("unit_count_type"),
+                "unitValue": result.get("unit_count_value"),
+            }
+
         return result
 
     def _normalize_rainforest(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """Rainforest 数据归一化到 amazon_products 字段"""
+        """Rainforest 数据归一化到 amazon_products 字段（全字段版）"""
         mapping = {
             "asin": "asin", "title": "title", "brand": "brand",
             "parent_asin": "parent_asin", "child_asins": "child_asins",
@@ -212,7 +412,7 @@ class ETLPipeline:
             "feature_bullets": "feature_bullets",
             "description": "description", "aplus_content": "aplus_content",
             "main_image": "main_image", "images": "images",
-            "videos_count": "videos_count",
+            "videos_count": "videos_count", "videos": "videos",
             "current_price": "current_price", "list_price": "list_price",
             "is_prime": "is_prime", "fulfillment": "fulfillment",
             "availability": "availability",
@@ -234,6 +434,63 @@ class ETLPipeline:
             "domain": "domain",
             "stock_level": "stock_level",
             "max_order_quantity": "max_order_quantity",
+            # 新增字段
+            "sub_title": "sub_title",
+            "return_policy": "return_policy",
+            "protection_plans": "protection_plans",
+            "buybox_availability": "buybox_availability",
+            "buybox_condition": "buybox_condition",
+            "buybox_is_amazon": "buybox_is_amazon",
+            "keywords_list": "keywords_list",
+            "search_alias": "search_alias",
+            "seller_profile": "seller_profile",
+            "first_available": "first_available",
+            "rich_product_description": "rich_product_description",
+            "frequently_bought_together": "frequently_bought_together",
+            "product_type_name": "product_type_name",
+            "images_count": "images_count",
+            "is_bundle": "is_bundle",
+            # 修复遗漏
+            "specifications": "specifications",
+            "style": "style",
+            # 新增 RF 字段
+            "link": "link",
+            "dimensions": "dimensions",
+            "shipping_weight": "shipping_weight",
+            "also_bought": "also_bought",
+            "also_viewed": "also_viewed",
+            "bestsellers_rank_flat": "bestsellers_rank_flat",
+            "variant_asins_flat": "variant_asins_flat",
+            "brand_store_name": "brand_store_name",
+            "brand_store_url": "brand_store_url",
+            "specifications_flat": "specifications_flat",
+            "feature_bullets_count": "feature_bullets_count",
+            # 新增 RF 字段 Phase 2 补全
+            "has_coupon": "has_coupon",
+            "amazons_choice": "amazons_choice",
+            "subscribe_and_save": "subscribe_and_save",
+            "trade_in_and_save": "trade_in_and_save",
+            "deal_badge": "deal_badge",
+            "big_spring_deal_percentage": "big_spring_deal_percentage",
+            "has_reviews": "has_reviews",
+            "has_size_guide": "has_size_guide",
+            "has_360_view": "has_360_view",
+            "gift_guide_badge": "gift_guide_badge",
+            "is_amazon_brand": "is_amazon_brand",
+            "is_exclusive_to_amazon": "is_exclusive_to_amazon",
+            "is_small_business": "is_small_business",
+            "climate_pledge_friendly": "climate_pledge_friendly",
+            "proposition_65_warning": "proposition_65_warning",
+            "sell_on_amazon": "sell_on_amazon",
+            "add_on_item": "add_on_item",
+            "summarization_attributes": "summarization_attributes",
+            "customers_say": "customers_say",
+            "used_offers_count": "used_offers_count",
+            "new_offers_from": "new_offers_from",
+            "used_offers_from": "used_offers_from",
+            "unit_price": "unit_price",
+            "free_shipping_minimum_spend": "free_shipping_minimum_spend",
+            "is_fulfilled_by_amazon_international": "is_fulfilled_by_amazon_international",
         }
         result = {}
         for src_key, dst_key in mapping.items():
@@ -242,7 +499,7 @@ class ETLPipeline:
         return result
 
     def _normalize_canopy(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """Canopy 数据归一化到 amazon_products 字段"""
+        """Canopy 数据归一化到 amazon_products 字段（全字段版）"""
         mapping = {
             "asin": "asin", "title": "title", "brand": "brand",
             "category_name": "category_name", "category_tree": "category_tree",
@@ -253,17 +510,35 @@ class ETLPipeline:
             "is_prime": "is_prime",
             "rating": "rating", "ratings_total": "review_count",
             "top_reviews": "top_reviews",
-            "seller_name": "seller_name",
+            "seller_name": "seller_name", "seller_id": "seller_id",
             "manufacturer": "manufacturer", "model_number": "model_number",
             "part_number": "part_number", "upc": "upc", "ean": "ean",
             "color": "color", "size": "size",
             "weight": "weight", "dimensions": "dimensions",
             "domain": "domain",
+            "is_in_stock": "is_in_stock",
+            # 新增字段
+            "monthly_sold": "monthly_sold",
+            "weekly_sold": "weekly_sold",
+            "annual_sold": "annual_sold",
+            "stock_level": "stock_level",
+            "review_velocity_30d": "review_velocity_30d",
+            "material": "material",
+            "style": "style",
+            "package_quantity": "package_quantity",
+            "binding": "binding",
+            "product_group": "product_group",
+            "frequently_bought_together": "frequently_bought_together",
         }
         result = {}
         for src_key, dst_key in mapping.items():
             if src_key in raw and raw[src_key] is not None:
                 result[dst_key] = raw[src_key]
+
+        # Canopy top_reviews → reviews 别名（Canopy 只返回 topReviews 作为评论）
+        if "top_reviews" in result and result["top_reviews"] and "reviews" not in result:
+            result["reviews"] = result["top_reviews"]
+
         return result
 
     # ── 字段级覆盖度维度检查 ──────────────────────────────────
@@ -276,19 +551,52 @@ class ETLPipeline:
         "has_price": {"current_price"},
         "has_buybox": {"buybox_price", "buybox_seller_id"},
         "has_price_stats": {"avg_price_30d", "avg_price_90d"},
+        "has_price_stats_extended": {"avg_price_180d", "avg_price_365d"},
         "has_bsr": {"current_bsr"},
         "has_bsr_stats": {"avg_bsr_30d", "avg_bsr_90d"},
+        "has_bsr_stats_extended": {"avg_bsr_180d", "avg_bsr_365d"},
         "has_bsr_drops": {"sales_rank_drops_30d"},
-        "has_reviews_body": {"top_reviews"},           # Canopy /reviews 的评论正文
+        "has_bsr_drops_extended": {"sales_rank_drops_180d", "sales_rank_drops_365d"},
+        "has_reviews_body": {"top_reviews"},
         "has_rating_breakdown": {"rating_breakdown"},
         "has_rating_history": {"rating_history"},
+        "has_review_count_history": {"review_count_history"},
         "has_sales_estimate": {"monthly_sold"},
+        "has_sales_estimate_extended": {"weekly_sold", "annual_sold"},
         "has_stock_level": {"stock_level"},
         "has_offer_counts": {"offer_count", "seller_count"},
         "has_fba_fee": {"fba_fee"},
         "has_referral_fee": {"referral_fee_percent"},
         "has_price_history": {"price_history"},
         "has_bsr_history": {"bsr_history"},
+        "has_specifications": {"specifications"},
+        "has_brand_store": {"brand_store"},
+        "has_offer_detail": {"offer_count_fba", "offer_count_fbm"},
+        "has_out_of_stock": {"out_of_stock_pct_30d"},
+        "has_coupon_promo": {"coupon_text", "promotions_json"},
+        "has_physical_dims": {"item_weight_g", "package_dimensions_mm"},
+        "has_listing_safety": {"is_redirect_asin", "is_adult_product"},
+        "has_shipping_info": {"shipping_origin", "is_eligible_for_free_shipping"},
+        "has_buybox_detail": {"buybox_is_amazon", "buybox_is_prime_eligible"},
+        "has_product_type": {"product_type_name"},
+        "has_unit_count": {"unit_count_type"},
+        "has_fulfillment": {"fulfillment"},
+        "has_return_policy": {"return_policy"},
+        "has_seller_profile": {"seller_profile"},
+        "has_first_available": {"first_available"},
+        "has_tracking_since": {"tracking_since"},
+        "has_listed_since": {"listed_since"},
+        "has_keywords": {"keywords_list"},
+        "has_search_alias": {"search_alias"},
+        "has_frequently_bought": {"frequently_bought_together"},
+        "has_sponsored": {"sponsored_products"},
+        "has_sales_rank_reference": {"sales_rank_reference_id"},
+        "has_seller_ids_lowest": {"seller_ids_lowest_fba"},
+        "has_buybox_eligible_counts": {"buybox_eligible_offer_counts"},
+        "has_batteries": {"batteries_included"},
+        "has_heat_sensitive": {"is_heat_sensitive"},
+        "has_lightning_deal": {"lightning_deal_info"},
+        "has_rich_product_description": {"rich_product_description"},
     }
 
     def _calc_coverage(self, product: Dict) -> Dict[str, bool]:
@@ -331,19 +639,52 @@ class ETLPipeline:
             "has_price": ("canopy", "/product", 0, 0, 1),
             "has_buybox": ("rainforest", "/product", 0, 1, 0),
             "has_price_stats": ("keepa", "/product", 1, 0, 0),
+            "has_price_stats_extended": ("keepa", "/product", 1, 0, 0),
             "has_bsr": ("keepa", "/product", 1, 0, 0),
             "has_bsr_stats": ("keepa", "/product", 1, 0, 0),
+            "has_bsr_stats_extended": ("keepa", "/product", 1, 0, 0),
             "has_bsr_drops": ("keepa", "/product", 1, 0, 0),
+            "has_bsr_drops_extended": ("keepa", "/product", 1, 0, 0),
             "has_reviews_body": ("canopy", "/reviews", 0, 0, 1),
             "has_rating_breakdown": ("rainforest", "/product", 0, 1, 0),
             "has_rating_history": ("keepa", "/product", 1, 0, 0),
+            "has_review_count_history": ("keepa", "/product", 1, 0, 0),
             "has_sales_estimate": ("canopy", "/sales", 0, 0, 1),
+            "has_sales_estimate_extended": ("canopy", "/sales", 0, 0, 1),
             "has_stock_level": ("canopy", "/stock", 0, 0, 1),
             "has_offer_counts": ("keepa", "/product", 1, 0, 0),
             "has_fba_fee": ("keepa", "/product", 1, 0, 0),
             "has_referral_fee": ("keepa", "/product", 1, 0, 0),
             "has_price_history": ("keepa", "/product", 1, 0, 0),
             "has_bsr_history": ("keepa", "/product", 1, 0, 0),
+            "has_specifications": ("rainforest", "/product", 0, 1, 0),
+            "has_brand_store": ("keepa", "/product", 1, 0, 0),
+            "has_offer_detail": ("keepa", "/product", 1, 0, 0),
+            "has_out_of_stock": ("keepa", "/product", 1, 0, 0),
+            "has_coupon_promo": ("keepa", "/product", 1, 0, 0),
+            "has_physical_dims": ("keepa", "/product", 1, 0, 0),
+            "has_listing_safety": ("keepa", "/product", 1, 0, 0),
+            "has_shipping_info": ("keepa", "/product", 1, 0, 0),
+            "has_buybox_detail": ("keepa", "/product", 1, 0, 0),
+            "has_product_type": ("keepa", "/product", 1, 0, 0),
+            "has_unit_count": ("keepa", "/product", 1, 0, 0),
+            "has_fulfillment": ("rainforest", "/product", 0, 1, 0),
+            "has_return_policy": ("rainforest", "/product", 0, 1, 0),
+            "has_seller_profile": ("rainforest", "/product", 0, 1, 0),
+            "has_first_available": ("rainforest", "/product", 0, 1, 0),
+            "has_tracking_since": ("keepa", "/product", 1, 0, 0),
+            "has_listed_since": ("keepa", "/product", 1, 0, 0),
+            "has_keywords": ("rainforest", "/product", 0, 1, 0),
+            "has_search_alias": ("rainforest", "/product", 0, 1, 0),
+            "has_frequently_bought": ("rainforest", "/product", 0, 1, 0),
+            "has_sponsored": ("rainforest", "/product", 0, 1, 0),
+            "has_sales_rank_reference": ("keepa", "/product", 1, 0, 0),
+            "has_seller_ids_lowest": ("keepa", "/product", 1, 0, 0),
+            "has_buybox_eligible_counts": ("keepa", "/product", 1, 0, 0),
+            "has_batteries": ("keepa", "/product", 1, 0, 0),
+            "has_heat_sensitive": ("keepa", "/product", 1, 0, 0),
+            "has_lightning_deal": ("keepa", "/product", 1, 0, 0),
+            "has_rich_product_description": ("rainforest", "/product", 0, 1, 0),
         }
 
         for dim, (source, endpoint, k_cost, rf_cost, cn_cost) in _DIM_SOURCE.items():
@@ -425,6 +766,117 @@ class ETLPipeline:
                             break
         return plan
 
+    # ── 子表提取：Offer ─────────────────────────────────────────
+
+    def _extract_offers_from_keepa(self, keepa_raw: Dict[str, Any], asin: str, domain: str) -> List[Dict]:
+        """从 Keepa offers=20 响应提取 Offer 列表"""
+        offers_raw = keepa_raw.get("offers") or keepa_raw.get("offerHistory") or []
+        if not offers_raw:
+            return []
+
+        offers = []
+        for o in offers_raw:
+            if not isinstance(o, dict):
+                continue
+            offer = {
+                "asin": asin,
+                "domain": domain,
+                "seller_id": o.get("sellerId") or o.get("seller_id", ""),
+                "seller_name": o.get("sellerName") or o.get("seller_name", ""),
+                "price": o.get("price"),
+                "condition": o.get("condition", "NEW"),
+                "is_amazon": o.get("isAmazon", False) or o.get("is_amazon", False),
+                "is_fba": o.get("isFBA", False) or o.get("is_fba", False),
+                "is_prime": o.get("isPrime", False) or o.get("is_prime", False),
+                "is_preorder": o.get("isPreorder", False) or o.get("is_preorder", False),
+                "is_warehouse_deal": o.get("isWarehouseDeal", False) or o.get("is_warehouse_deal", False),
+                "is_shippable": o.get("isShippable", True),
+                "is_map": o.get("isMAP", False) or o.get("is_map", False),
+                "min_order_qty": o.get("minOrderQty", 1) or o.get("min_order_qty", 1),
+                "ships_from_china": o.get("shipsFromChina", False) or o.get("ships_from_china", False),
+                "offer_csv": o.get("offerCSV") or o.get("offer_csv") or o.get("csv"),
+            }
+            # 去空 buyerbox_winner
+            if offer["seller_id"]:
+                offers.append(offer)
+        return offers
+
+    def _extract_variations_from_keepa(self, keepa_raw: Dict[str, Any], asin: str, domain: str) -> List[Dict]:
+        """从 Keepa variationCSV 提取变体列表"""
+        variation_csv = keepa_raw.get("variationCSV") or keepa_raw.get("variation_csv") or ""
+        if not variation_csv:
+            return []
+
+        # variationCSV 格式: parentASIN|variationASIN|attributesCSV
+        variations = []
+        rows = variation_csv.split(";") if ";" in variation_csv else [variation_csv]
+        for row in rows:
+            parts = row.split("|") if "|" in row else []
+            if len(parts) >= 2:
+                var_asin = parts[1].strip()
+                if var_asin and var_asin != asin:
+                    attrs = {}
+                    if len(parts) >= 3:
+                        attr_pairs = parts[2].strip().split(",")
+                        for pair in attr_pairs:
+                            if "=" in pair:
+                                k, v = pair.split("=", 1)
+                                attrs[k.strip()] = v.strip()
+                    variations.append({
+                        "asin": asin,
+                        "domain": domain,
+                        "variant_asin": var_asin,
+                        "attributes": attrs if attrs else None,
+                        "image": None,
+                    })
+        return variations
+
+    def _extract_variations_from_rainforest(self, rf_raw: Dict[str, Any], asin: str, domain: str) -> List[Dict]:
+        """从 Rainforest variations 列表提取变体"""
+        variations_raw = rf_raw.get("variations") or []
+        if not variations_raw:
+            return []
+
+        variations = []
+        for v in variations_raw:
+            if not isinstance(v, dict):
+                continue
+            var_asin = v.get("asin", "")
+            if var_asin and var_asin != asin:
+                attrs = v.get("dimensions", "")
+                variations.append({
+                    "asin": asin,
+                    "domain": domain,
+                    "variant_asin": var_asin,
+                    "title": v.get("title"),
+                    "is_current": v.get("is_current", False),
+                    "attributes": attrs if attrs else None,
+                    "image": v.get("image"),
+                })
+        return variations
+
+    # ── 子表加载 ──
+
+    async def _load_offers(self, asin: str, domain: str, offers: List[Dict]) -> int:
+        """批量加载 Offer 到子表"""
+        if not offers:
+            return 0
+        count = 0
+        async with self.repo.db as session:
+            repo = AmazonProductRepository(session)
+            count = await repo.bulk_upsert_offers(asin, domain, offers)
+        return count
+
+    async def _load_variations(self, asin: str, domain: str, variations: List[Dict]) -> int:
+        """批量加载变体到子表"""
+        if not variations:
+            return 0
+        count = 0
+        async with self.repo.db as session:
+            repo = AmazonProductRepository(session)
+            count = await repo.bulk_upsert_variations(asin, domain, variations)
+        return count
+
     # ── 冷启动（4 阶段递进） ────────────────────────────────────
 
     async def cold_start(self, asin: str, domain: str = "US") -> Optional[Dict]:
@@ -499,7 +951,13 @@ class ETLPipeline:
         cn_norm = self._normalize_canopy(cn_raw)
 
         # Merge + coverage + freshness
-        merged = self._merge_products({asin: kp_norm}, {asin: rf_norm}, {asin: cn_norm})
+        raw_by_source = {"keepa": kp_raw}
+        if rf_raw:
+            raw_by_source["rainforest"] = rf_raw
+        merged = self._merge_products(
+            {asin: kp_norm}, {asin: rf_norm}, {asin: cn_norm},
+            raw_by_source=raw_by_source,
+        )
         product_data = merged.get(asin, {})
 
         # 标记降级
@@ -516,11 +974,21 @@ class ETLPipeline:
             if isinstance(coverage_map, dict):
                 coverage_map.setdefault("has_listing", False)
 
-        # 写入 DB
+        # 写入 DB（含子表）
         async with self.repo.db as session:
             repo = AmazonProductRepository(session)
             for s in product_data.get("data_source", ["keepa"]):
                 await repo.upsert(product_data, s)
+
+        # 写入子表
+        if kp_offers_raw.get("offers"):
+            offers = self._extract_offers_from_keepa(kp_offers_raw, asin, domain)
+            await self._load_offers(asin, domain, offers)
+        variations = self._extract_variations_from_keepa(kp_raw, asin, domain)
+        if rf_raw:
+            rf_vars = self._extract_variations_from_rainforest(rf_raw, asin, domain)
+            variations.extend(rf_vars)
+        await self._load_variations(asin, domain, variations)
 
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
         logger.info(f"[ColdStart] Done {asin}@{domain} in {elapsed:.1f}s (sources={product_data.get('data_source', [])})")
@@ -594,6 +1062,32 @@ class ETLPipeline:
             product["coverage_map"] = self._calc_coverage(product)
             product["freshness_map"] = self._calc_freshness(product, raw_by_source or {})
 
+            # ── 从 offers 原始数据推导卖家生态字段 ──
+            raw_kp = (raw_by_source or {}).get("keepa", {})
+            offers_raw = raw_kp.get("offers", []) if isinstance(raw_kp, dict) else []
+            if offers_raw and isinstance(offers_raw, list):
+                has_amazon = any(o.get("isAmazon") or o.get("is_amazon") for o in offers_raw
+                                 if isinstance(o, dict))
+                has_china = any(o.get("shipsFromChina") or o.get("ships_from_china") for o in offers_raw
+                                if isinstance(o, dict))
+                # Top seller: lowest price FBA offer
+                fba_offers = [o for o in offers_raw if isinstance(o, dict) and
+                             (o.get("isFBA") or o.get("is_fba")) and o.get("price")]
+                top_seller = None
+                if fba_offers:
+                    top_seller = min(fba_offers, key=lambda o: o.get("price", 999999))
+                if has_amazon:
+                    product["has_amazon_selling"] = True
+                if has_china:
+                    product["has_china_sellers"] = True
+                if top_seller:
+                    tid = top_seller.get("sellerId") or top_seller.get("seller_id")
+                    tname = top_seller.get("sellerName") or top_seller.get("seller_name")
+                    if tid:
+                        product["top_seller_id"] = tid
+                    if tname:
+                        product["top_seller_name"] = tname
+
             # ── 数据一致性校验 ──
             consistency = validate_consistency(kp, rf, cn)
             if consistency:
@@ -607,6 +1101,24 @@ class ETLPipeline:
                             logger.warning(
                                 f"[Consistency] {asin} {field} 不一致: {check.get('alert', '')}"
                             )
+
+            # ── raw_payload: 三源原始数据快照 ──
+            raw_sources = raw_by_source or {}
+            raw_payload = {}
+            for src_name in ("keepa", "rainforest", "canopy"):
+                src_data = raw_sources.get(src_name, {})
+                asin_data = src_data.get(asin) if isinstance(src_data, dict) else None
+                if asin_data:
+                    # 精简：只保留原始响应顶层 key，去掉超大 csv 数组
+                    cleaned = {}
+                    for k, v in asin_data.items():
+                        if k in ("csv", "offers", "variationCSV", "imagesCSV"):
+                            continue  # 这些已在具体字段中，不重复存
+                        cleaned[k] = v
+                    raw_payload[f"{src_name}_product"] = cleaned
+
+            if raw_payload:
+                product["raw_payload"] = raw_payload
 
             merged[asin] = product
 
@@ -760,7 +1272,14 @@ class ETLPipeline:
             cn_norm = {a: self._normalize_canopy(p) for a, p in cn_raw.items()}
 
             # 3. Merge
-            merged = self._merge_products(keepa_norm, rf_norm, cn_norm)
+            raw_by_source = {}
+            if keepa_raw:
+                raw_by_source["keepa"] = keepa_raw
+            if rf_raw:
+                raw_by_source["rainforest"] = rf_raw
+            if cn_raw:
+                raw_by_source["canopy"] = cn_raw
+            merged = self._merge_products(keepa_norm, rf_norm, cn_norm, raw_by_source=raw_by_source)
 
             # 4. Load
             total, success, failed = await self.load_products(merged)

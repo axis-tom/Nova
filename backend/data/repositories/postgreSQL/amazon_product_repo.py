@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, desc, or_, and_, func as sql_func
 
 from backend.data.models.amazon_product import AmazonProduct, AmazonETLLog
+from backend.data.models.amazon_product_offer import AmazonProductOffer
+from backend.data.models.amazon_product_variation import AmazonProductVariation
 from backend.data.models.change_log import AmazonChangeLog
 from backend.data.models.anomaly_log import AmazonAnomalyLog
 from backend.aqueduct.importance_score import (
@@ -417,6 +419,130 @@ class AmazonProductRepository:
         stmt = stmt.order_by(desc(AmazonAnomalyLog.detected_at)).limit(limit)
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    # ── Offer 子表 CRUD ──
+
+    async def get_offers(self, asin: str, domain: str = "US") -> List[AmazonProductOffer]:
+        """获取指定 ASIN 的所有 Offer"""
+        stmt = select(AmazonProductOffer).where(
+            AmazonProductOffer.asin == asin,
+            AmazonProductOffer.domain == domain,
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def upsert_offer(self, offer_data: Dict) -> AmazonProductOffer:
+        """写入/更新单个 Offer"""
+        asin = offer_data.get("asin")
+        domain = offer_data.get("domain", "US")
+        seller_id = offer_data.get("seller_id")
+        if not all([asin, seller_id]):
+            raise ValueError("asin and seller_id are required for offer")
+
+        stmt = select(AmazonProductOffer).where(
+            AmazonProductOffer.asin == asin,
+            AmazonProductOffer.domain == domain,
+            AmazonProductOffer.seller_id == seller_id,
+        )
+        result = await self.db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            for key, value in offer_data.items():
+                if hasattr(existing, key) and value is not None:
+                    setattr(existing, key, value)
+        else:
+            existing = AmazonProductOffer(**offer_data)
+            self.db.add(existing)
+
+        await self.db.commit()
+        await self.db.refresh(existing)
+        return existing
+
+    async def bulk_upsert_offers(self, asin: str, domain: str, offers: List[Dict]) -> int:
+        """批量写入 Offer，返回写入/更新条数"""
+        count = 0
+        for offer in offers:
+            offer["asin"] = asin
+            offer["domain"] = domain
+            try:
+                await self.upsert_offer(offer)
+                count += 1
+            except Exception as e:
+                logger.warning(f"Offer upsert failed for {asin}/{offer.get('seller_id')}: {e}")
+        return count
+
+    async def delete_offers(self, asin: str, domain: str = "US") -> int:
+        """删除指定 ASIN 的所有 Offer"""
+        stmt = delete(AmazonProductOffer).where(
+            AmazonProductOffer.asin == asin,
+            AmazonProductOffer.domain == domain,
+        )
+        result = await self.db.execute(stmt)
+        await self.db.commit()
+        return result.rowcount
+
+    # ── Variation 子表 CRUD ──
+
+    async def get_variations(self, asin: str, domain: str = "US") -> List[AmazonProductVariation]:
+        """获取指定 ASIN 的所有变体"""
+        stmt = select(AmazonProductVariation).where(
+            AmazonProductVariation.asin == asin,
+            AmazonProductVariation.domain == domain,
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def upsert_variation(self, var_data: Dict) -> AmazonProductVariation:
+        """写入/更新单个变体"""
+        asin = var_data.get("asin")
+        domain = var_data.get("domain", "US")
+        variant_asin = var_data.get("variant_asin")
+        if not all([asin, variant_asin]):
+            raise ValueError("asin and variant_asin are required for variation")
+
+        stmt = select(AmazonProductVariation).where(
+            AmazonProductVariation.asin == asin,
+            AmazonProductVariation.domain == domain,
+            AmazonProductVariation.variant_asin == variant_asin,
+        )
+        result = await self.db.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            for key, value in var_data.items():
+                if hasattr(existing, key) and value is not None:
+                    setattr(existing, key, value)
+        else:
+            existing = AmazonProductVariation(**var_data)
+            self.db.add(existing)
+
+        await self.db.commit()
+        await self.db.refresh(existing)
+        return existing
+
+    async def bulk_upsert_variations(self, asin: str, domain: str, variations: List[Dict]) -> int:
+        """批量写入变体，返回写入/更新条数"""
+        count = 0
+        for var in variations:
+            var["asin"] = asin
+            var["domain"] = domain
+            try:
+                await self.upsert_variation(var)
+                count += 1
+            except Exception as e:
+                logger.warning(f"Variation upsert failed for {asin}/{var.get('variant_asin')}: {e}")
+        return count
+
+    async def delete_variations(self, asin: str, domain: str = "US") -> int:
+        """删除指定 ASIN 的所有变体"""
+        stmt = delete(AmazonProductVariation).where(
+            AmazonProductVariation.asin == asin,
+            AmazonProductVariation.domain == domain,
+        )
+        result = await self.db.execute(stmt)
+        await self.db.commit()
+        return result.rowcount
 
     # ── 工具方法 ──
 
