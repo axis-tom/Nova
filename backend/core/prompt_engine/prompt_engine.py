@@ -247,9 +247,10 @@ class PromptEngine:
 
 ### 关键原则
 - **没有预设分析路径** — 你根据用户原话、可用数据和 Agent 能力现场决定
-- **没有固定 Agent 顺序** — 不一定要先调 product_collector，可以先调 market_analyst 做概览，再决定是否需要采集更多数据
+- **没有固定 Agent 顺序** — 可以先调 market_analyst 做概览，再决定是否需要更多数据
 - **可以多次调用同一个 Agent** — 第一次做概览，第二次深挖某个具体细节
-- **先思考数据是否已存在** — 看 session state 中的已有字段，避免重复采集
+- **数据已就绪** — Phase 0 已为你准备好数据。用 discover_data 工具查数据库有哪些可用数据
+- **使用 discover_data 工具探索可用数据** — 在你规划分析路径前，先调 discover_data 看看 DB 有什么
 - **最终回答用中文、结构化、含关键数据表**"""
 
         # ── 组装 ──

@@ -46,6 +46,7 @@ class IntentAnalysisSpec:
     # ── 新字段（自然语言，不指向任何预设 ID） ──
     paraphrased_intent: str = ""     # LLM 对用户意图的重新表述
     analysis_hint: str = ""          # 给 orchestrator 的分析建议（自然语言）
+    category_hint: str = ""          # 给 DataLiaison 的品类/ASIN 数据范围提示
 
     # ── 旧字段（已废弃，保持兼容） ──
     dimensions: List[str] = field(default_factory=list)
@@ -76,6 +77,7 @@ _LLM_CLASSIFY_PROMPT = """你是一个意图理解助手。分析用户关于亚
     "entities": ["关注的实体名称列表"],
     "paraphrased_intent": "用一句话重新表述用户想做什么（不要预设分析方向，只描述意图）",
     "analysis_hint": "根据用户意图，给 orchestrator 的建议：用户可能关心哪些维度、需要什么类型的数据支撑",
+    "category_hint": "给数据准备层的提示：要回答这个问题，大概需要什么品类/哪些 ASIN 的数据？如无线耳机品类的 top50 ASIN 或 B0XXX 的详细数据",
     "dimensions": ["方向ID列表，可选（旧字段兼容）"],
     "primary_dim": "主线方向ID，可选（旧字段兼容）",
     "focus_description": "一句话描述分析焦点，可选（旧字段兼容）"
@@ -84,6 +86,7 @@ _LLM_CLASSIFY_PROMPT = """你是一个意图理解助手。分析用户关于亚
 规则：
 - paraphrased_intent 要中立，不要用分析术语，如"用户想了解蓝牙耳机类目各品牌的表现"
 - analysis_hint 给 orchestrator 参考，如"可能需要价格趋势数据和评论情感数据"
+- category_hint 给 DataLiaison 数据准备层，指明需要预采集什么数据，如"蓝牙耳机(Headphones)品类 top50 ASIN 的 Keepa+Rainforest 数据"或"B0F9FS7WQQ 及其竞品 ASIN 的详情"
 - entities: 提取品牌名、品类名、ASIN
 - dimensions/primary_dim/focus_description 是旧字段，仅当你能确定匹配到预设方向时填充
 """
@@ -191,6 +194,7 @@ class IntentClassifier:
                 focus_description=data.get("focus_description", query[:200]),
                 paraphrased_intent=data.get("paraphrased_intent", ""),
                 analysis_hint=data.get("analysis_hint", ""),
+                category_hint=data.get("category_hint", ""),
             )
         except Exception:
             return None

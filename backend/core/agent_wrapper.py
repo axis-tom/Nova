@@ -24,24 +24,10 @@ AGENT_REGISTRY = [
         "name": "keyword_expander",
         "description": (
             "Amazon 关键词拓词：基于种子关键词扩展相关搜索词。"
-            "如果 state 中已有 collected_products，会从竞品标题提取真实市场关键词（更精准）。"
-            "适合回答「帮我找更多相关关键词」类问题；也是 product_collector 的常见前置步骤"
+            "如果数据库中有商品数据，会从竞品标题提取真实市场关键词（更精准）。"
+            "适合回答「帮我找更多相关关键词」类问题"
         ),
         "input_example": '{"seed_keywords": ["portable fan"], "expand_count": 20, "include_long_tail": true}',
-        "requires_upstream": [],
-    },
-    {
-        "name": "product_collector",
-        "description": (
-            "Amazon 商品采集（Keepa + Rainforest + Canopy 三数据源）。"
-            "**推荐用法 1**：传入 watchlist_asins=[\"B0XXX\",...] 查指定商品，自动获取 Keepa 历史趋势 + Rainforest listing 详情 + Canopy listing 补全。"
-            "**推荐用法 2**：传入 expanded_keywords=[\"...\"] 通过 Canopy 关键词搜索自动发现 ASIN（Rainforest 备用）。"
-            "**L2 补单**：如果 state 有 pending_data_requests，会按需补充更多评论页/卖家报价/类目榜单。"
-        ),
-        "input_example": (
-            '{"watchlist_asins": ["B0BDHWDR12", "B0F9FP4MC4"], "domain": "US"}  '
-            '# 已知 ASIN；或 {"expanded_keywords":["bluetooth earbuds"], "allow_keyword_search": true}  # 关键词发现'
-        ),
         "requires_upstream": [],
     },
     {
@@ -49,9 +35,7 @@ AGENT_REGISTRY = [
         "description": (
             "Amazon 评分/评论洞察：基于商品数据做评分定位、评论壁垒评估、情感倾向、"
             "好评/差评推断、客户需求分析。适合回答「这个产品口碑怎么样」「评论壁垒高不高」类问题。"
-            "**支持两种模式**："
-            "1. 传 category 或 asins → 从 amazon_products 本地表查询（推荐，秒级响应）"
-            "2. 读 state.collected_products（需先调 product_collector）"
+            "传 category 或 asins 从 amazon_products 本地表查询（秒级响应）"
         ),
         "input_example": '{"category": "Headphones", "domain": "US", "max_products_to_analyze": 20}  # 传 category 走本地表',
         "requires_upstream": [],
@@ -61,9 +45,7 @@ AGENT_REGISTRY = [
         "description": (
             "Amazon 流量与竞品分析：分析 BSR 排名分布、价格竞争格局、价格异常检测、"
             "品类竞争度评估。适合回答「这个品类流量怎么样」「价格竞争格局」类问题。"
-            "**支持两种模式**："
-            "1. 传 category 或 asins → 从 amazon_products 本地表查询（推荐，秒级响应）"
-            "2. 读 state.collected_products（需先调 product_collector）"
+            "传 category 或 asins 从 amazon_products 本地表查询（秒级响应）"
         ),
         "input_example": '{"category": "Wireless Earbuds", "domain": "US"}  # 传 category 走本地表',
         "requires_upstream": [],
@@ -73,9 +55,7 @@ AGENT_REGISTRY = [
         "description": (
             "Amazon 市场机会评估：综合商品/评论/流量/竞品数据，计算机会评分（0-100），"
             "输出选品建议和市场报告。适合「哪个产品值得做」「市场机会分析」类问题。"
-            "**支持两种模式**："
-            "1. 传 category 或 asins → 从 amazon_products 本地表加载商品数据后评分（独立运行）"
-            "2. 读 state 中 collected_products + review_insights + traffic_insights 等上游产出（流水线模式，更准确）"
+            "传 category 或 asins 从 amazon_products 本地表加载商品数据后评分"
         ),
         "input_example": '{"category": "Headphones", "domain": "US", "min_opportunity_score": 60, "output_top_n": 10}',
         "requires_upstream": [],
@@ -85,13 +65,10 @@ AGENT_REGISTRY = [
         "description": (
             "Amazon 市场分析：分析市场体量（月销/营收）、市场趋势（BSR/价格 time-series 变化率）、"
             "淡旺季（月度 BSR/价格分布）、品牌分布、价格带、机会/风险。"
-            "**支持两种模式**："
-            "1. 传 category + domain → 从 amazon_products 本地表查询（数据由 ETL 定时刷新，毫秒级响应）"
-            "2. 读 state.collected_products（需先调 product_collector）"
-            "支持 analysis_type='market_trends'（默认）或 'roi_analysis'（盈利评估）。"
+            "传 category + domain 从 amazon_products 本地表查询（数据由 ETL 定时刷新，毫秒级响应）"
         ),
         "input_example": '{"category": "Headphones", "domain": "US", "analysis_type": "market_trends"}  # 推荐：传 category 走本地表',
-        "requires_upstream": [],  # 不再必须依赖 product_collector，有 category 可独立运行
+        "requires_upstream": [],
     },
     {
         "name": "competitor_analyst",
@@ -99,9 +76,7 @@ AGENT_REGISTRY = [
             "Amazon 竞品分析：品牌聚合 + 产品级 head-to-head 对比。"
             "分析市场份额、竞争格局分层、头部竞品定价策略（基于 price_history 识别的涨价/降价/稳定模式）、"
             "listing 质量对比（五点/图片/描述/A+）、差异化机会。"
-            "**支持两种模式**："
-            "1. 传 category 或 asins → 从 amazon_products 本地表查询（推荐，秒级响应）"
-            "2. 读 state.collected_products（需先调 product_collector）"
+            "传 category 或 asins 从 amazon_products 本地表查询（秒级响应）"
         ),
         "input_example": '{"category": "Bluetooth Speaker", "domain": "US"}  # 传 category 走本地表',
         "requires_upstream": [],
@@ -119,12 +94,7 @@ AGENT_REGISTRY = [
 
 def _load_agent(name: str):
     """延迟导入 Agent 类，避免启动时加载所有依赖；自动注入模型路由的 LLM"""
-    if name == "product_collector":
-        from backend.business.ecommerce.amazon_monitor.agents.product_collector import (
-            ProductCollectorAgent,
-        )
-        agent = ProductCollectorAgent()
-    elif name == "opportunity_judge":
+    if name == "opportunity_judge":
         from backend.business.ecommerce.amazon_monitor.agents.opportunity_judge import (
             OpportunityJudgeAgent,
         )

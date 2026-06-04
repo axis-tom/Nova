@@ -42,7 +42,9 @@ from backend.core.cockpit_extractor import extract_cockpit_data, AGENT_CATEGORY_
 # ── Prompt Engine ──
 from backend.core.prompt_engine import PromptEngine
 from backend.core.prompt_engine.engines.intent_classifier import IntentAnalysisSpec
-from backend.aqueduct.data_provider import DataProvider
+
+# ── DataLiaison ──
+from backend.aqueduct.data_liaison import DataLiaison, DataReadinessReport
 
 # ── Prompt Engine 单例 ──
 _prompt_engine: Optional["PromptEngine"] = None
@@ -137,16 +139,29 @@ async def query_db(natural_query: str) -> str:
 
 
 @tool
+async def discover_data(hint: str, limit: int = 50) -> str:
+    """
+    Data discovery — check what Amazon product data is available in the database.
+
+    Only reads DB, never triggers API calls.
+
+    Args:
+        hint: data description, e.g. ASIN list, category name, brand name. "B0F9FS7WQQ" or "bluetooth earphones"
+        limit: max sample count (max 50)
+    """
+    liaison = DataLiaison()
+    return await liaison.discover(hint, limit=limit)
+
+
+@tool
 async def call_nova_agent(agent_name: str, params_json: str) -> str:
     """
     调用 Nova 的 Amazon 业务 Agent 执行特定分析任务。
 
     Args:
-        agent_name: Agent 名称，可选值: keyword_expander, product_collector, review_analyzer,
+        agent_name: Agent 名称，可选值: keyword_expander, review_analyzer,
                    traffic_analyzer, opportunity_judge, market_analyst, competitor_analyst, briefing_generator
-        params_json: JSON 格式的参数，例如 {"expanded_keywords": ["bluetooth earbuds"], "max_results_per_keyword": 10}
-                    下游 Agent（review_analyzer/traffic_analyzer/opportunity_judge）可传 {}，
-                    它们会从同一会话的 session state 中读取上游 Agent 产出的字段。
+        params_json: JSON 格式的参数。所有分析 Agent 均可使用 sub_task 字段指定分析方向。
 
                     ★ sub_task 支持：传入 {"sub_task": "分析各品牌定价差异"}，
                     该子任务描述会注入到 Agent 的 system prompt 中，指导 Agent 的分析方向。
@@ -206,21 +221,13 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     ]
     state_hint = f"\n\n[会话 state 已有字段: {', '.join(interesting_keys) or '(空)'}]"
 
-    # 如果有 pending_data_requests，额外提示 LLM 需要再次调 product_collector
-    deferred_count = len(state.get("pending_data_requests") or [])
-    if deferred_count > 0:
-        state_hint += (
-            f"\n⚠️ 有 {deferred_count} 个 ASIN 因 Keepa token 不足被推迟采集 "
-            f"(pending_data_requests)。请再次调用 product_collector 完成补采。"
-        )
-
     return f"Agent [{agent_name}] 执行结果:\n{output}{state_hint}"
 
 
 # ── 构建工具列表 ──
 
 def get_tools():
-    return [search_web, search_memory, query_db, call_nova_agent]
+    return [search_web, search_memory, query_db, discover_data, call_nova_agent]
 
 
 # ── 图节点 ──
@@ -317,20 +324,6 @@ def _build_state_summary(conv_id: str) -> str:
         else:
             lines.append(f"- {key}: {value}")
 
-    # ── pending_data_requests 高亮提示 ──
-    pending = state.data.get("pending_data_requests") or []
-    if pending:
-        pending_asins = {r.get("asin", "?") for r in pending if isinstance(r, dict)}
-        lines.insert(
-            0,
-            f"⚠️ **pending_data_requests**: {len(pending)} 项待补单 "
-            f"(ASINs: {', '.join(sorted(pending_asins)[:5])}) —— "
-            f"请调用 product_collector 补充数据",
-        )
-
-    if not lines:
-        return ""
-
     return "\n\n当前会话已有数据（来自之前的 Agent 调用，可直接引用）:\n" + "\n".join(lines)
 
 
@@ -426,7 +419,8 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 1. search_web(query) — 搜索互联网获取最新行业信息、新闻、趋势
 2. search_memory(query) — 搜索历史记忆，回顾之前的分析结果
 3. query_db(natural_query) — 查询 Nova 数据库中的结构化数据（表结构、用户数据等）
-4. call_nova_agent(agent_name, params_json) — 调用 Nova 的 Amazon 业务 Agent
+4. discover_data(hint) — 数据发现，查数据库了解有哪些 Amazon 商品数据可用（只读，不触发 API）
+5. call_nova_agent(agent_name, params_json) — 调用 Nova 的 Amazon 业务 Agent
 
 可调用的 Agent（input_example 字段是真实需要传的 JSON 字段名，必须严格遵守）：
 {agents_desc}
@@ -443,8 +437,8 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 
 工作流程：
 1. 先理解用户意图
-2. 如果需要最新行业信息，先 search_web
-3. 如果需要查看数据库已有数据，调 query_db
+2. 用 discover_data 工具探索数据库中有哪些可用数据
+3. 如果需要最新行业信息，调 search_web
 4. 如果需要分析 Amazon 商品数据，调 call_nova_agent，**用 sub_task 传每个 Agent 的具体任务**
 5. 如果需要回顾历史，调 search_memory
 6. 汇总所有结果，给用户结构化的中文回答
@@ -452,13 +446,12 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 注意：
 - 搜索时用英文关键词效果更好
 - 调 Agent 时 params_json 必须是合法 JSON。**推荐使用 sub_task 字段传子任务描述**
-- sub_task 示例：`call_nova_agent("review_analyzer", '{"sub_task": "分析评论价格敏感度"}')`
+- sub_task 示例：`call_nova_agent("review_analyzer", '{{"sub_task": "分析评论价格敏感度"}}')`
 - 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
-- 如果当前会话已有数据（下方列出），说明数据已经自动采集完成，**直接调下游 Agent 分析即可，不要再调 product_collector 重复采集**
+- 如果当前会话已有数据（下方列出），说明数据已经自动采集完成，**直接调下游 Agent 分析即可**
+- **数据已在 Phase 0 就绪检查阶段准备好，如有缺失 ASIN 已自动从外部采集入库**
 - **绝对不要尝试用任何方式直接抓取 Amazon 网页（URL 或 MCP）来获取商品数据**，数据库中的数据已经是最全的
-- 如果用户提供了 ASIN 列表，系统已自动调 product_collector 采集了这些 ASIN 的数据，你只需按需调下游 Agent 做分析
 - 最终回答要结构化、清晰，用中文，列出关键数据和建议
-    - 如果会话 state 中有 pending_data_requests，表示有 ASIN 因 API token 不足被推迟采集，需要再次调用 product_collector 来补采
 {memory_context}{state_summary}"""
 
     # 转换消息格式
@@ -661,43 +654,6 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
 # ── ASIN 自动采集辅助函数 ──
 
 
-async def _check_missing_asins(asins: List[str]) -> List[str]:
-    """检查哪些 ASIN 不在本地数据库中"""
-    from backend.data.database import AsyncSessionLocal
-    from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
-
-    try:
-        async with AsyncSessionLocal() as db:
-            repo = AmazonProductRepository(db)
-            existing = await repo.get_by_asins(asins, "US")
-        missing = [a for a in asins if a not in existing]
-        return missing
-    except Exception:
-        return []  # 查不了就当不缺，不阻塞
-
-
-async def _auto_collect_asins(asins: List[str], conv_id: str) -> List[dict]:
-    """对缺失的 ASIN 自动采集，存入 SessionStore"""
-    provider = DataProvider()
-    collected = []
-    for asin in asins:
-        try:
-            product = await provider.get_product(asin, "US")
-            if product:
-                collected.append(product)
-        except Exception:
-            pass
-
-    if collected:
-        state = session_store.get_or_create(conv_id)
-        existing = state.data.get("collected_products") or []
-        existing.extend(collected)
-        state.data["collected_products"] = existing
-        session_store.save(conv_id)
-
-    return collected
-
-
 # ── 主入口（流式模式，支持 SSE） ──
 
 
@@ -716,18 +672,36 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
     token = conv_id_var.set(conv_id)
     durable = get_durable_session()
 
-    # ── Step 1: ASIN 自动采集预处理 ──
-    # 检测用户输入中的 ASIN，查 DB，缺失的自动采集
+    # ── Step 1: Phase 0 — 数据就绪检查 ──
+    # 用 PromptEngine 理解意图 → DataLiaison 检查 DB 覆盖 → 按需冷启动
+    readiness: Optional[DataReadinessReport] = None
     try:
-        asins_found = _ASIN_PATTERN.findall(user_input)
-        if asins_found:
-            missing_asins = await _check_missing_asins(asins_found)
-            if missing_asins:
-                yield {"type": "status", "data": f"🔍 发现 {len(missing_asins)} 个 ASIN 不在本地数据库，正在自动采集..."}
-                collected = await _auto_collect_asins(missing_asins, conv_id)
-                yield {"type": "status", "data": f"✅ 已采集 {len(collected)}/{len(missing_asins)} 个 ASIN 数据"}
-    except Exception:
-        pass  # 采集失败不影响主流程
+        pe = get_prompt_engine()
+        intent_spec = pe.translate(user_input, session_id=conv_id)
+        state.data["_intent_spec"] = intent_spec  # 缓存给后续 ReAct 使用
+
+        # DataLiaison 检查就绪状态
+        liaison = DataLiaison()
+        readiness = await liaison.prepare(intent_spec)
+
+        if readiness.missing_asins:
+            yield {"type": "status", "data": f"🔍 发现 {len(readiness.missing_asins)} 个 ASIN 不在本地数据库，正在采集..."}
+            results = await liaison.collect_missing(readiness.missing_asins)
+            success = sum(1 for v in results.values() if v)
+            yield {"type": "status", "data": f"✅ 已采集 {success}/{len(readiness.missing_asins)} 个 ASIN 数据"}
+
+        # 写入就绪状态到 session state
+        state.data["_data_readiness"] = {
+            "available_asins": readiness.available_asins,
+            "category_product_count": readiness.category_product_count,
+            "total_products_available": readiness.total_products_available,
+        }
+        if readiness.total_products_available > 0:
+            yield {"type": "status", "data": f"📊 数据库已有 {readiness.total_products_available} 个相关产品数据，开始分析..."}
+    except Exception as e:
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning(f"[Phase 0] 数据就绪检查失败: {e}")
+        pass  # Phase 0 失败不影响主流程
 
     # 注册分析树 SSE 事件队列
     tree_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
