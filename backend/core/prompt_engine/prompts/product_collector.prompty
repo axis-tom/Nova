@@ -1,7 +1,7 @@
 ---
 name: ProductCollector
 description: 商品采集 Agent
-version: 2.0
+version: 3.0
 inputs:
   - name: focus_directions
   - name: downgrade_directions

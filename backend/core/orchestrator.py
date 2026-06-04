@@ -146,7 +146,10 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
                    traffic_analyzer, opportunity_judge, market_analyst, competitor_analyst, briefing_generator
         params_json: JSON 格式的参数，例如 {"expanded_keywords": ["bluetooth earbuds"], "max_results_per_keyword": 10}
                     下游 Agent（review_analyzer/traffic_analyzer/opportunity_judge）可传 {}，
-                    它们会从同一会话的 session state 中读取上游 Agent 产出的字段
+                    它们会从同一会话的 session state 中读取上游 Agent 产出的字段。
+
+                    ★ sub_task 支持：传入 {"sub_task": "分析各品牌定价差异"}，
+                    该子任务描述会注入到 Agent 的 system prompt 中，指导 Agent 的分析方向。
     """
     try:
         params = json.loads(params_json) if params_json.strip() else {}
@@ -157,14 +160,24 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     conv_id = conv_id_var.get() or f"ephemeral-{uuid.uuid4()}"
     state = session_store.get_or_create(conv_id)
 
+    # ── 提取 orchestrator 分配的 sub_task（新路径） ──
+    sub_task = params.pop("sub_task", "")
+
     # ── Prompt Engine：注入定制 system prompt ──
     try:
+        pe = get_prompt_engine()
         intent_spec: Optional[IntentAnalysisSpec] = state.data.get("_intent_spec")
-        if intent_spec:
-            pe = get_prompt_engine()
+        if sub_task:
+            # ★ 新路径：orchestrator 通过 sub_task 传自然语言子任务
+            custom_prompt = pe.customize(agent_name, sub_task=sub_task, session_id=conv_id)
+        elif intent_spec:
+            # 旧路径（向后兼容）：从 IntentAnalysisSpec 读（已废弃）
             custom_prompt = pe.customize(agent_name, intent_spec, session_id=conv_id)
-            # 写入 state，agent_wrapper 会读取并注入到 Agent._custom_system_prompt
-            state.data["_custom_system_prompt"] = custom_prompt
+        else:
+            # 兜底：无指令时的默认模板
+            custom_prompt = pe.customize(agent_name, session_id=conv_id)
+        # 写入 state，agent_wrapper 会读取并注入到 Agent._custom_system_prompt
+        state.data["_custom_system_prompt"] = custom_prompt
     except Exception:
         pass  # Prompt Engine 失败不影响主流程
 
@@ -421,30 +434,29 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 **关键：Agent 流水线依赖**（必须按顺序调用，下游 Agent 会从同一会话 state 自动读取上游产出）：
 {pipeline_desc}
 
-例：用户提供了一批 ASIN，系统已自动采集完毕，正确的分析流程：
-  1. call_nova_agent("review_analyzer", '{{}}')       # 从 state 自动拿 collected_products 做评论分析
-  2. call_nova_agent("traffic_analyzer", '{{}}')      # 从 state 自动拿 collected_products 做流量分析
-  3. call_nova_agent("market_analyst", '{{"analysis_type":"market_trends"}}')
-  4. call_nova_agent("competitor_analyst", '{{}}')
-  5. call_nova_agent("opportunity_judge", '{{}}')     # 综合评估
-  6. call_nova_agent("briefing_generator", '{{}}')    # 生成报告
+例：用户提供了一批 ASIN，系统已自动采集完毕，推荐的分析方式（使用 sub_task 传子任务）：
+  1. call_nova_agent("review_analyzer", '{{"sub_task": "评论分析，关注好评关键词和差评痛点"}}')
+  2. call_nova_agent("market_analyst", '{{"sub_task": "市场分析，关注品牌份额和价格带分布"}}')
+  3. call_nova_agent("competitor_analyst", '{{"sub_task": "竞品对比，分析头部品牌定位差异"}}')
+  4. call_nova_agent("briefing_generator", '{{"sub_task": "生成最终简报"}}')
 错误示例：不要直接抓取 Amazon 网页获取数据。
 
 工作流程：
 1. 先理解用户意图
 2. 如果需要最新行业信息，先 search_web
 3. 如果需要查看数据库已有数据，调 query_db
-4. 如果需要分析 Amazon 商品数据，按上面的流水线依赖**依次**调 call_nova_agent
+4. 如果需要分析 Amazon 商品数据，调 call_nova_agent，**用 sub_task 传每个 Agent 的具体任务**
 5. 如果需要回顾历史，调 search_memory
 6. 汇总所有结果，给用户结构化的中文回答
 
 注意：
 - 搜索时用英文关键词效果更好
-- 调 Agent 时 params_json 必须是合法 JSON，字段名严格按 input_example
+- 调 Agent 时 params_json 必须是合法 JSON。**推荐使用 sub_task 字段传子任务描述**
+- sub_task 示例：`call_nova_agent("review_analyzer", '{"sub_task": "分析评论价格敏感度"}')`
 - 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
 - 如果当前会话已有数据（下方列出），说明数据已经自动采集完成，**直接调下游 Agent 分析即可，不要再调 product_collector 重复采集**
 - **绝对不要尝试用任何方式直接抓取 Amazon 网页（URL 或 MCP）来获取商品数据**，数据库中的数据已经是最全的
-- 如果用户提供了 ASIN 列表，系统已自动调 product_collector 采集了这些 ASIN 的数据，你只需按流水线依次调下游 Agent 做分析
+- 如果用户提供了 ASIN 列表，系统已自动调 product_collector 采集了这些 ASIN 的数据，你只需按需调下游 Agent 做分析
 - 最终回答要结构化、清晰，用中文，列出关键数据和建议
     - 如果会话 state 中有 pending_data_requests，表示有 ASIN 因 API token 不足被推迟采集，需要再次调用 product_collector 来补采
 {memory_context}{state_summary}"""

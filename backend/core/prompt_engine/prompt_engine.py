@@ -45,6 +45,7 @@ class PromptEngine:
         self.customizer = PromptCustomizer()
         self.evaluator = Evaluator()
         self.learner = WeightLearner()
+        # dimension_registry 不再用于 prompt 生成，仅保留引用防止旧代码报错
         self.dimensions = get_dimension_registry()
 
     # ════════════════════════════════════════════════════════════════
@@ -97,38 +98,68 @@ class PromptEngine:
         return spec
 
     # ════════════════════════════════════════════════════════════════
-    # 核心接口 2: customize — IntentAnalysisSpec → 定制 system prompt
+    # 核心接口 2: customize — IntentAnalysisSpec/子任务 → 定制 system prompt
     # ════════════════════════════════════════════════════════════════
 
     def customize(
         self,
         agent_name: str,
-        spec: IntentAnalysisSpec,
+        spec: Optional[IntentAnalysisSpec] = None,
         session_id: Optional[str] = None,
+        # ── 新参数（推荐） ──
+        sub_task: str = "",
     ) -> str:
         """
-        IntentAnalysisSpec → 定制 system prompt。
+        IntentAnalysisSpec/子任务 → 定制 system prompt。
+
+        推荐新用法（自然语言子任务）：
+            custom_prompt = pe.customize("review_analyzer", sub_task="重点分析评论中关于价格的信号")
+
+        旧用法（向后兼容）：
+            custom_prompt = pe.customize("market_analyst", spec)
 
         流程：
-        1. PromptCustomizer 加载 agent.prompty 模板
-        2. 注入 spec 中的维度+权重+增量标记
+        1. 如果有 sub_task（新路径），直接注入 orchestrator 分配的自然语言子任务
+        2. 否则从 spec 中读取旧字段（维度 ID → 已废弃，走空值兼容）
         3. 返回渲染后的完整 system prompt（不含产品数据部分）
         """
-        system_prompt = self.customizer.customize(
-            agent_name=agent_name,
-            dimensions=spec.dimensions,
-            primary_dim=spec.primary_dim,
-            is_incremental=spec.is_incremental,
-        )
+        if sub_task:
+            # ★ 新路径：自然语言子任务
+            system_prompt = self.customizer.customize(
+                agent_name=agent_name,
+                sub_task=sub_task,
+                is_incremental=spec.is_incremental if spec else False,
+            )
+        elif spec:
+            # 旧路径（向后兼容）
+            system_prompt = self.customizer.customize(
+                agent_name=agent_name,
+                dimensions=spec.dimensions,
+                primary_dim=spec.primary_dim,
+                is_incremental=spec.is_incremental,
+            )
+        else:
+            # 无 spec 无 sub_task → 默认模板
+            system_prompt = self.customizer.customize(
+                agent_name=agent_name,
+            )
 
         # 追踪 Span
-        if session_id:
+        if session_id and spec:
             self.tracker.start_span(
                 session_id=session_id,
                 agent_name=agent_name,
-                input_text=spec.focus_description,
-                dimensions=spec.dimensions,
+                input_text=sub_task or spec.focus_description,
+                dimensions=spec.dimensions if not sub_task else [],
                 is_incremental=spec.is_incremental,
+            )
+        elif session_id and sub_task:
+            self.tracker.start_span(
+                session_id=session_id,
+                agent_name=agent_name,
+                input_text=sub_task,
+                dimensions=[],
+                is_incremental=False,
             )
 
         return system_prompt
@@ -146,42 +177,88 @@ class PromptEngine:
     ) -> str:
         """
         根据 IntentAnalysisSpec 动态生成 orchestrator 的 system prompt。
-        """
-        dim_name = self.dimensions.get_dim_name(spec.primary_dim) if spec.primary_dim else "综合"
-        category_hint = ""
-        if spec.entities:
-            category_hint = f"（关注实体：{', '.join(spec.entities[:3])}）"
 
-        # ── 角色设定 + 用户意图 → 分析方向 ──
+        改造后：
+        - 不再注入 dimension ID / 预设方向
+        - 注入自然语言意图描述（paraphrased_intent + analysis_hint）
+        - 展示所有可用 Agent 的能力清单（不按方向过滤）
+        - 加入字段总览（让 orchestrator 知道哪些数据可用）
+        - 强调 sub_task 传递机制
+        """
+
+        # ── 1. 意图描述（自然语言，不指向任何预设维度） ──
+        parsed_intent = spec.paraphrased_intent or spec.raw_query[:200]
+        hint = spec.analysis_hint
+        intent_section = f"""## 用户原始需求
+{spec.raw_query}
+
+## 意图理解
+{parsed_intent}
+
+## 分析建议（供参考）
+{hint if hint else '根据用户原始需求自行判断分析方向'}"""
+
+        # ── 2. Agent 能力清单（全量，不按方向过滤） ──
+        agent_lines = []
+        if agents_info:
+            for a in agents_info:
+                agent_lines.append(f"- **{a['name']}**: {a['description']}")
+        else:
+            agent_lines = [
+                "- **review_analyzer**: 评论分析（情感、壁垒、评分定位）",
+                "- **traffic_analyzer**: 流量分析（BSR分布、价格分布）",
+                "- **market_analyst**: 市场分析（品牌份额、价格带、趋势）",
+                "- **competitor_analyst**: 竞品分析（市场份额、Listing质量）",
+                "- **opportunity_judge**: 综合评分（各维度评分+选品推荐）",
+                "- **briefing_generator**: 生成最终报告",
+            ]
+        agent_section = "## 可调用的 Agent\n" + "\n".join(agent_lines)
+
+        # ── 3. 字段总览（精简分组） ──
+        field_section = """## 数据库中已有的数据字段（按组分类，供规划分析路径时参考）
+- **价格类**: current_price, buybox_price, avg_price_30d/90d/180d/365d, list_price, min_price, max_price, has_coupon, buybox_winner
+- **BSR/销量**: current_bsr, avg_bsr_30d/90d/180d/365d, bsr_trend, monthly_sold, weekly_sold, annual_sold, sales_rank_history
+- **评论类**: rating, review_count, rating_breakdown, review_velocity_30d, top_reviews, customers_say, rating_history
+- **卖家/Offer**: seller_count, offer_count_fba/fbm, buybox_seller_id, buybox_seller_name, has_amazon_selling, has_china_sellers
+- **Listing**: title, brand, feature_bullets, description, images_count, videos_count, aplus_content, specifications
+- **变体**: child_asins, variations, variation_csv, parent_asin
+- **配送**: fulfillment_type, availability, is_fba, is_prime, buybox_shipping
+- **FBA**: fba_fee, referral_fee_percent
+- **库存**: stock_level, is_in_stock, out_of_stock_pct_30d/90d/180d
+- **促销**: coupon_text, has_coupon, lightning_deal_info, promotions_json
+- **属性**: color, size, style, material, weight, dimensions, item_weight_g
+- **品牌**: brand_store, store_name, brand_store_url
+- **类目**: categories, category_tree, bsr_category, root_category"""
+
+        # ── 4. 角色设定（强调自由规划 + sub_task 机制） ──
+        role_section = """## 你的角色
+你是总指挥（Orchestrator）。你的工作流程：
+
+1. **理解用户需求**：根据上方的意图理解和分析建议，**自己思考用户真正要什么**
+2. **动态规划分析路径**：决定需要哪些 Agent、按什么顺序调用、每个 Agent 具体做什么
+3. **派发子任务**：调 Agent 时，**在 params 中传入 sub_task 字段**，告诉该 Agent 本次具体要分析什么
+4. **检查结果**：看 Agent 的输出是否满足需求；不足则重新调度或换角度
+5. **汇总输出**：所有分析完成后给出结构化中文报告
+
+### sub_task 传递示例
+调 review_analyzer 时传 `{"sub_task": "重点分析评论中关于价格的信号，特别是价格敏感度评价和性价比讨论"}`
+调 market_analyst 时传 `{"sub_task": "分析各品牌的价格带分布和定价策略差异"}`
+→ Agent 会收到你的子任务描述，用它自己的 LLM 决定如何分析
+
+### 关键原则
+- **没有预设分析路径** — 你根据用户原话、可用数据和 Agent 能力现场决定
+- **没有固定 Agent 顺序** — 不一定要先调 product_collector，可以先调 market_analyst 做概览，再决定是否需要采集更多数据
+- **可以多次调用同一个 Agent** — 第一次做概览，第二次深挖某个具体细节
+- **先思考数据是否已存在** — 看 session state 中的已有字段，避免重复采集
+- **最终回答用中文、结构化、含关键数据表**"""
+
+        # ── 组装 ──
         prompt_parts = [
-            f"# 任务：Amazon 电商智能分析\n\n"
-            f"## 用户需求\n{spec.raw_query}\n\n"
-            f"## 意图分析\n"
-            f"- 分析类型：{self._intent_label(spec.intent_type)}\n"
-            f"- 分析深度：{spec.depth.value}\n"
-            f"- 主线方向：{dim_name}\n"
-            f"- 辅助方向：{', '.join(self.dimensions.get_dim_name(d) for d in spec.dimensions if d != spec.primary_dim) or '无'}\n"
-            f"- 关注对象：{', '.join(spec.entities) if spec.entities else '根据分析目标自动确定'}"
-            f"{category_hint}\n\n"
-            f"## 你的角色\n"
-            f"你是总指挥（Orchestrator）。你的工作流程：\n"
-            f"1. **分析需求**：根据上方意图分析，思考本次需要分析哪些方向+维度\n"
-            f"2. **规划 Agent**：决定需要调哪些 Agent 来完成这些维度的分析\n"
-            f"3. **派发任务**：按顺序调 Agent，每个 Agent 去数据库获取对应数据并分析\n"
-            f"4. **检查结果**：看 Agent 的分析结果是否达到要求——如果某维度分析结果为空或不足，重新尝试或换角度\n"
-            f"5. **汇总输出**：所有维度分析完成后，给出结构化中文报告\n\n"
-            f"## Agent 调用策略\n"
-            f"数据已预采集在数据库中，调 Agent 时传入空 params 即可从 state 读取数据：\n"
-            f"1. **review_analyzer** — 评论分析（情感、壁垒、评分定位）\n"
-            f"2. **traffic_analyzer** — 流量分析（BSR分布、价格分布）\n"
-            f"3. **market_analyst** — 市场分析（品牌份额、价格带、趋势）\n"
-            f"4. **competitor_analyst** — 竞品分析（市场份额、Listing质量）\n"
-            f"5. **opportunity_judge** — 综合评分（各维度评分+选品推荐）\n"
-            f"6. **briefing_generator** — 生成最终报告\n\n"
-            f"## 注意\n"
-            f"- 如果 state 中有 collected_products 说明数据已就绪，直接调分析 Agent\n"
-            f"- 每个 Agent 完成后检查输出，如果结果为空说明缺少数据，尝试其他路径\n"
-            f"- 最终回答结构化、中文、含关键数据表"
+            "# 任务：Amazon 电商智能分析",
+            intent_section,
+            agent_section,
+            field_section,
+            role_section,
         ]
         system_prompt = "\n\n".join(prompt_parts)
 
@@ -191,32 +268,6 @@ class PromptEngine:
             system_prompt += f"\n\n{state_summary}"
 
         return system_prompt
-
-    def _build_agents_section(self, spec: IntentAnalysisSpec, agents_info: list) -> str:
-        """构建可用 Agent 说明"""
-        # 获取本次涉及的 Agent
-        affected = self.dimensions.get_affected_agents(spec.dimensions)
-        affected_names = set(affected.keys())
-
-        # 总是需要的 Agent
-        needed = {"keyword_expander", "product_collector", "briefing_generator"}
-        affected_names.update(needed)
-
-        lines = ["【可用 Agent】（本次分析涉及以下 Agent）："]
-
-        for a in agents_info:
-            name = a["name"]
-            if name not in affected_names:
-                continue
-            # 获取该 Agent 在本轮中的定制指令
-            extra = ""
-            if spec.primary_dim:
-                agent_prompt = self.dimensions.get_agent_prompt(spec.primary_dim, name)
-                if agent_prompt:
-                    extra = f" → {agent_prompt[:80]}..."
-            lines.append(f"  - {name}: {a['description']}{extra}")
-
-        return "\n".join(lines)
 
     # ════════════════════════════════════════════════════════════════
     # 核心接口 4: evaluate — 对话结束后评估效果
