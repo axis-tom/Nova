@@ -3,12 +3,13 @@ Amazon 产品 Repository
 封装 amazon_products 表的所有查询操作
 下游 Agent 通过此 Repo 查数据，不再直接调 API
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, desc, or_, and_, func as sql_func
+from sqlalchemy import select, update, delete, desc, or_, and_, func as sql_func, Boolean, String, Integer, BigInteger, Float, JSON, Text, DateTime
 
 from backend.data.models.amazon_product import AmazonProduct, AmazonETLLog
 from backend.data.models.amazon_product_offer import AmazonProductOffer
@@ -61,16 +62,82 @@ class AmazonProductRepository:
         if not asin:
             raise ValueError("asin is required")
 
+        # 通用类型矫正：将 ETL 传来的任意类型值适配到数据库列类型
+        def _coerce(key: str, value: Any, col_type) -> Any:
+            if value is None:
+                return None
+            # Boolean: dict/list → bool(value)
+            if isinstance(col_type, Boolean):
+                return bool(value) if not isinstance(value, bool) else value
+            # String/Text: int/dict/list/float → str
+            if isinstance(col_type, (String, type(Text()))):
+                if isinstance(value, (dict, list)):
+                    return json.dumps(value, ensure_ascii=False)
+                if not isinstance(value, str):
+                    return str(value)
+                return value
+            # Integer/BigInteger: large values, strings, floats
+            if isinstance(col_type, (Integer, BigInteger)):
+                if isinstance(value, str):
+                    try:
+                        return int(float(value))
+                    except (ValueError, TypeError):
+                        return None
+                if isinstance(value, float):
+                    return int(value)
+                if isinstance(value, bool):  # bool is subclass of int
+                    return int(value)
+                return value
+            # Float: int, str
+            if isinstance(col_type, Float):
+                if isinstance(value, str):
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return None
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return float(value)
+                return value
+            # DateTime: str → parse to datetime
+            if isinstance(col_type, DateTime):
+                if isinstance(value, str):
+                    if not value.strip():
+                        return None
+                    try:
+                        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        return None
+                return value
+            # JSON: str → try parse as JSON
+            if isinstance(col_type, JSON):
+                if isinstance(value, str):
+                    try:
+                        return json.loads(value)
+                    except (json.JSONDecodeError, TypeError):
+                        return value
+                return value
+            return value
+
         existing = await self.get_by_asin(asin, domain)
 
         if existing:
             # 部分更新：只覆盖该源提供的字段，不覆盖其他源的独占字段
             for key, value in data.items():
                 if hasattr(existing, key) and value is not None:
-                    setattr(existing, key, value)
+                    col = AmazonProduct.__table__.columns.get(key)
+                    coerced = _coerce(key, value, col.type) if col is not None else value
+                    setattr(existing, key, coerced)
             existing.updated_at = datetime.now(timezone.utc)
         else:
-            existing = AmazonProduct(**data)
+            # 过滤掉非模型字段 + 通用类型矫正
+            model_keys = {c.name for c in AmazonProduct.__table__.columns}
+            col_map = {c.name: c.type for c in AmazonProduct.__table__.columns}
+            clean_data = {}
+            for k, v in data.items():
+                if k not in model_keys:
+                    continue
+                clean_data[k] = _coerce(k, v, col_map[k])
+            existing = AmazonProduct(**clean_data)
             existing.created_at = datetime.now(timezone.utc)
             existing.updated_at = datetime.now(timezone.utc)
             self.db.add(existing)

@@ -29,6 +29,8 @@ class Agent(ABC):
     name: str = "base_agent"
     description: str = "Base agent for all agents"
     llm: Optional[Any] = None
+    # Prompt Engine 支持：Agent 调用前由外层注入定制指令
+    _custom_system_prompt: Optional[str] = None
 
     async def llm_invoke(self, prompt: str, system: str = "") -> Optional[str]:
         """调用内嵌 LLM，失败返回 None（调用方自行 fallback 到规则引擎）"""
@@ -192,7 +194,13 @@ class Agent(ABC):
 
         llm_with_tools = self.llm.bind_tools(tools)
 
-        messages = [SystemMessage(content=system_prompt)]
+        # Prompt Engine 支持：如果有定制 system_prompt，优先使用
+        effective_system_prompt = system_prompt
+        if self._custom_system_prompt:
+            effective_system_prompt = self._custom_system_prompt
+            self._custom_system_prompt = None  # 一次性消费
+
+        messages = [SystemMessage(content=effective_system_prompt)]
         messages.append(HumanMessage(
             content=analysis_question or (
                 f"请分析以下 {len(products)} 个商品的市场情况。\n"

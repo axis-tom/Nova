@@ -10,11 +10,12 @@ Orchestrator — 核心调度引擎
 import operator
 from typing import Dict, Any, List, Optional, TypedDict, Annotated, Sequence
 from contextvars import ContextVar
-import json
 import os
+import re
 import uuid
 import asyncio
 import time
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -38,8 +39,31 @@ from backend.core.llm.config import get_llm_for_agent
 from backend.core.tracking.analysis_tree import analysis_tree_manager
 from backend.core.cockpit_extractor import extract_cockpit_data, AGENT_CATEGORY_LABELS
 
+# ── Prompt Engine ──
+from backend.core.prompt_engine import PromptEngine
+from backend.core.prompt_engine.engines.intent_classifier import IntentAnalysisSpec
+from backend.aqueduct.data_provider import DataProvider
+
+# ── Prompt Engine 单例 ──
+_prompt_engine: Optional["PromptEngine"] = None
+
+
+def get_prompt_engine() -> "PromptEngine":
+    global _prompt_engine
+    if _prompt_engine is None:
+        from backend.core.prompt_engine import PromptEngine
+        _prompt_engine = PromptEngine()
+    return _prompt_engine
+
+
+# ── 驾驶舱数据追踪：tool_call_id → 真实 Agent 名 ──
+_agent_name_by_call_id: Dict[str, str] = {}
+
 # ── 全局记忆实例 ──
 memory = MemoryStore()
+
+# ── ASIN 正则 ──
+_ASIN_PATTERN = re.compile(r'\bB[A-Z0-9]{9}\w?\b')
 
 # Step 5: 启动时执行一次全量清理（TTL + 整合 + SQLite 过期）
 try:
@@ -132,6 +156,17 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     # 从 ContextVar 获取会话 id；没有就开一个 ephemeral session
     conv_id = conv_id_var.get() or f"ephemeral-{uuid.uuid4()}"
     state = session_store.get_or_create(conv_id)
+
+    # ── Prompt Engine：注入定制 system prompt ──
+    try:
+        intent_spec: Optional[IntentAnalysisSpec] = state.data.get("_intent_spec")
+        if intent_spec:
+            pe = get_prompt_engine()
+            custom_prompt = pe.customize(agent_name, intent_spec, session_id=conv_id)
+            # 写入 state，agent_wrapper 会读取并注入到 Agent._custom_system_prompt
+            state.data["_custom_system_prompt"] = custom_prompt
+    except Exception:
+        pass  # Prompt Engine 失败不影响主流程
 
     result = await call_agent(agent_name, params, state=state, conv_id=conv_id)
 
@@ -240,6 +275,22 @@ def _build_state_summary(conv_id: str) -> str:
         return ""
 
     lines = []
+
+    # ── collected_products 高亮提示 ──
+    collected = state.data.get("collected_products") or []
+    if collected:
+        asin_list = []
+        for p in collected:
+            if isinstance(p, dict):
+                asin_list.append(p.get("asin", "?"))
+            elif isinstance(p, str):
+                asin_list.append(p)
+        lines.insert(0,
+            f"📦 **collected_products**: {len(collected)} 个商品已预采集 "
+            f"(ASINs: {', '.join(asin_list[:8])}) —— "
+            f"数据可用，直接调下游 Agent 分析，不要再调 product_collector"
+        )
+
     for key, value in state.data.items():
         if key.startswith("_"):
             continue
@@ -286,25 +337,9 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
     llm = _get_llm()
     llm_with_tools = llm.bind_tools(get_tools())
 
-    # 构建系统提示
-    agents_info = list_agents()
-    agents_desc_lines = []
-    pipeline_lines = []
-    for a in agents_info:
-        ups = a.get("requires_upstream", [])
-        ups_str = f"  ← 依赖: {', '.join(ups)}" if ups else ""
-        agents_desc_lines.append(
-            f"  - {a['name']}: {a['description']}\n      input_example: {a['input_example']}{ups_str}"
-        )
-        if ups:
-            pipeline_lines.append(f"  - {a['name']} 之前必须先调: {' → '.join(ups)}")
-    agents_desc = "\n".join(agents_desc_lines)
-    pipeline_desc = "\n".join(pipeline_lines) if pipeline_lines else "  (无)"
-
-    # 注入相关历史记忆
+    # ── 注入相关历史记忆 ──
     memory_context = ""
     try:
-        # 取最后一条 user 消息作为检索 query
         user_msg = ""
         for msg in reversed(state["messages"]):
             if msg.get("role") == "user":
@@ -321,11 +356,57 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
     except Exception:
         pass  # 记忆注入失败不影响主流程
 
-    # Step 3: 注入 State 摘要
+    # ── 注入 State 摘要 ──
     conv_id = conv_id_var.get()
     state_summary = _build_state_summary(conv_id) if conv_id else ""
 
-    system_prompt = f"""你是一个 Amazon 电商智能助手，负责帮助用户分析市场、选品、监控竞品。
+    # ── Prompt Engine：尝试用动态 prompt ──
+    intent_spec: Optional[IntentAnalysisSpec] = None
+    try:
+        # 从 state 中获取缓存的分析规格
+        intent_spec = state.data.get("_intent_spec")
+        if not intent_spec and conv_id:
+            # 首次调用：用用户输入做意图分析
+            pe = get_prompt_engine()
+            user_msg = ""
+            for msg in reversed(state["messages"]):
+                if msg.get("role") == "user":
+                    user_msg = msg["content"]
+                    break
+            if user_msg:
+                intent_spec = pe.translate(user_msg, session_id=conv_id)
+                state.data["_intent_spec"] = intent_spec  # 缓存本轮
+    except Exception:
+        pass  # Prompt Engine 失败不影响主流程
+
+    # 构建系统提示
+    if intent_spec and intent_spec.intent_type.name != "GENERAL_QUERY":
+        # ── 使用 PromptEngine 动态生成 orchestrator prompt ──
+        pe = get_prompt_engine()
+        agents_info = list_agents()
+        system_prompt = pe.build_orchestrator_prompt(
+            spec=intent_spec,
+            agents_info=agents_info,
+            memory_context=memory_context,
+            state_summary=state_summary,
+        )
+    else:
+        # ── 兜底：使用原来的通用 prompt ──
+        agents_info = list_agents()
+        agents_desc_lines = []
+        pipeline_lines = []
+        for a in agents_info:
+            ups = a.get("requires_upstream", [])
+            ups_str = f"  ← 依赖: {', '.join(ups)}" if ups else ""
+            agents_desc_lines.append(
+                f"  - {a['name']}: {a['description']}\n      input_example: {a['input_example']}{ups_str}"
+            )
+            if ups:
+                pipeline_lines.append(f"  - {a['name']} 之前必须先调: {' → '.join(ups)}")
+        agents_desc = "\n".join(agents_desc_lines)
+        pipeline_desc = "\n".join(pipeline_lines) if pipeline_lines else "  (无)"
+
+        system_prompt = f"""你是一个 Amazon 电商智能助手，负责帮助用户分析市场、选品、监控竞品。
 
 你可以使用以下工具：
 
@@ -340,12 +421,14 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 **关键：Agent 流水线依赖**（必须按顺序调用，下游 Agent 会从同一会话 state 自动读取上游产出）：
 {pipeline_desc}
 
-例：用户问"分析蓝牙耳机市场机会"，正确的调用顺序：
-  1. call_nova_agent("product_collector", '{{"expanded_keywords":["bluetooth earbuds"], "max_results_per_keyword":10}}')
-  2. call_nova_agent("review_analyzer", '{{}}')       # 从 state 自动拿 collected_products
-  3. call_nova_agent("traffic_analyzer", '{{}}')      # 同上
-  4. call_nova_agent("opportunity_judge", '{{}}')     # 从 state 自动拿全部上游产出
-错误示例：直接调 opportunity_judge 会拿不到数据。
+例：用户提供了一批 ASIN，系统已自动采集完毕，正确的分析流程：
+  1. call_nova_agent("review_analyzer", '{{}}')       # 从 state 自动拿 collected_products 做评论分析
+  2. call_nova_agent("traffic_analyzer", '{{}}')      # 从 state 自动拿 collected_products 做流量分析
+  3. call_nova_agent("market_analyst", '{{"analysis_type":"market_trends"}}')
+  4. call_nova_agent("competitor_analyst", '{{}}')
+  5. call_nova_agent("opportunity_judge", '{{}}')     # 综合评估
+  6. call_nova_agent("briefing_generator", '{{}}')    # 生成报告
+错误示例：不要直接抓取 Amazon 网页获取数据。
 
 工作流程：
 1. 先理解用户意图
@@ -359,9 +442,11 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
 - 搜索时用英文关键词效果更好
 - 调 Agent 时 params_json 必须是合法 JSON，字段名严格按 input_example
 - 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
-- 如果当前会话已有数据（下方列出），说明用户之前已执行过 Agent，优先利用现有数据，不要重复调用
+- 如果当前会话已有数据（下方列出），说明数据已经自动采集完成，**直接调下游 Agent 分析即可，不要再调 product_collector 重复采集**
+- **绝对不要尝试用任何方式直接抓取 Amazon 网页（URL 或 MCP）来获取商品数据**，数据库中的数据已经是最全的
+- 如果用户提供了 ASIN 列表，系统已自动调 product_collector 采集了这些 ASIN 的数据，你只需按流水线依次调下游 Agent 做分析
 - 最终回答要结构化、清晰，用中文，列出关键数据和建议
-	- 如果会话 state 中有 pending_data_requests，表示有 ASIN 因 API token 不足被推迟采集，需要再次调用 product_collector 来补采
+    - 如果会话 state 中有 pending_data_requests，表示有 ASIN 因 API token 不足被推迟采集，需要再次调用 product_collector 来补采
 {memory_context}{state_summary}"""
 
     # 转换消息格式
@@ -561,6 +646,46 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
         conv_id_var.reset(token)
 
 
+# ── ASIN 自动采集辅助函数 ──
+
+
+async def _check_missing_asins(asins: List[str]) -> List[str]:
+    """检查哪些 ASIN 不在本地数据库中"""
+    from backend.data.database import AsyncSessionLocal
+    from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
+
+    try:
+        async with AsyncSessionLocal() as db:
+            repo = AmazonProductRepository(db)
+            existing = await repo.get_by_asins(asins, "US")
+        missing = [a for a in asins if a not in existing]
+        return missing
+    except Exception:
+        return []  # 查不了就当不缺，不阻塞
+
+
+async def _auto_collect_asins(asins: List[str], conv_id: str) -> List[dict]:
+    """对缺失的 ASIN 自动采集，存入 SessionStore"""
+    provider = DataProvider()
+    collected = []
+    for asin in asins:
+        try:
+            product = await provider.get_product(asin, "US")
+            if product:
+                collected.append(product)
+        except Exception:
+            pass
+
+    if collected:
+        state = session_store.get_or_create(conv_id)
+        existing = state.data.get("collected_products") or []
+        existing.extend(collected)
+        state.data["collected_products"] = existing
+        session_store.save(conv_id)
+
+    return collected
+
+
 # ── 主入口（流式模式，支持 SSE） ──
 
 
@@ -578,6 +703,19 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
     conv_id = conversation_id or f"ephemeral-{uuid.uuid4()}"
     token = conv_id_var.set(conv_id)
     durable = get_durable_session()
+
+    # ── Step 1: ASIN 自动采集预处理 ──
+    # 检测用户输入中的 ASIN，查 DB，缺失的自动采集
+    try:
+        asins_found = _ASIN_PATTERN.findall(user_input)
+        if asins_found:
+            missing_asins = await _check_missing_asins(asins_found)
+            if missing_asins:
+                yield {"type": "status", "data": f"🔍 发现 {len(missing_asins)} 个 ASIN 不在本地数据库，正在自动采集..."}
+                collected = await _auto_collect_asins(missing_asins, conv_id)
+                yield {"type": "status", "data": f"✅ 已采集 {len(collected)}/{len(missing_asins)} 个 ASIN 数据"}
+    except Exception:
+        pass  # 采集失败不影响主流程
 
     # 注册分析树 SSE 事件队列
     tree_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
@@ -625,10 +763,13 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                         yield {"type": "agent_end", "data": {"name": tool_name, "elapsed_s": elapsed}}
                         yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
                         # 从 SessionStore 提取驾驶舱数据
-                        if tool_name in AGENT_CATEGORY_LABELS:   # 只对业务 Agent
+                        # tool_name 是 "call_nova_agent"，需通过 tool_call_id 映射回真实 Agent 名
+                        real_agent = _agent_name_by_call_id.pop(msg.get("tool_call_id", ""), "")
+                        cockpit_target = real_agent if real_agent else tool_name
+                        if cockpit_target in AGENT_CATEGORY_LABELS:   # 只对业务 Agent
                             try:
                                 state = session_store.get_or_create(conv_id)
-                                cockpit = extract_cockpit_data(tool_name, state.data)
+                                cockpit = extract_cockpit_data(cockpit_target, state.data)
                                 if cockpit:
                                     yield {"type": "cockpit_update", "data": cockpit}
                             except Exception:
@@ -644,6 +785,11 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                     if msg.get("tool_calls"):
                         for tc in msg["tool_calls"]:
                             _agent_timers[tc["name"]] = time.time()
+                            # ── 记录 tool_call_id → 真实 Agent 名（驾驶舱使用） ──
+                            if tc["name"] == "call_nova_agent":
+                                real_agent_name = tc.get("args", {}).get("agent_name", "")
+                                if real_agent_name:
+                                    _agent_name_by_call_id[tc.get("id", "")] = real_agent_name
                             yield {"type": "agent_start", "data": {"name": tc["name"], "args": tc["args"]}}
                             yield {
                                 "type": "tool_call",

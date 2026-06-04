@@ -1,13 +1,14 @@
 """
 模型路由配置 — Phase 4 Agent 智能化
 
-按 Agent 角色分配最合适的 LLM 模型：
+按 Agent 角色分配最合适的 LLM 模型（基于 poloai.top 可用性验证）：
 - orchestrator: claude-opus-4-6（最强推理 + 工具调用）
-- 分析推理类: claude-sonnet-4-6
-- 创意/数据/报告类: gpt-5.2
+- 分析推理/判断类: claude-sonnet-4-6
+- 创意/数据类: gpt-5.4-openai-compact（性价比最高）
+- 报告生成: gpt-5.4-mini（模板化组织，够用且最便宜）
 - product_collector: 无需 LLM
 
-所有模型通过 poloapi.top 中转站的 OpenAI 兼容格式调用。
+所有模型通过 poloai.top 中转站的 OpenAI 兼容格式调用。
 """
 
 import os
@@ -17,12 +18,12 @@ from langchain_openai import ChatOpenAI
 
 AGENT_LLM_CONFIG: Dict[str, Optional[Dict[str, Any]]] = {
     "orchestrator": {
-        "model": "gpt-5.2",
+        "model": "claude-opus-4-6",
         "temperature": 0.3,
         "max_tokens": 4000,
     },
     "keyword_expander": {
-        "model": "gpt-5.2",
+        "model": "gpt-5.4-openai-compact",
         "temperature": 0.7,
         "max_tokens": 2000,
     },
@@ -33,7 +34,7 @@ AGENT_LLM_CONFIG: Dict[str, Optional[Dict[str, Any]]] = {
         "max_tokens": 3000,
     },
     "traffic_analyzer": {
-        "model": "gpt-5.2",
+        "model": "gpt-5.4-openai-compact",
         "temperature": 0.3,
         "max_tokens": 2000,
     },
@@ -43,7 +44,7 @@ AGENT_LLM_CONFIG: Dict[str, Optional[Dict[str, Any]]] = {
         "max_tokens": 3000,
     },
     "competitor_analyst": {
-        "model": "gpt-5.2",
+        "model": "claude-sonnet-4-6",
         "temperature": 0.3,
         "max_tokens": 3000,
     },
@@ -53,7 +54,7 @@ AGENT_LLM_CONFIG: Dict[str, Optional[Dict[str, Any]]] = {
         "max_tokens": 2000,
     },
     "briefing_generator": {
-        "model": "gpt-5.2",
+        "model": "gpt-5.4-mini",
         "temperature": 0.4,
         "max_tokens": 4000,
     },
@@ -68,7 +69,8 @@ _token_usage: Dict[str, Dict[str, int]] = {}
 _PRICE_PER_1K: Dict[str, Dict[str, float]] = {
     "claude-opus-4-6": {"input": 0.015, "output": 0.075},
     "claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
-    "gpt-5.2": {"input": 0.005, "output": 0.015},
+    "gpt-5.4-openai-compact": {"input": 0.000342, "output": 0.002055},
+    "gpt-5.4-mini": {"input": 0.000103, "output": 0.000616},
 }
 
 
@@ -144,3 +146,34 @@ def reset_usage():
     """重置所有计数器（测试用）"""
     _usage_counter.clear()
     _token_usage.clear()
+
+
+# ── Prompt Engine 专用模型（翻译/生成/分类） ──
+
+PROMPT_ENGINE_MODEL_CONFIG = {
+    "model": "gpt-5.4-mini-high",
+    "temperature": 0.2,
+    "max_tokens": 2000,
+}
+
+
+def get_prompt_engine_llm() -> Optional[ChatOpenAI]:
+    """获取 Prompt Engine 专用的小模型（翻译/生成/分类用）
+
+    走 .env 中同一套 OPENAI_API_KEY + OPENAI_API_BASE 中转站配置。
+    Prompt Engine 用便宜小模型做辅助工作，不占用 Agent 分析层的模型配额。
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL", "")
+    if not api_key:
+        return None
+    if base_url and not base_url.rstrip("/").endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
+
+    return ChatOpenAI(
+        model=PROMPT_ENGINE_MODEL_CONFIG["model"],
+        api_key=api_key,
+        base_url=base_url,
+        temperature=PROMPT_ENGINE_MODEL_CONFIG["temperature"],
+        max_tokens=PROMPT_ENGINE_MODEL_CONFIG["max_tokens"],
+    )

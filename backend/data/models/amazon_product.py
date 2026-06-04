@@ -67,13 +67,36 @@ class AmazonProduct(Base):
     rich_product_description = Column(JSON, nullable=True)
     keywords_list = Column(JSON, nullable=True)
     url_slug = Column(String(500), nullable=True)
-    search_alias = Column(String(200), nullable=True)
+    search_alias = Column(JSON, nullable=True)
     unit_count = Column(JSON, nullable=True)  # {unitType, unitValue}
     unit_count_type = Column(String(50), nullable=True)
     unit_count_value = Column(Integer, nullable=True)
     number_of_items = Column(Integer, nullable=True)
     has_size_guide = Column(Boolean, nullable=True, default=False)
     has_360_view = Column(Boolean, nullable=True, default=False)
+    # ETL Rainforest/Canopy 字段补全
+    category_name = Column(String(500), nullable=True)
+    category_tree = Column(JSON, nullable=True)
+    manufacturer = Column(String(200), nullable=True)
+    model_number = Column(String(100), nullable=True)
+    part_number = Column(String(100), nullable=True)
+    upc = Column(String(50), nullable=True)
+    ean = Column(String(50), nullable=True)
+    isbn = Column(String(50), nullable=True)
+    binding = Column(String(100), nullable=True)
+    product_group = Column(String(100), nullable=True)
+    country_of_origin = Column(String(100), nullable=True)
+    is_bundle = Column(Boolean, nullable=True, default=False)
+    availability = Column(String(200), nullable=True)
+    seller_id = Column(String(50), nullable=True)
+    seller_name = Column(String(200), nullable=True)
+    variations = Column(JSON, nullable=True)
+    # Keepa 字段补全
+    images_csv = Column(Text, nullable=True)
+    item_type_keyword = Column(String(200), nullable=True)
+    model = Column(String(100), nullable=True)
+    root_category = Column(String(20), nullable=True)
+    variation_csv = Column(Text, nullable=True)
 
     # ═══════════════════════════════════════════════════════════════
     # Group 3: 商业-价格 (19列)
@@ -105,7 +128,7 @@ class AmazonProduct(Base):
     # ═══════════════════════════════════════════════════════════════
     current_bsr = Column(Integer, nullable=True)
     bsr_category = Column(String(200), nullable=True)
-    bsr_category_id = Column(Integer, nullable=True)
+    bsr_category_id = Column(String(20), nullable=True)
     avg_bsr_30d = Column(Float, nullable=True)
     avg_bsr_90d = Column(Float, nullable=True)
     avg_bsr_180d = Column(Float, nullable=True)
@@ -115,8 +138,8 @@ class AmazonProduct(Base):
     sales_rank_drops_90d = Column(Integer, nullable=True)
     sales_rank_drops_180d = Column(Integer, nullable=True)
     sales_rank_drops_365d = Column(Integer, nullable=True)
-    sales_rank_reference_id = Column(Integer, nullable=True)
-    root_category_id = Column(Integer, nullable=True)
+    sales_rank_reference_id = Column(String(20), nullable=True)
+    root_category_id = Column(String(20), nullable=True)
     sales_rank_reference_history = Column(JSON, nullable=True)
     bestsellers_rank_flat = Column(String(500), nullable=True)
     variant_asins_flat = Column(Text, nullable=True)
@@ -198,7 +221,7 @@ class AmazonProduct(Base):
     is_preorder = Column(Boolean, nullable=True, default=False)
     is_map_restricted = Column(Boolean, nullable=True, default=False)
     seller_profile = Column(JSON, nullable=True)
-    max_order_quantity = Column(Integer, nullable=True)
+    max_order_quantity = Column(JSON, nullable=True)
     is_amazon_brand = Column(Boolean, nullable=True, default=False)
     is_exclusive_to_amazon = Column(Boolean, nullable=True, default=False)
     is_small_business = Column(Boolean, nullable=True, default=False)
@@ -271,9 +294,187 @@ class AmazonProduct(Base):
     importance_updated_at = Column(DateTime(timezone=True), nullable=True)
     listed_since = Column(DateTime(timezone=True), nullable=True)
     tracking_since = Column(DateTime(timezone=True), nullable=True)
-    first_available = Column(DateTime(timezone=True), nullable=True)
+    first_available = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # ═══════════════════════════════════════════════════════════════
+    # Group 13: 补充字段（基于多源API字段总表补全）
+    # ═══════════════════════════════════════════════════════════════
+
+    # 基础标识补充
+    title_excluding_variant_name = Column(String(200), nullable=True)
+    parent_title = Column(String(200), nullable=True)
+    marketplace_id = Column(String(200), nullable=True)
+    keywords = Column(String(200), nullable=True)
+    type = Column(String(200), nullable=True)
+    format = Column(String(200), nullable=True)
+    edition = Column(String(200), nullable=True)
+    runtime = Column(String(200), nullable=True)
+    website_display_group = Column(String(200), nullable=True)
+    website_display_group_name = Column(String(200), nullable=True)
+    is_collection = Column(Boolean, nullable=True, default=False)
+    collection_size = Column(Float, nullable=True)
+    publication_date = Column(String(200), nullable=True)
+    release_date = Column(Integer, nullable=True)
+    publisher = Column(String(200), nullable=True)
+    isbn_10 = Column(String(200), nullable=True)
+    isbn_13 = Column(String(200), nullable=True)
+    language = Column(String(200), nullable=True)
+    reading_age = Column(String(200), nullable=True)
+    kindle_unlimited = Column(Boolean, nullable=True, default=False)
+    audible_sample = Column(String(500), nullable=True)
+    book_description = Column(Text, nullable=True)
+    domain_id = Column(Integer, nullable=True)
+    g = Column(Integer, nullable=True)
+
+    # 商品属性补充
+    package_height_mm = Column(Integer, nullable=True)
+    package_length_mm = Column(Integer, nullable=True)
+    package_width_mm = Column(Integer, nullable=True)
+    size_guide_html = Column(Text, nullable=True)
+    recommended_uses_for_product = Column(String(200), nullable=True)
+
+    # Listing 补充
+    feature_bullets_flat = Column(Text, nullable=True)
+    information = Column(String(500), nullable=True)
+    promotions_feature = Column(String(500), nullable=True)
+
+    # 图片视频补充
+    images_flat = Column(Text, nullable=True)
+    image_overlay_badge = Column(JSON, nullable=True)
+    videos_flat = Column(Text, nullable=True)
+    videos_additional = Column(JSON, nullable=True)
+
+    # 品牌补充
+    brand_store_url_name = Column(String(500), nullable=True)
+    store_name = Column(String(200), nullable=True)
+    store_id = Column(String(50), nullable=True)
+
+    # 类目补充
+    categories = Column(JSON, nullable=True)
+    category_tree = Column(JSON, nullable=True)
+    categories_flat = Column(Text, nullable=True)
+    sales_rank_display_group = Column(String(200), nullable=True)
+    category_information = Column(JSON, nullable=True)
+
+    # 价格补充
+    buybox_winner = Column(JSON, nullable=True)
+    price = Column(JSON, nullable=True)
+    prices = Column(JSON, nullable=True)
+    rrp = Column(JSON, nullable=True)
+    shipping = Column(JSON, nullable=True)
+    condition = Column(JSON, nullable=True)
+    save = Column(JSON, nullable=True)
+    one_time_price = Column(JSON, nullable=True)
+    mixed_offers_count = Column(Integer, nullable=True)
+    mixed_offers_from = Column(JSON, nullable=True)
+    is_big_spring_deal = Column(Boolean, nullable=True, default=False)
+    amazon_discount = Column(JSON, nullable=True)
+    unqualified_buy_box = Column(Boolean, nullable=True, default=False)
+    deal = Column(JSON, nullable=True)
+    vat = Column(JSON, nullable=True)
+    eligible_free_international_delivery = Column(Boolean, nullable=True, default=False)
+
+    # 评论评分补充
+    ratings_total = Column(Integer, nullable=True)
+    safety_product_resources = Column(JSON, nullable=True)
+
+    # Offer/卖家补充
+    offer_asin = Column(String(10), nullable=True)
+    position = Column(Integer, nullable=True)
+    is_sold_by_amazon = Column(Boolean, nullable=True, default=False)
+    is_prime_excl = Column(Boolean, nullable=True, default=False)
+    is_shippable = Column(Boolean, nullable=True, default=False)
+    is_map = Column(Boolean, nullable=True, default=False)
+    ships_from_china = Column(Boolean, nullable=True, default=False)
+    minimum_order_quantity = Column(JSON, nullable=True)
+    last_seen = Column(Integer, nullable=True)
+    last_stock_update = Column(Integer, nullable=True)
+    offer_csv = Column(JSON, nullable=True)
+    prime_excl_csv = Column(JSON, nullable=True)
+    offers_successful = Column(Boolean, nullable=True, default=False)
+    buybox_is_fba = Column(Boolean, nullable=True, default=False)
+    buybox_shipping_country = Column(String(50), nullable=True)
+    promotion = Column(JSON, nullable=True)
+    import_fee = Column(JSON, nullable=True)
+    undeliverable = Column(Boolean, nullable=True, default=False)
+    undeliverable_message = Column(String(500), nullable=True)
+    product = Column(JSON, nullable=True)
+    offers = Column(JSON, nullable=True)
+    available_filters = Column(JSON, nullable=True)
+    pagination = Column(JSON, nullable=True)
+
+    # BSR 补充
+    sales_ranks = Column(JSON, nullable=True)
+    bestsellers_rank = Column(JSON, nullable=True)
+    bestseller = Column(JSON, nullable=True)
+
+    # 变体补充
+    variation_csv = Column(Text, nullable=True)
+
+    # 促销补充
+    coupon = Column(JSON, nullable=True)
+    gift_guide = Column(JSON, nullable=True)
+    featured_from_our_brands = Column(Boolean, nullable=True, default=False)
+    is_amazon_fresh = Column(Boolean, nullable=True, default=False)
+    is_whole_foods_market = Column(Boolean, nullable=True, default=False)
+    prime_video = Column(Boolean, nullable=True, default=False)
+
+    # 配送物流补充
+    delivery = Column(JSON, nullable=True)
+
+    # 时间戳补充
+    last_update = Column(Integer, nullable=True)
+    last_price_change = Column(Integer, nullable=True)
+    last_rating_update = Column(Integer, nullable=True)
+    last_ebay_update = Column(Integer, nullable=True)
+
+    # FBA 费用补充
+    referral_fee_percentage = Column(Float, nullable=True)
+
+    # 搜索专用
+    search_results = Column(JSON, nullable=True)
+    search_information = Column(JSON, nullable=True)
+    ad_blocks = Column(JSON, nullable=True)
+    video_blocks = Column(JSON, nullable=True)
+    related_searches = Column(JSON, nullable=True)
+    related_brands = Column(JSON, nullable=True)
+    refinements = Column(JSON, nullable=True)
+    shopping_advisors = Column(JSON, nullable=True)
+    sponsored = Column(Boolean, nullable=True, default=False)
+    is_carousel = Column(Boolean, nullable=True, default=False)
+    carousel = Column(JSON, nullable=True)
+    recent_views = Column(String(500), nullable=True)
+    other_formats = Column(JSON, nullable=True)
+    narrated_by = Column(JSON, nullable=True)
+    image = Column(String(500), nullable=True)
+
+    # 请求元数据补充
+    request_info = Column(JSON, nullable=True)
+    request_parameters = Column(JSON, nullable=True)
+    request_metadata = Column(JSON, nullable=True)
+
+    # JSON 对象补充（有子字段的独立字段）
+    authors = Column(JSON, nullable=True)
+    series = Column(JSON, nullable=True)
+    read_sample = Column(JSON, nullable=True)
+    collection_children = Column(JSON, nullable=True)
+    ingredients = Column(JSON, nullable=True)
+    diet_type = Column(JSON, nullable=True)
+    attributes = Column(JSON, nullable=True)
+    specific_uses_for_product = Column(JSON, nullable=True)
+    special_features = Column(JSON, nullable=True)
+    languages = Column(JSON, nullable=True)
+    materials = Column(JSON, nullable=True)
+    energy_efficiency = Column(JSON, nullable=True)
+    services = Column(JSON, nullable=True)
+    documents = Column(JSON, nullable=True)
+    editorial_reviews = Column(JSON, nullable=True)
+    important_information = Column(JSON, nullable=True)
+    additional_details = Column(JSON, nullable=True)
+    bestseller_badge = Column(JSON, nullable=True)
+    product_deal = Column(JSON, nullable=True)
 
     # ═══════════════════════════════════════════════════════════════
     # 复合键 + 索引

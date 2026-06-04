@@ -213,6 +213,11 @@ async def call_agent(
 
     state.add_event(f"call_agent:{name}:start")
 
+    # ── Prompt Engine 注入：如果 state 中有定制 system_prompt，注入到 Agent ──
+    custom_prompt = state.data.pop("_custom_system_prompt", None)
+    if custom_prompt:
+        agent._custom_system_prompt = custom_prompt
+
     # ── 分析树追踪：开始 ──
     invocation = None
     if conv_id:
