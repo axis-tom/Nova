@@ -8,7 +8,7 @@ import inspect
 from typing import Dict, Any, List, Optional
 from backend.common.core.state import State
 from backend.core.memory.vector_store import MemoryStore
-from backend.core.llm.config import get_llm_for_agent
+from backend.core.llm.config import get_llm_for_agent, get_fallback_llm_for_agent
 import json
 
 # ── 全局记忆实例 ──
@@ -135,6 +135,11 @@ def _load_agent(name: str):
     llm = get_llm_for_agent(name)
     if llm is not None:
         agent.llm = llm
+
+    # 备用模型（502 降级用）
+    fallback_llm = get_fallback_llm_for_agent(name)
+    if fallback_llm is not None:
+        agent.fallback_llm = fallback_llm
 
     return agent
 

@@ -22,8 +22,7 @@ from backend.common.core.state import State
 from backend.utils.logger import logger
 
 # ── 本地表查询依赖 ──
-from backend.data.database import AsyncSessionLocal
-from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
+from backend.business.ecommerce.product_selection.tools.product_loader import load_products_from_db
 
 
 _MARKET_SYSTEM_PROMPT = """你是 Amazon 市场分析专家。你有以下分析工具可用：
@@ -68,17 +67,30 @@ class MarketAnalystAgent(Agent):
 
             # ── 优先从 amazon_products 本地表读取 ──
             if not products:
-                category = state.get("category") or state.get("market_category")
-                if category:
+                asins = state.get("asins") or []
+                category = state.get("category") or state.get("market_category") or state.get("category_name")
+                if asins:
+                    try:
+                        products = await self._load_from_local_db_by_asins(asins, state.get("domain", "US"))
+                    except Exception as e:
+                        logger.warning(f"[MarketAnalyst] 本地表 ASIN 查询失败: {e}")
+                if not products and category:
                     try:
                         products = await self._load_from_local_db(category, state.get("domain", "US"))
                     except Exception as e:
                         logger.warning(f"[MarketAnalyst] 本地表查询失败: {e}")
 
             if not products:
+                # ★ P1 修复：返回语义化错误，含品类名/domain 信息，方便 Orchestrator 调整策略
+                category = state.get("category") or state.get("market_category") or state.get("category_name", "未知")
+                domain = state.get("domain", "US")
                 state.set("result", {
                     "analysis_type": analysis_type,
-                    "error": "无商品数据，请先调用 product_collector 采集商品",
+                    "error": "无商品数据",
+                    "category": category,
+                    "domain": domain,
+                    "hint": f"品类名='{category}' 在 {domain} 未找到数据。请尝试：1) 用 discover_data 查找正确的品类名；"
+                            f"2) 换相近品类名重新调用；3) 或用 ASIN 列表直接查询。",
                 })
                 state.add_event("market_analyst_no_products")
                 return state
@@ -409,47 +421,30 @@ class MarketAnalystAgent(Agent):
     # ── 新增：从 amazon_products 本地表加载 ──
 
     async def _load_from_local_db(self, category: str, domain: str) -> List[Dict]:
-        """从 amazon_products 表查询该类目的商品，转为旧格式供下游分析"""
-        async with AsyncSessionLocal() as db:
-            repo = AmazonProductRepository(db)
-            from sqlalchemy import select
-            from backend.data.models.amazon_product import AmazonProduct
-            stmt = select(AmazonProduct).where(
-                AmazonProduct.category_name == category,
-                AmazonProduct.domain == domain,
+        """从 amazon_products 表加载完整商品数据（全字段 + 33 推导域 + 子表）"""
+        products = await load_products_from_db(
+            category=category, domain=domain, with_derived=True,
+        )
+        if products:
+            logger.info(
+                f"[MarketAnalyst] 从本地表加载 {len(products)} 个商品（类目={category}），"
+                f"每商品 {len(products[0])} 个字段/推导域"
             )
-            result = await db.execute(stmt)
-            products = list(result.scalars().all())
+        else:
+            logger.info(f"[MarketAnalyst] 本地表未找到商品（类目={category}）")
+        return products
 
-        if not products:
+    async def _load_from_local_db_by_asins(self, asins: list, domain: str) -> List[Dict]:
+        """从 amazon_products 表按 ASIN 列表加载完整商品数据"""
+        if not asins:
             return []
-
-        # 转为 MarketAnalystAgent 期望的 dict 格式
-        converted = []
-        for p in products:
-            converted.append({
-                "asin": p.asin,
-                "title": p.title,
-                "brand": p.brand,
-                "current_price": p.current_price,
-                "current_bsr": p.current_bsr,
-                "rating": p.rating,
-                "review_count": p.review_count,
-                "monthly_sold": p.monthly_sold,
-                "seller_count": p.seller_count,
-                "bsr_trend": p.bsr_trend,
-                "bsr_history": p.bsr_history,
-                "price_history": p.price_history,
-                "avg_price_90d": p.avg_price_90d,
-                "feature_bullets": p.feature_bullets,
-                "main_image": p.main_image,
-                "is_fba": p.is_fba,
-                "is_prime": p.is_prime,
-                "aplus_content": p.aplus_content,
-                "data_source": p.data_source,
-            })
-        logger.info(f"[MarketAnalyst] 从本地表加载 {len(converted)} 个商品（类目={category}）")
-        return converted
+        products = await load_products_from_db(
+            asins=asins, domain=domain, with_derived=True,
+        )
+        logger.info(
+            f"[MarketAnalyst] 从本地表加载 {len(products)}/{len(asins)} 个商品（ASIN 列表）"
+        )
+        return products
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         return await super().execute(input_data)

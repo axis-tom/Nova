@@ -40,10 +40,13 @@ backend/infrastructure/data/redis/
 /field_list
 
 /.codegraph
-
+/.claude
 /.pytest_cache
 
 /tests
 
 /tmp
 
+feiteng.pem
+
+/runtime

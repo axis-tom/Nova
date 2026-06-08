@@ -125,14 +125,21 @@ def _update_conversation_title(conv_id: str, title: str) -> None:
 
 
 async def _call_llm_for_summary(conversation_text: str) -> str:
-    """调用 LLM 生成摘要（复用 orchestrator 的 LLM 配置）"""
-    from backend.core.llm.config import get_llm_for_agent
+    """调用 LLM 生成摘要（复用 orchestrator 的 LLM 配置），含自动重试"""
+    from backend.core.llm.config import get_llm_for_agent, get_fallback_llm_for_agent, llm_invoke_with_fallback
+    from langchain_core.messages import HumanMessage
 
     llm = get_llm_for_agent("orchestrator")
     if llm is None:
         logger.error("[Summarizer] Failed to get orchestrator LLM, cannot generate summary")
         return ""
 
+    fallback_llm = get_fallback_llm_for_agent("orchestrator")
+
     prompt = SUMMARIZE_PROMPT.format(conversation=conversation_text[:3000])
-    response = await llm.ainvoke(prompt)
-    return response.content
+    try:
+        response = await llm_invoke_with_fallback(llm, [HumanMessage(content=prompt)], fallback_llm=fallback_llm)
+        return response.content
+    except Exception as e:
+        logger.error(f"[Summarizer] LLM call failed after retries: {e}")
+        return ""

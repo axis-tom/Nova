@@ -28,6 +28,16 @@ env_path = Path(__file__).resolve().parent.parent.parent / "backend" / "config" 
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
+# ⚠️ WSL 环境修复：清除系统级 https_proxy，防止干扰 poloai.top 中转站直连
+# httpx/urllib3 会读取这些环境变量自动加代理，但 WSL 的 http_proxy 指向宿主机，
+# 而 poloai.top 是外网直连 API，不经过代理。代理通道不稳定会导致 502/ConnectionError。
+_UNSET_PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")
+_saved_proxy = {}
+for _k in _UNSET_PROXY_KEYS:
+    _v = os.environ.pop(_k, None)
+    if _v:
+        _saved_proxy[_k] = _v
+
 from backend.core.tools.web_search import web_search, scrape_url
 from backend.core.memory.vector_store import MemoryStore
 from backend.core.agent_wrapper import call_agent, list_agents
@@ -41,10 +51,15 @@ from backend.core.cockpit_extractor import extract_cockpit_data, AGENT_CATEGORY_
 
 # ── Prompt Engine ──
 from backend.core.prompt_engine import PromptEngine
-from backend.core.prompt_engine.engines.intent_classifier import IntentAnalysisSpec
+from backend.core.prompt_engine.engines.intent_classifier import (
+    IntentAnalysisSpec, IntentType, AnalysisDepth,
+)
 
 # ── DataLiaison ──
-from backend.aqueduct.data_liaison import DataLiaison, DataReadinessReport
+from backend.aqueduct.data_liaison import DataLiaison, DataIntelligenceReport
+
+# ── Decision Trace ──
+from backend.core.decision_trace import DecisionTracer
 
 # ── Prompt Engine 单例 ──
 _prompt_engine: Optional["PromptEngine"] = None
@@ -65,7 +80,8 @@ _agent_name_by_call_id: Dict[str, str] = {}
 memory = MemoryStore()
 
 # ── ASIN 正则 ──
-_ASIN_PATTERN = re.compile(r'\bB[A-Z0-9]{9}\w?\b')
+# ★ P8 修复：不用 \b 边界（Python3 中 CJK ≒ \w 导致中文+ASIN 不匹配）
+_ASIN_PATTERN = re.compile(r'(?<![A-Za-z0-9])B[A-Z0-9]{9}[A-Z0-9]?(?![A-Za-z0-9])')
 
 # Step 5: 启动时执行一次全量清理（TTL + 整合 + SQLite 过期）
 try:
@@ -75,6 +91,9 @@ except Exception:
 
 # ── 会话上下文（同一 ReAct 循环内的 tool 通过此读取当前 conversation_id） ──
 conv_id_var: ContextVar[Optional[str]] = ContextVar("conv_id_var", default=None)
+
+# ── DecisionTrace 上下文 ──
+tracer_var: ContextVar[Optional["DecisionTracer"]] = ContextVar("tracer_var", default=None)
 
 # ── 多轮上下文配置 ──
 HISTORY_FULL_ROUNDS = 5     # 最近 N 轮保留完整内容（user + assistant + tool）
@@ -89,6 +108,11 @@ class AgentState(TypedDict):
     user_input: str
     final_response: Optional[str]
     tool_results: List[Dict[str, Any]]
+    intel_collected: bool  # Phase 0 已完成情报收集
+    # ★ Phase 0 产出直通（序列化为 dict，经 LangGraph AgentState 传至 call_model）
+    intent_spec_data: Optional[Dict[str, Any]]  # IntentAnalysisSpec → dict 序列化结果
+    intel_report: Optional[Dict[str, Any]]       # DataLiaison 情报报告
+    correction_prefix: str  # 历史纠正提示（过滤 dead-end 后注入 system prompt）
 
 
 # ── LLM 初始化 ──
@@ -97,12 +121,22 @@ def _get_llm():
     """获取 orchestrator 的 LLM 实例（通过模型路由配置）"""
     return get_llm_for_agent("orchestrator")
 
+def _get_fallback_llm():
+    """获取 orchestrator 的备用 LLM 实例（502 降级用）"""
+    from backend.core.llm.config import get_fallback_llm_for_agent
+    return get_fallback_llm_for_agent("orchestrator")
+
+
+# ── LLM 调用重试 ──
+
+from backend.core.llm.config import llm_invoke_with_fallback as _llm_invoke_with_fallback
+
 
 # ── 工具定义 ──
 
 @tool
 async def search_web(query: str) -> str:
-    """搜索互联网获取最新信息。当你需要了解行业新闻、市场趋势、竞品动态等外部信息时使用。"""
+    """搜索互联网获取最新行业报告、新闻事件、市场趋势、消费者趋势。只用于搜索市场大盘数据（品类规模、增长率、消费者趋势等宏观信息），绝不要用来搜索单个 ASIN、单个品牌、或单个商品的产品详情——数据库中的 180+ 字段比网页更全更准。"""
     results = await web_search(query, max_results=5)
     if not results or not results[0].get("content"):
         return "未找到相关结果"
@@ -178,6 +212,37 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     # ── 提取 orchestrator 分配的 sub_task（新路径） ──
     sub_task = params.pop("sub_task", "")
 
+    # ── DecisionTrace：记录原始 params（intel 注入前） ──
+    _raw_params = dict(params)
+
+    # ── 从 _intel_report 注入 found_asins + matched category ──
+    intel = state.data.get("_intel_report", {})
+    if intel.get("found_asins"):
+        params.setdefault("asins", intel["found_asins"])
+    # 品类：优先 matched_category_names，再 exploration 的 category_name
+    matched_cats = intel.get("matched_category_names", [])
+    if matched_cats:
+        cat = matched_cats[0]
+        params.setdefault("category_name", cat)
+        params.setdefault("category", cat)
+    else:
+        # 从 exploration 中取第一个商品的 category_name
+        exploration = intel.get("exploration", {}) or {}
+        products = exploration.get("products", []) or []
+        if products and products[0].get("category_name"):
+            cat = products[0]["category_name"]
+            params.setdefault("category_name", cat)
+            params.setdefault("category", cat)
+
+    # 如果没有 asins 也没有 category，尝试从 exploration 中提取前 20 个 ASIN
+    if not params.get("asins") and not params.get("category") and not params.get("category_name"):
+        exploration = intel.get("exploration", {}) or {}
+        products = exploration.get("products", []) or []
+        if products:
+            asins = [p.get("asin") for p in products[:20] if p.get("asin")]
+            if asins:
+                params["asins"] = asins
+
     # ── Prompt Engine：注入定制 system prompt ──
     try:
         pe = get_prompt_engine()
@@ -196,9 +261,36 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     except Exception:
         pass  # Prompt Engine 失败不影响主流程
 
+    # ── DecisionTrace：call_nova_agent intel 注入交接 ──
+    try:
+        tracer = tracer_var.get()
+        if tracer:
+            tracer.capture_call_nova_agent_handoff(
+                agent_name=agent_name,
+                raw_params=_raw_params,
+                final_params=dict(params),
+                intel_report_used=bool(intel),
+            )
+    except Exception:
+        pass
+
     result = await call_agent(agent_name, params, state=state, conv_id=conv_id)
 
+    # ── DecisionTrace：call_agent 交接 ──
+    try:
+        tracer = tracer_var.get()
+        if tracer:
+            tracer.capture_call_agent_handoff(
+                agent_name=agent_name,
+                params=params,
+                custom_prompt=custom_prompt if 'custom_prompt' in dir() and custom_prompt else "",
+                state_keys=list(state.data.keys()),
+            )
+    except Exception:
+        pass
+
     # 持久化 State 到 SQLite（Phase 3）
+    _clean_state_for_save(state)
     session_store.save(conv_id)
 
     output = result.get("result", "")
@@ -226,32 +318,85 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
 
 # ── 构建工具列表 ──
 
-def get_tools():
-    return [search_web, search_memory, query_db, discover_data, call_nova_agent]
+def get_tools(include_search_web: bool = True):
+    """
+    构建工具列表。
+
+    search_web 默认可用——LLM 自己决定要不要搜。
+    Phase 0 情报报告已注入 system prompt，LLM 有足够上下文判断"该用数据库还是该搜索"。
+    """
+    tools = [search_memory, query_db, discover_data, call_nova_agent]
+    if include_search_web:
+        tools.insert(0, search_web)
+    return tools
+
+
+def _clean_state_for_save(state) -> None:
+    """清理 state.data 中不可 JSON 序列化的对象，确保持久化成功"""
+    state.data.pop("_intent_spec", None)
+    state.data.pop("_intel_report_obj", None)
+
+
+# ── Phase 0→AgentState 直通 ──
+
+
+def _dict_to_intent_spec(d: Optional[Dict[str, Any]]) -> Optional[IntentAnalysisSpec]:
+    """反序列化 dict → IntentAnalysisSpec（AgentState → call_model）"""
+    if not d or not d.get("intent_type"):
+        return None
+    try:
+        intent_type = IntentType(d["intent_type"])
+    except ValueError:
+        intent_type = IntentType.GENERAL_QUERY
+    try:
+        depth = AnalysisDepth(d.get("depth", "moderate"))
+    except ValueError:
+        depth = AnalysisDepth.MODERATE
+    return IntentAnalysisSpec(
+        intent_type=intent_type,
+        depth=depth,
+        entities=d.get("entities", []),
+        paraphrased_intent=d.get("paraphrased_intent", ""),
+        category_hint=d.get("category_hint", ""),
+        raw_query=d.get("raw_query", ""),
+    )
 
 
 # ── 图节点 ──
 
-async def _build_history_messages(conv_id: str, current_input: str) -> List[Dict[str, Any]]:
+async def _build_history_messages(conv_id: str, current_input: str) -> tuple:
     """从 SQLite 加载历史消息，构建多轮上下文（不含当前 user_input）
 
     策略：
     - 最近 HISTORY_FULL_ROUNDS 轮：完整保留 user + assistant + tool
     - 更早的轮次：只保留 user + assistant（省 token）
     - 当前 user_input 已在历史最末（刚 append 的），需排除
+    - ★ 过滤 dead-end assistant 消息（"没有...信息"类），防止历史污染
+    - ★ 返回 (history, correction_prefix)：correction_prefix 用于注入 system prompt
+
+    Returns:
+        tuple: (history_list, correction_prefix_str)
     """
     durable = get_durable_session()
     messages = await durable.get_messages(conv_id, limit=HISTORY_MAX_MESSAGES)
 
     if not messages:
-        return []
+        return [], ""
 
     # 排除最后一条（就是刚 append 的当前 user_input）
     if messages and messages[-1]["role"] == "user" and messages[-1]["content"] == current_input:
         messages = messages[:-1]
 
     if not messages:
-        return []
+        return [], ""
+
+    # ★ 替换 dead-end assistant 内容（保留对话结构，清除毒性）
+    _DEAD_END_CORRECTION = "[系统修正：之前的回答因数据状态未刷新而不准确，现在数据已在本地库就绪]"
+    _DEAD_END_PATTERNS = (
+        "没有", "无法", "无相关", "找不到", "不存在",
+        "do not have", "don't have", "no information",
+        "not available", "cannot find", "could not find",
+    )
 
     # 按轮次分组：一轮 = user + (tool*) + assistant
     rounds = []
@@ -264,7 +409,25 @@ async def _build_history_messages(conv_id: str, current_input: str) -> List[Dict
     if current_round:
         rounds.append(current_round)
 
-    # 分层：最近 N 轮完整，更早的只保留 user + assistant
+    # ★ 统计 dead-end 轮次 + 收集主题（用于 correction_prefix）
+    dead_end_rounds = 0
+    dead_end_topics = set()
+    for round_msgs in rounds:
+        for msg in round_msgs:
+            if msg["role"] == "assistant":
+                content = (msg.get("content") or "").lower()
+                if any(pattern in content for pattern in _DEAD_END_PATTERNS):
+                    dead_end_rounds += 1
+                    for m in round_msgs:
+                        if m["role"] == "user":
+                            user_text = m.get("content", "")
+                            asins = _ASIN_PATTERN.findall(user_text)
+                            if asins:
+                                dead_end_topics.update(asins)
+                            else:
+                                dead_end_topics.add(user_text[:40])
+
+    # 构建历史：所有轮次都保留结构，但替换 dead-end 内容
     history = []
     total_rounds = len(rounds)
     for i, round_msgs in enumerate(rounds):
@@ -276,7 +439,10 @@ async def _build_history_messages(conv_id: str, current_input: str) -> List[Dict
                 content = msg.get("content", "") or ""
                 if not content:
                     continue
-                if not is_recent and len(content) > 500:
+                # ★ 所有 dead-end assistant 内容替换为纠正标记（不分近期/非近期）
+                if any(pattern in content.lower() for pattern in _DEAD_END_PATTERNS):
+                    content = _DEAD_END_CORRECTION
+                elif not is_recent and len(content) > 500:
                     content = content[:500] + "..."
                 history.append({"role": "assistant", "content": content})
             elif msg["role"] == "user":
@@ -285,18 +451,62 @@ async def _build_history_messages(conv_id: str, current_input: str) -> List[Dict
                     content = content[:500] + "..."
                 history.append({"role": "user", "content": content})
 
-    return history
+    # ★ 构建纠正前缀
+    correction_prefix = ""
+    if dead_end_rounds > 0:
+        topic_str = ", ".join(sorted(dead_end_topics)[:3])
+        correction_prefix = (
+            f"\n[历史纠正] 之前的 {dead_end_rounds} 次查询（涉及 {topic_str} 等）因系统故障未能正确返回数据。"
+            f"现在数据已在本地库中就绪，请按系统提示正常调用 Agent 获取。\n"
+        )
+
+    return history, correction_prefix
 
 
 def _build_state_summary(conv_id: str) -> str:
-    """生成当前会话 State 的摘要，注入 system_prompt 帮助 LLM 感知已有数据"""
+    """生成当前会话 State 的纯数据摘要（不含行动指令），注入 system_prompt 供 LLM 了解已有数据"""
     state = session_store.get_or_create(conv_id)
     if not state.data:
         return ""
 
     lines = []
 
-    # ── collected_products 高亮提示 ──
+    # ── Phase 0 情报报告 —— 只报告事实，不指挥 LLM ──
+    intel_report = state.data.get("_intel_report")
+    if intel_report:
+        found = intel_report.get("found_asins", [])
+        missing = intel_report.get("missing_asins", [])
+        exploration = intel_report.get("exploration", {}) or {}
+        explored_asins = exploration.get("total_distinct_asins", 0) if exploration else 0
+        categories = exploration.get("categories_found", {}) or {}
+        brands = exploration.get("brands_found", {}) or {}
+        products = exploration.get("products", []) or []
+
+        # ── 情况 A: 有明确 ASIN 命中 ──
+        if found:
+            lines.append(f"- **匹配 ASIN** ({len(found)} 个): {', '.join(found[:10])}")
+            lines.append(f"- **数据覆盖**: 180+ 字段完整（价格/BSR/评论/销量/卖家/Listing/变体/配送/FBA/库存/促销/属性/品牌/类目）")
+
+        # ── 情况 B: 品类探索出商品（无 ASIN 命中） ──
+        elif explored_asins > 0:
+            cat_str = ", ".join(list(categories.keys())[:5]) if categories else "?"
+            brand_str = ", ".join(list(brands.keys())[:8]) if brands else "?"
+            lines.append(f"- **跨列探索**: {explored_asins} 个相关商品（品类: {cat_str}, 品牌: {brand_str}）")
+
+        # ── 情况 C: 无 ASIN 也无品类命中 ──
+        else:
+            catalog = intel_report.get("catalog")
+            if catalog and catalog.get("total_products", 0) > 0:
+                cats = catalog.get("categories", [])
+                lines.append(f"- **数据库概况**: {catalog['total_products']} 个商品（品类: {', '.join(c['name'] for c in cats[:8])}）")
+            else:
+                lines.append(f"- **数据库状态**: 本地库中未找到匹配用户输入的商品数据")
+
+        # ── 缺失 ASIN 提示（纯数据） ──
+        if missing:
+            lines.append(f"- **缺失 ASIN** ({len(missing)} 个): {', '.join(missing[:5])}（不在本地库中）")
+
+    # ── collected_products 高亮提示（纯数据） ──
     collected = state.data.get("collected_products") or []
     if collected:
         asin_list = []
@@ -305,26 +515,56 @@ def _build_state_summary(conv_id: str) -> str:
                 asin_list.append(p.get("asin", "?"))
             elif isinstance(p, str):
                 asin_list.append(p)
-        lines.insert(0,
-            f"📦 **collected_products**: {len(collected)} 个商品已预采集 "
-            f"(ASINs: {', '.join(asin_list[:8])}) —— "
-            f"数据可用，直接调下游 Agent 分析，不要再调 product_collector"
-        )
+        lines.append(f"- **已采集商品**: {len(collected)} 个（ASIN: {', '.join(asin_list[:8])}）")
 
+    # ── 其他 State key 摘要 ──
     for key, value in state.data.items():
         if key.startswith("_"):
             continue
         if isinstance(value, list):
-            lines.append(f"- {key}: {len(value)} 条记录")
+            lines.append(f"- **{key}**: {len(value)} 条记录")
         elif isinstance(value, dict):
             summary_keys = list(value.keys())[:5]
-            lines.append(f"- {key}: dict({', '.join(summary_keys)})")
+            lines.append(f"- **{key}**: dict({', '.join(summary_keys)})")
         elif isinstance(value, str) and len(value) > 100:
-            lines.append(f"- {key}: {value[:100]}...")
+            lines.append(f"- **{key}**: {value[:100]}...")
         else:
-            lines.append(f"- {key}: {value}")
+            lines.append(f"- **{key}**: {value}")
 
-    return "\n\n当前会话已有数据（来自之前的 Agent 调用，可直接引用）:\n" + "\n".join(lines)
+    # ── 产品预取数据：让 LLM 直接看到真实数值（解决"抽象承诺"问题） ──
+    intel_report = state.data.get("_intel_report")
+    if intel_report:
+        preview = intel_report.get("product_preview", {})
+        if preview:
+            lines.append("")
+            lines.append("### 商品预取数据（以下为 DB 中的真实数值）")
+            for asin, data in preview.items():
+                title = (data.get("title") or "?")[:60]
+                price = data.get("current_price", "?")
+                rating = data.get("rating", "?")
+                bsr = data.get("current_bsr", "?")
+                reviews = data.get("review_count", "?")
+                monthly = data.get("monthly_sold", "?")
+                brand = data.get("brand", "?")
+                seller_count = data.get("seller_count", "?")
+                is_fba = "✅FBA" if data.get("is_fba") else ""
+                is_prime = "✅Prime" if data.get("is_prime") else ""
+                coupon = "🎟️有Coupon" if data.get("has_coupon") else ""
+                stock = data.get("stock_level", "")
+                stock_str = f"库存{stock}" if stock else ""
+                badges = " ".join(filter(None, [is_fba, is_prime, coupon, stock_str]))
+                lines.append(
+                    f"\n  **{asin}**\n"
+                    f"  - 标题: {title}\n"
+                    f"  - 品牌: {brand} | 价格: ${price} | 评分: {rating}⭐ ({reviews}评) | "
+                    f"BSR: #{bsr} | 月销: {monthly}\n"
+                    f"  - 卖家数: {seller_count} | {badges}".rstrip()
+                )
+
+    if not lines:
+        return ""
+
+    return "\n## 当前数据状态\n" + "\n".join(lines)
 
 
 def should_continue(state: AgentState) -> str:
@@ -341,7 +581,7 @@ def should_continue(state: AgentState) -> str:
 async def call_model(state: AgentState) -> Dict[str, Any]:
     """调用 LLM 决定下一步"""
     llm = _get_llm()
-    llm_with_tools = llm.bind_tools(get_tools())
+    llm_with_tools = llm.bind_tools(get_tools(include_search_web=True))
 
     # ── 注入相关历史记忆 ──
     memory_context = ""
@@ -366,93 +606,110 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
     conv_id = conv_id_var.get()
     state_summary = _build_state_summary(conv_id) if conv_id else ""
 
-    # ── Prompt Engine：尝试用动态 prompt ──
-    intent_spec: Optional[IntentAnalysisSpec] = None
+    # ── Prompt Engine：获取/构造 intent_spec（不 gate prompt 路径） ──
+    # ★ Phase 0 直通：优先从 AgentState 读取（LangGraph 保证可达，无侧通道）
+    intent_spec: IntentAnalysisSpec
     try:
-        # 从 state 中获取缓存的分析规格
-        intent_spec = state.data.get("_intent_spec")
-        if not intent_spec and conv_id:
-            # 首次调用：用用户输入做意图分析
-            pe = get_prompt_engine()
-            user_msg = ""
-            for msg in reversed(state["messages"]):
-                if msg.get("role") == "user":
-                    user_msg = msg["content"]
-                    break
-            if user_msg:
-                intent_spec = pe.translate(user_msg, session_id=conv_id)
-                state.data["_intent_spec"] = intent_spec  # 缓存本轮
+        spec_from_state = _dict_to_intent_spec(state.get("intent_spec_data"))
+        if spec_from_state is not None:
+            intent_spec = spec_from_state
+        else:
+            # 兜底：从 session_store 读（Phase 0 缓存）
+            session_data = None
+            if conv_id:
+                s = session_store.get_or_create(conv_id)
+                session_data = s.data if s else None
+            cached = session_data.get("_intent_spec") if session_data else None
+            if cached is not None:
+                intent_spec = cached
+            elif conv_id:
+                pe = get_prompt_engine()
+                user_msg = ""
+                for msg in reversed(state["messages"]):
+                    if msg.get("role") == "user":
+                        user_msg = msg["content"]
+                        break
+                if user_msg:
+                    intent_spec = pe.translate(user_msg, session_id=conv_id)
+                    if session_data:
+                        session_data["_intent_spec"] = intent_spec
+                else:
+                    intent_spec = IntentAnalysisSpec(
+                        intent_type=IntentType.GENERAL_QUERY,
+                        raw_query=user_msg or "对话查询",
+                        paraphrased_intent="用户查询",
+                    )
+            else:
+                intent_spec = IntentAnalysisSpec(
+                    intent_type=IntentType.GENERAL_QUERY,
+                    raw_query="对话查询",
+                    paraphrased_intent="用户查询",
+                )
     except Exception:
-        pass  # Prompt Engine 失败不影响主流程
-
-    # 构建系统提示
-    if intent_spec and intent_spec.intent_type.name != "GENERAL_QUERY":
-        # ── 使用 PromptEngine 动态生成 orchestrator prompt ──
-        pe = get_prompt_engine()
-        agents_info = list_agents()
-        system_prompt = pe.build_orchestrator_prompt(
-            spec=intent_spec,
-            agents_info=agents_info,
-            memory_context=memory_context,
-            state_summary=state_summary,
+        intent_spec = IntentAnalysisSpec(
+            intent_type=IntentType.GENERAL_QUERY,
+            raw_query="对话查询",
+            paraphrased_intent="用户查询",
         )
-    else:
-        # ── 兜底：使用原来的通用 prompt ──
-        agents_info = list_agents()
-        agents_desc_lines = []
-        pipeline_lines = []
-        for a in agents_info:
-            ups = a.get("requires_upstream", [])
-            ups_str = f"  ← 依赖: {', '.join(ups)}" if ups else ""
-            agents_desc_lines.append(
-                f"  - {a['name']}: {a['description']}\n      input_example: {a['input_example']}{ups_str}"
+
+    # ── 使用 PromptEngine 动态生成 orchestrator prompt（按 intent_type 分模板） ──
+    pe = get_prompt_engine()
+    agents_info = list_agents()
+
+    # ★ 检测 product_preview 是否存在（决定角色模板是否切换为"直接使用数据"模式）
+    intel_from_state = state.get("intel_report")
+    has_product_preview = False
+    if intel_from_state and intel_from_state.get("product_preview"):
+        has_product_preview = True
+
+    system_prompt = pe.build_orchestrator_prompt(
+        spec=intent_spec,
+        agents_info=agents_info,
+        memory_context=memory_context,
+        state_summary=state_summary,
+        has_product_preview=has_product_preview,
+    )
+
+    # ★ 注入历史纠正前缀（过滤 dead-end 后，防止历史污染）
+    correction_prefix = state.get("correction_prefix", "")
+    if correction_prefix:
+        system_prompt += correction_prefix
+
+    # ── DecisionTrace：记录 LLM 接收到的上下文 ──
+    try:
+        tracer = tracer_var.get()
+        if tracer:
+            intel_report = None
+            intel_summary = ""
+            try:
+                from backend.core.memory.state_store import session_store
+                s = session_store.get_or_create(conv_id)
+                intel_report = s.data.get("_intel_report") if s else None
+                if intel_report:
+                    found = intel_report.get("found_asins", [])
+                    missing = intel_report.get("missing_asins", [])
+                    exploration = intel_report.get("exploration", {}) or {}
+                    total = exploration.get("total_distinct_asins", 0) or intel_report.get("asin_product_count", 0)
+                    intel_summary = f"DB {len(found)}个ASIN命中, {len(missing)}个缺失, {total}个品类商品"
+            except Exception:
+                pass
+            mem_count = 0
+            if 'relevant' in dir() and relevant:
+                mem_count = len(relevant)
+            tracer.capture_loaded_context(
+                system_prompt=system_prompt,
+                had_intel=bool(intel_report),
+                intel_summary=intel_summary,
+                had_memories=bool(memory_context),
+                memory_count=mem_count,
+                memory_text=memory_context,
+                had_state_summary=bool(state_summary),
+                state_summary=state_summary,
             )
-            if ups:
-                pipeline_lines.append(f"  - {a['name']} 之前必须先调: {' → '.join(ups)}")
-        agents_desc = "\n".join(agents_desc_lines)
-        pipeline_desc = "\n".join(pipeline_lines) if pipeline_lines else "  (无)"
-
-        system_prompt = f"""你是一个 Amazon 电商智能助手，负责帮助用户分析市场、选品、监控竞品。
-
-你可以使用以下工具：
-
-1. search_web(query) — 搜索互联网获取最新行业信息、新闻、趋势
-2. search_memory(query) — 搜索历史记忆，回顾之前的分析结果
-3. query_db(natural_query) — 查询 Nova 数据库中的结构化数据（表结构、用户数据等）
-4. discover_data(hint) — 数据发现，查数据库了解有哪些 Amazon 商品数据可用（只读，不触发 API）
-5. call_nova_agent(agent_name, params_json) — 调用 Nova 的 Amazon 业务 Agent
-
-可调用的 Agent（input_example 字段是真实需要传的 JSON 字段名，必须严格遵守）：
-{agents_desc}
-
-**关键：Agent 流水线依赖**（必须按顺序调用，下游 Agent 会从同一会话 state 自动读取上游产出）：
-{pipeline_desc}
-
-例：用户提供了一批 ASIN，系统已自动采集完毕，推荐的分析方式（使用 sub_task 传子任务）：
-  1. call_nova_agent("review_analyzer", '{{"sub_task": "评论分析，关注好评关键词和差评痛点"}}')
-  2. call_nova_agent("market_analyst", '{{"sub_task": "市场分析，关注品牌份额和价格带分布"}}')
-  3. call_nova_agent("competitor_analyst", '{{"sub_task": "竞品对比，分析头部品牌定位差异"}}')
-  4. call_nova_agent("briefing_generator", '{{"sub_task": "生成最终简报"}}')
-错误示例：不要直接抓取 Amazon 网页获取数据。
-
-工作流程：
-1. 先理解用户意图
-2. 用 discover_data 工具探索数据库中有哪些可用数据
-3. 如果需要最新行业信息，调 search_web
-4. 如果需要分析 Amazon 商品数据，调 call_nova_agent，**用 sub_task 传每个 Agent 的具体任务**
-5. 如果需要回顾历史，调 search_memory
-6. 汇总所有结果，给用户结构化的中文回答
-
-注意：
-- 搜索时用英文关键词效果更好
-- 调 Agent 时 params_json 必须是合法 JSON。**推荐使用 sub_task 字段传子任务描述**
-- sub_task 示例：`call_nova_agent("review_analyzer", '{{"sub_task": "分析评论价格敏感度"}}')`
-- 调用 Agent 返回结果末尾的 `[会话 state 已有字段: ...]` 提示了当前会话累积了哪些上游产出，据此判断下一步
-- 如果当前会话已有数据（下方列出），说明数据已经自动采集完成，**直接调下游 Agent 分析即可**
-- **数据已在 Phase 0 就绪检查阶段准备好，如有缺失 ASIN 已自动从外部采集入库**
-- **绝对不要尝试用任何方式直接抓取 Amazon 网页（URL 或 MCP）来获取商品数据**，数据库中的数据已经是最全的
-- 最终回答要结构化、清晰，用中文，列出关键数据和建议
-{memory_context}{state_summary}"""
+            # ── state → system_prompt 交接 ──
+            tracer.capture_state_to_system_prompt(state_summary)
+    except Exception:
+        pass
 
     # 转换消息格式
     langchain_messages = [SystemMessage(content=system_prompt)]
@@ -474,7 +731,12 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
             langchain_messages.append(ToolMessage(content=msg["content"], tool_call_id=msg.get("tool_call_id", "")))
 
     try:
-        response = await llm_with_tools.ainvoke(langchain_messages)
+        fallback_llm = _get_fallback_llm()
+        response = await _llm_invoke_with_fallback(
+            llm_with_tools,
+            langchain_messages,
+            fallback_llm=fallback_llm,
+        )
     except AttributeError as e:
         if "'str' object has no attribute 'model_dump'" in str(e):
             return {"messages": [{
@@ -485,7 +747,7 @@ async def call_model(state: AgentState) -> Dict[str, Any]:
     except Exception as e:
         return {"messages": [{
             "role": "assistant",
-            "content": f"⚠️ LLM 调用失败: {e}",
+            "content": f"⚠️ LLM 调用失败（多次重试后仍失败）: {e}",
         }]}
 
     # 转换回我们的消息格式
@@ -516,19 +778,53 @@ async def execute_tools(state: AgentState) -> Dict[str, Any]:
         tool_name = tc["name"]
         tool_args = tc["args"]
         tool_id = tc["id"]
-        
+
+        # ── DecisionTrace：工具开始 ──
         try:
+            tracer = tracer_var.get()
+            if tracer:
+                tracer.start_tool_call(tool_name, tool_args)
+        except Exception:
+            pass
+
+        try:
+            # 每个工具调用加 60 秒超时，防止同步阻塞卡死事件循环
             if tool_name == "search_web":
-                result = await search_web.ainvoke(tool_args)
+                result = await asyncio.wait_for(search_web.ainvoke(tool_args), timeout=60)
             elif tool_name == "search_memory":
-                result = await search_memory.ainvoke(tool_args)
+                result = await asyncio.wait_for(search_memory.ainvoke(tool_args), timeout=30)
             elif tool_name == "query_db":
-                result = await query_db.ainvoke(tool_args)
+                result = await asyncio.wait_for(query_db.ainvoke(tool_args), timeout=30)
+            elif tool_name == "discover_data":
+                result = await asyncio.wait_for(discover_data.ainvoke(tool_args), timeout=30)
             elif tool_name == "call_nova_agent":
-                result = await call_nova_agent.ainvoke(tool_args)
+                # ── DecisionTrace：Agent 调用开始 ──
+                agent_name = tool_args.get("agent_name", "unknown")
+                try:
+                    tracer = tracer_var.get()
+                    if tracer:
+                        tracer.start_agent_call(agent_name, tool_args)
+                except Exception:
+                    pass
+
+                result = await asyncio.wait_for(call_nova_agent.ainvoke(tool_args), timeout=120)
+
+                # ── DecisionTrace：Agent 调用结束 ──
+                try:
+                    tracer = tracer_var.get()
+                    if tracer:
+                        sub_task = tool_args.get("sub_task", "")
+                        tracer.end_agent_call(
+                            agent_name=agent_name,
+                            result=str(result)[:500],
+                            params=tool_args,
+                            sub_task=sub_task,
+                        )
+                except Exception:
+                    pass
+
                 # Agent 输出自动保存到记忆
                 try:
-                    agent_name = tool_args.get("agent_name", "unknown")
                     memory.save_memory(
                         content=f"Agent [{agent_name}] 分析结果:\n{result[:1000]}",
                         importance=7,
@@ -539,8 +835,24 @@ async def execute_tools(state: AgentState) -> Dict[str, Any]:
                     pass
             else:
                 result = f"未知工具: {tool_name}"
+
+            # ── DecisionTrace：工具结束（成功） ──
+            try:
+                tracer = tracer_var.get()
+                if tracer and tool_name != "call_nova_agent":
+                    tracer.end_tool_call(tool_name, str(result)[:500], status="ok")
+            except Exception:
+                pass
+
         except Exception as e:
             result = f"工具 [{tool_name}] 执行失败: {e}"
+            # ── DecisionTrace：工具结束（失败） ──
+            try:
+                tracer = tracer_var.get()
+                if tracer:
+                    tracer.end_tool_call(tool_name, str(e), status="error")
+            except Exception:
+                pass
         
         results.append({
             "role": "tool",
@@ -612,7 +924,7 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
         await durable.append_message(conv_id, "user", user_input)
 
         # Step 3: 加载历史消息构建多轮上下文
-        history = await _build_history_messages(conv_id, user_input)
+        history, correction_prefix = await _build_history_messages(conv_id, user_input)
 
         graph = build_graph()
 
@@ -621,11 +933,18 @@ async def run_orchestrator(user_input: str, conversation_id: Optional[str] = Non
             "user_input": user_input,
             "final_response": None,
             "tool_results": [],
+            "intel_collected": True,
+            # ★ 非流式模式没有 Phase 0，保持 None
+            "intent_spec_data": None,
+            "intel_report": None,
+            "correction_prefix": correction_prefix,
         }
 
         final_state = await graph.ainvoke(initial_state)
 
         # 持久化最终 State 到 SQLite
+        non_stream_state = session_store.get_or_create(conv_id)
+        _clean_state_for_save(non_stream_state)
         session_store.save(conv_id)
 
         # Step 2: 持久化所有 tool 和 assistant 消息
@@ -672,36 +991,82 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
     token = conv_id_var.set(conv_id)
     durable = get_durable_session()
 
-    # ── Step 1: Phase 0 — 数据就绪检查 ──
-    # 用 PromptEngine 理解意图 → DataLiaison 检查 DB 覆盖 → 按需冷启动
-    readiness: Optional[DataReadinessReport] = None
+    # ── Phase 0 数据情报收集 ──
+    state = session_store.get_or_create(conv_id)
+
+    # ── Step 1: Phase 0 — 数据情报收集（不再做二元"就绪"判断） ──
+    # 用 PromptEngine 理解意图 → DataLiaison 跨列探索 → 报告给 LLM 自己决策
+    intel: Optional[DataIntelligenceReport] = None
     try:
         pe = get_prompt_engine()
         intent_spec = pe.translate(user_input, session_id=conv_id)
         state.data["_intent_spec"] = intent_spec  # 缓存给后续 ReAct 使用
-
-        # DataLiaison 检查就绪状态
-        liaison = DataLiaison()
-        readiness = await liaison.prepare(intent_spec)
-
-        if readiness.missing_asins:
-            yield {"type": "status", "data": f"🔍 发现 {len(readiness.missing_asins)} 个 ASIN 不在本地数据库，正在采集..."}
-            results = await liaison.collect_missing(readiness.missing_asins)
-            success = sum(1 for v in results.values() if v)
-            yield {"type": "status", "data": f"✅ 已采集 {success}/{len(readiness.missing_asins)} 个 ASIN 数据"}
-
-        # 写入就绪状态到 session state
-        state.data["_data_readiness"] = {
-            "available_asins": readiness.available_asins,
-            "category_product_count": readiness.category_product_count,
-            "total_products_available": readiness.total_products_available,
+        state.data["_intent_spec_data"] = {
+            "intent_type": intent_spec.intent_type.value if intent_spec.intent_type else "",
+            "depth": intent_spec.depth.value if intent_spec.depth else "",
+            "entities": intent_spec.entities,
+            "paraphrased_intent": intent_spec.paraphrased_intent,
+            "category_hint": intent_spec.category_hint,
+            "raw_query": intent_spec.raw_query,
         }
-        if readiness.total_products_available > 0:
-            yield {"type": "status", "data": f"📊 数据库已有 {readiness.total_products_available} 个相关产品数据，开始分析..."}
+
+        # DataLiaison 收集数据情报
+        liaison = DataLiaison()
+        intel = await liaison.collect_intel(intent_spec)
+
+        # 如果有缺失 ASIN 且数量不大，冷启动采集
+        if intel.can_collect_asins:
+            yield {"type": "status", "data": f"🔍 发现 {len(intel.can_collect_asins)} 个 ASIN 不在本地数据库，正在采集..."}
+            results = await liaison.collect_missing(intel.can_collect_asins)
+            success = sum(1 for v in results.values() if v)
+            yield {"type": "status", "data": f"✅ 已采集 {success}/{len(intel.can_collect_asins)} 个 ASIN 数据"}
+            # 采集完成后再查一次
+            intel = await liaison.collect_intel(intent_spec)
+
+        # 将情报写入 state——不做"够不够"的判断，原样给 LLM
+        state.data["_intel_report"] = {
+            "found_asins": intel.found_asins,
+            "missing_asins": intel.missing_asins,
+            "matched_category_names": intel.matched_category_names,
+            "matched_product_types": intel.matched_product_types,
+            "exploration": intel.exploration,
+            "catalog": intel.catalog,
+            "can_collect_asins": intel.can_collect_asins,
+            "asin_fields_coverage": intel.asin_fields_coverage,
+            "asin_product_count": intel.asin_product_count,
+            "product_preview": intel.product_preview,
+        }
+        state.data["_intel_report_obj"] = intel  # 保留对象引用，用于 to_llm_context()
+
+        # yield 情报摘要
+        total = intel.total_products_available
+        if total > 0:
+            yield {"type": "status", "data": f"📊 DB 探索到 {total} 个相关商品（品类: {intel.matched_category_names[:3] or '?'}），情报已就绪，LLM 将自行决策"}
+        else:
+            yield {"type": "status", "data": f"ℹ️ DB 未找到匹配用户输入的商品，原始情报已注入 system prompt，LLM 将自行决策"}
     except Exception as e:
         logger = __import__("logging").getLogger(__name__)
-        logger.warning(f"[Phase 0] 数据就绪检查失败: {e}")
+        logger.warning(f"[Phase 0] 情报收集失败: {e}", exc_info=True)
         pass  # Phase 0 失败不影响主流程
+
+    # ── DecisionTrace：初始化追踪器 ──
+    tracer = DecisionTracer(conv_id, user_input)
+    tracer_var.set(tracer)
+    tracer.capture_intent(state.data.get("_intent_spec_data", {}))
+    if intel:
+        to_llm_text = intel.to_llm_context() if hasattr(intel, 'to_llm_context') else ""
+        tracer.capture_data_liaison({
+            "found_asins": intel.found_asins,
+            "missing_asins": intel.missing_asins,
+            "matched_category_names": intel.matched_category_names,
+            "matched_product_types": intel.matched_product_types,
+            "exploration": intel.exploration,
+            "catalog": intel.catalog,
+            "asin_product_count": intel.asin_product_count,
+            "can_collect_asins": intel.can_collect_asins,
+            "asin_fields_coverage": intel.asin_fields_coverage,
+            "category_hint": intel.category_hint,
+        }, to_llm_context_text=to_llm_text)
 
     # 注册分析树 SSE 事件队列
     tree_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
@@ -712,7 +1077,7 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         await durable.append_message(conv_id, "user", user_input)
 
         # Step 3: 加载历史消息构建多轮上下文
-        history = await _build_history_messages(conv_id, user_input)
+        history, correction_prefix = await _build_history_messages(conv_id, user_input)
 
         graph = build_graph()
 
@@ -721,6 +1086,11 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
             "user_input": user_input,
             "final_response": None,
             "tool_results": [],
+            "intel_collected": True,
+            # ★ Phase 0 产出直通 AgentState——不走 session_store 侧通道
+            "intent_spec_data": state.data.get("_intent_spec_data"),
+            "intel_report": state.data.get("_intel_report"),
+            "correction_prefix": correction_prefix,
         }
 
         yield {"type": "status", "data": "🤖 开始分析..."}
@@ -813,12 +1183,22 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
                 yield {"type": "response_chunk", "data": chunk}
                 await asyncio.sleep(0.02)
 
+        # ── DecisionTrace：最终汇总 → 终端打印 + 写文件 ──
+        try:
+            tracer = tracer_var.get()
+            if tracer:
+                tracer.capture_state_keys(dict(state.data))
+                tracer.finalize(final_answer=final_response)
+        except Exception:
+            pass
+
         yield {"type": "done", "data": ""}
 
         # Step 2: 持久化 assistant 回答
         await durable.append_message(conv_id, "assistant", final_response)
 
         # 持久化最终 State 到 SQLite
+        _clean_state_for_save(state)
         session_store.save(conv_id)
 
         # 保存到记忆

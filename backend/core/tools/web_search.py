@@ -10,6 +10,7 @@
 - get_searcher(): 工厂函数，根据配置返回对应后端
 """
 
+import asyncio
 from typing import List, Dict, Optional, Protocol, TypedDict
 import os
 import httpx
@@ -18,6 +19,10 @@ from duckduckgo_search import DDGS
 
 
 # ── 抽象接口 ──
+
+import logging
+
+_ws_logger = logging.getLogger(__name__)
 
 class SearchResult(TypedDict):
     title: str
@@ -37,19 +42,30 @@ class DuckDuckGoBackend:
     """DuckDuckGo 搜索后端，无需 API Key，国内可用"""
 
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
+        _ws_logger.info(f"[DuckDuckGoBackend] search: {query[:80]}")
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max_results))
-            return [
-                {
-                    "title": r.get("title", ""),
-                    "content": r.get("body", ""),
-                    "url": r.get("href", ""),
-                }
-                for r in results
-            ]
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None, self._sync_search, query, max_results
+            )
+            _ws_logger.info(f"[DuckDuckGoBackend] 返回 {len(results)} 条结果")
+            return results
         except Exception as e:
+            _ws_logger.warning(f"[DuckDuckGoBackend] 搜索失败: {e}")
             return [{"title": f"DuckDuckGo 搜索失败: {e}", "content": "", "url": ""}]
+
+    def _sync_search(self, query: str, max_results: int) -> List[Dict[str, str]]:
+        """同步版搜索，在 run_in_executor 线程池中运行"""
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        return [
+            {
+                "title": r.get("title", ""),
+                "content": r.get("body", ""),
+                "url": r.get("href", ""),
+            }
+            for r in results
+        ]
 
 
 # ── Google 后端（需 API Key） ──
@@ -67,8 +83,10 @@ class GoogleBackend:
 
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
         if not self.api_key or not self.cse_id:
+            _ws_logger.warning("[GoogleBackend] 未配置 GOOGLE_API_KEY 或 GOOGLE_CSE_ID")
             return [{"title": "Google 搜索未配置: 需要设置 GOOGLE_API_KEY 和 GOOGLE_CSE_ID", "content": "", "url": ""}]
-        
+
+        _ws_logger.info(f"[GoogleBackend] search: {query[:80]}")
         try:
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
@@ -81,7 +99,7 @@ class GoogleBackend:
                 resp = await client.get(url, params=params)
                 resp.raise_for_status()
                 data = resp.json()
-            
+
             results = []
             for item in data.get("items", []):
                 results.append({
@@ -89,8 +107,10 @@ class GoogleBackend:
                     "content": item.get("snippet", ""),
                     "url": item.get("link", ""),
                 })
+            _ws_logger.info(f"[GoogleBackend] 返回 {len(results)} 条结果")
             return results
         except Exception as e:
+            _ws_logger.warning(f"[GoogleBackend] 搜索失败: {e}")
             return [{"title": f"Google 搜索失败: {e}", "content": "", "url": ""}]
 
 
@@ -107,8 +127,10 @@ class BingBackend:
 
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
         if not self.api_key:
+            _ws_logger.warning("[BingBackend] 未配置 BING_API_KEY")
             return [{"title": "Bing 搜索未配置: 需要设置 BING_API_KEY", "content": "", "url": ""}]
-        
+
+        _ws_logger.info(f"[BingBackend] search: {query[:80]}")
         try:
             url = "https://api.bing.microsoft.com/v7.0/search"
             headers = {"Ocp-Apim-Subscription-Key": self.api_key}
@@ -117,7 +139,7 @@ class BingBackend:
                 resp = await client.get(url, headers=headers, params=params)
                 resp.raise_for_status()
                 data = resp.json()
-            
+
             results = []
             for item in data.get("webPages", {}).get("value", []):
                 results.append({
@@ -125,8 +147,10 @@ class BingBackend:
                     "content": item.get("snippet", ""),
                     "url": item.get("url", ""),
                 })
+            _ws_logger.info(f"[BingBackend] 返回 {len(results)} 条结果")
             return results
         except Exception as e:
+            _ws_logger.warning(f"[BingBackend] 搜索失败: {e}")
             return [{"title": f"Bing 搜索失败: {e}", "content": "", "url": ""}]
 
 
@@ -172,14 +196,15 @@ def get_searcher(backend_name: Optional[str] = None) -> BaseSearchBackend:
 async def web_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
     """
     通过配置的搜索引擎搜索外部信息
-    
+
     Args:
         query: 搜索关键词
         max_results: 最大结果数
-    
+
     Returns:
         [{title, content, url}]
     """
+    _ws_logger.info(f"[web_search] query={query[:120]}, max_results={max_results}")
     searcher = get_searcher()
     return await searcher.search(query, max_results=max_results)
 

@@ -19,7 +19,7 @@ from langchain_core.tools import tool
 from backend.common.core.agent import Agent, AgentInput, AgentOutput
 from backend.common.core.state import State
 from backend.utils.logger import logger
-from backend.data.database import AsyncSessionLocal
+from backend.business.ecommerce.product_selection.tools.product_loader import load_products_from_db
 
 
 _COMPETITOR_SYSTEM_PROMPT = """你是 Amazon 竞品分析专家。你有以下分析工具可用：
@@ -62,7 +62,7 @@ class CompetitorAnalystAgent(Agent):
             # ── 优先从 amazon_products 本地表读取 ──
             if not products:
                 asins = state.get("asins") or []
-                category = state.get("category") or state.get("market_category")
+                category = state.get("category") or state.get("market_category") or state.get("category_name")
                 try:
                     products = await self._load_from_local_db(
                         asins=asins, category=category, domain=state.get("domain", "US"),
@@ -71,9 +71,15 @@ class CompetitorAnalystAgent(Agent):
                     logger.warning(f"[CompetitorAnalyst] 本地表查询失败: {e}")
 
             if not products:
+                category = state.get("category") or state.get("market_category") or state.get("category_name", "未知")
+                domain = state.get("domain", "US")
                 state.set("result", {
                     "analysis_type": "competitor_benchmark",
-                    "error": "无商品数据，请先调用 product_collector 采集商品",
+                    "error": "无商品数据",
+                    "category": category,
+                    "domain": domain,
+                    "hint": f"品类名='{category}' 在 {domain} 未找到数据。请尝试：1) 用 discover_data 查找正确的品类名；"
+                            f"2) 换相近品类名重新调用；3) 或用 ASIN 列表直接查询。",
                 })
                 state.add_event("competitor_analyst_no_products")
                 return state
@@ -318,37 +324,37 @@ class CompetitorAnalystAgent(Agent):
     def _analyze_head_to_head(self, products: List[Dict]) -> Dict[str, Any]:
         """BSR 最好的 3 个产品做逐项对比"""
         def _to_num(v):
-                """安全转数字，非数字返回 999999"""
-                if v is None:
-                    return 999999
-                try:
-                    return float(v)
-                except (ValueError, TypeError):
-                    return 999999
+            """安全转数字，非数字返回 999999"""
+            if v is None:
+                return 999999
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return 999999
 
-            sorted_prods = sorted(products, key=lambda p: _to_num(p.get("current_bsr")))
-            top3 = sorted_prods[:3]
+        sorted_prods = sorted(products, key=lambda p: _to_num(p.get("current_bsr")))
+        top3 = sorted_prods[:3]
 
-            def _safe_price(p):
-                v = p.get("current_price")
-                if v is None:
-                    return None
-                try:
-                    return float(v)
-                except (ValueError, TypeError):
-                    return None
+        def _safe_price(p):
+            v = p.get("current_price")
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return None
 
-            top3_prices = [_safe_price(p) for p in top3]
-            top3_prices = [p for p in top3_prices if p is not None]
+        top3_prices = [_safe_price(p) for p in top3]
+        top3_prices = [p for p in top3_prices if p is not None]
 
-            def _safe_rating(p):
-                v = p.get("rating")
-                if v is None:
-                    return 0
-                try:
-                    return float(v)
-                except (ValueError, TypeError):
-                    return 0
+        def _safe_rating(p):
+            v = p.get("rating")
+            if v is None:
+                return 0
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                return 0
 
         def _extract_key_specs(specs: Dict) -> Dict:
             """提取关键规格"""
@@ -546,70 +552,25 @@ class CompetitorAnalystAgent(Agent):
 
         return opportunities
 
-    # ── 从 amazon_products 本地表加载 ──
+    # ── 从 amazon_products 本地表加载（完整 180+ 字段 + 33 推导域） ──
 
     async def _load_from_local_db(
         self, asins: List[str] = None, category: str = None, domain: str = "US",
     ) -> List[Dict]:
-        """从 amazon_products 表查询商品，转为旧分析逻辑需要的格式"""
-        async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-            from backend.data.models.amazon_product import AmazonProduct
-
-            conditions = [AmazonProduct.domain == domain]
-            if asins:
-                conditions.append(AmazonProduct.asin.in_(asins))
-            elif category:
-                conditions.append(AmazonProduct.category_name == category)
-            else:
-                return []
-
-            stmt = select(AmazonProduct).where(*conditions)
-            result = await db.execute(stmt)
-            products = list(result.scalars().all())
-
-        if not products:
-            return []
-
-        converted = []
-        for p in products:
-            converted.append({
-                "asin": p.asin,
-                "title": p.title,
-                "brand": p.brand or "Unknown",
-                "current_price": p.current_price,
-                "current_bsr": p.current_bsr,
-                "rating": p.rating,
-                "review_count": p.review_count,
-                "monthly_sold": p.monthly_sold,
-                "seller_count": p.seller_count,
-                "bsr_trend": p.bsr_trend,
-                "bsr_history": p.bsr_history,
-                "price_history": p.price_history,
-                "avg_price_30d": p.avg_price_30d,
-                "avg_price_90d": p.avg_price_90d,
-                "min_price_90d": p.min_price_90d,
-                "max_price_90d": p.max_price_90d,
-                "feature_bullets": p.feature_bullets,
-                "main_image": p.main_image,
-                "images": p.images,
-                "description": p.description,
-                "is_fba": p.is_fba,
-                "is_prime": p.is_prime,
-                "aplus_content": p.aplus_content,
-                "parent_asin": p.parent_asin,
-                "child_asins": p.child_asins,
-                "variation_csv": p.child_asins,
-                "rating_breakdown": p.rating_breakdown,
-                "seller_name": p.seller_name,
-                "seller_count": p.seller_count,
-                "sponsored_products": p.sponsored_products,
-                "data_source": p.data_source,
-            })
-        n = len(converted)
+        """从 amazon_products 表加载完整商品数据（全字段 + 33 推导域 + 子表）"""
+        products = await load_products_from_db(
+            asins=asins, category=category, domain=domain, with_derived=True,
+        )
+        n = len(products)
         source = f"{len(asins)} ASIN" if asins else f"类目={category}"
-        logger.info(f"[CompetitorAnalyst] 从本地表加载 {n} 个商品（{source}）")
-        return converted
+        if products:
+            logger.info(
+                f"[CompetitorAnalyst] 从本地表加载 {n} 个商品（{source}），"
+                f"每商品 {len(products[0])} 个字段/推导域"
+            )
+        else:
+            logger.info(f"[CompetitorAnalyst] 本地表未找到商品（{source}）")
+        return products
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         return await super().execute(input_data)

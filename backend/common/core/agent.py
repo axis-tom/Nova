@@ -8,6 +8,10 @@ from backend.common.core.state import State
 
 logger = logging.getLogger(__name__)
 
+# ── LLM 调用重试（引用 config.py 中的统一降级函数） ──
+
+from backend.core.llm.config import llm_invoke_with_fallback as _llm_invoke_with_fallback
+
 class AgentInput(BaseModel):
     """智能体输入模型（向后兼容）"""
     data: Dict[str, Any] = Field(default_factory=dict, description="输入数据")
@@ -29,6 +33,7 @@ class Agent(ABC):
     name: str = "base_agent"
     description: str = "Base agent for all agents"
     llm: Optional[Any] = None
+    fallback_llm: Optional[Any] = None  # 502 降级用备用模型
     # Prompt Engine 支持：Agent 调用前由外层注入定制指令
     _custom_system_prompt: Optional[str] = None
 
@@ -42,7 +47,9 @@ class Agent(ABC):
             if system:
                 messages.append(SystemMessage(content=system))
             messages.append(HumanMessage(content=prompt))
-            response = await self.llm.ainvoke(messages)
+            response = await _llm_invoke_with_fallback(
+                self.llm, messages, fallback_llm=getattr(self, "fallback_llm", None),
+            )
             # 记录 token 用量
             self._record_usage(response)
             return response.content
@@ -214,7 +221,10 @@ class Agent(ABC):
 
         for turn in range(max_turns):
             try:
-                response = await llm_with_tools.ainvoke(messages)
+                response = await _llm_invoke_with_fallback(
+                    llm_with_tools, messages,
+                    fallback_llm=getattr(self, "fallback_llm", None),
+                )
             except Exception as e:
                 logger.error(f"[{self.name}] LLM 调用失败 (turn {turn}): {e}")
                 break

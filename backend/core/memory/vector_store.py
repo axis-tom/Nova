@@ -18,6 +18,7 @@
   - 记忆统计
 """
 
+import re
 from typing import List, Dict, Optional, Any
 import chromadb
 from chromadb.config import Settings
@@ -39,6 +40,16 @@ WEIGHT_SEMANTIC = 0.6
 WEIGHT_RECENCY = 0.3
 WEIGHT_IMPORTANCE = 0.1
 RECENCY_DECAY_DAYS = 30  # 超过此天数 recency_score = 0
+
+# ── 记忆中毒检测模式 ──
+_DEAD_END_CONTENT_PATTERNS = re.compile(
+    r'(?:助手:\s*)?我[没有找不]|'
+    r'没有.*?信息|无法.*?(?:找到|获取|提供)|'
+    r'(?:do not have|don\'t have|no information|not available|cannot find)',
+    re.IGNORECASE,
+)
+# 如果内容匹配 DEAD_END 且文本涉及 ASIN/实体，判定为中毒记忆
+_ASIN_LIKE = re.compile(r'B[A-Z0-9]{9}[A-Z0-9]?')
 
 
 class MemoryStore:
@@ -63,10 +74,41 @@ class MemoryStore:
         except chromadb.errors.NotFoundError:
             return self.client.create_collection(name)
 
+    # ── 记忆中毒检测 ──
+
+    @staticmethod
+    def _is_poisoned_chat(user_input: str, response: str) -> bool:
+        """检测对话是否为中毒记忆——回答"没有"但用户实际提到了 DB 中存在的 ASIN/实体"""
+        if not _DEAD_END_CONTENT_PATTERNS.search(response):
+            return False
+        # 用户的输入中包含 ASIN，但回答是"没有" → 中毒
+        if _ASIN_LIKE.search(user_input):
+            return True
+        return False
+
+    @staticmethod
+    def _is_poisoned_document(text: str) -> bool:
+        """检测文档内容是否为中毒记忆"""
+        return bool(_DEAD_END_CONTENT_PATTERNS.search(text))
+
+    def _filter_poisoned_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """从搜索结果中过滤掉中毒记忆"""
+        filtered = []
+        for r in results:
+            content = r.get("content", "") or ""
+            if self._is_poisoned_document(content):
+                continue
+            filtered.append(r)
+        return filtered
+
     # ── 对话历史 ──
 
-    def save_chat(self, user_input: str, response: str, metadata: Optional[Dict] = None) -> str:
-        """保存一次对话"""
+    def save_chat(self, user_input: str, response: str, metadata: Optional[Dict] = None) -> Optional[str]:
+        """保存一次对话（自动过滤中毒记忆）"""
+        full_text = f"用户: {user_input}\n助手: {response}"
+        if self._is_poisoned_chat(user_input, response):
+            logger.info(f"[MemoryGate] 拦截中毒对话写入: user={user_input[:40]}, response={response[:40]}")
+            return None
         chat_id = str(uuid.uuid4())
         self._chat_collection.add(
             documents=[f"用户: {user_input}\n助手: {response}"],
@@ -223,7 +265,7 @@ class MemoryStore:
         )
 
     def search_all(self, query: str, k: int = 3) -> List[Dict[str, Any]]:
-        """跨所有 collection 统一语义搜索（时间衰减 + 重要性加权排序）"""
+        """跨所有 collection 统一语义搜索（时间衰减 + 重要性加权排序，自动过滤中毒记忆）"""
         results = []
         # 搜索对话
         chat_results = self._chat_collection.query(query_texts=[query], n_results=k)
@@ -234,6 +276,8 @@ class MemoryStore:
         # 搜索 Agent 记忆
         agent_results = self._agent_collection.query(query_texts=[query], n_results=k)
         results.extend(self._format_results(agent_results))
+        # ★ 过滤中毒记忆（助手说"没有但实际有"的条目）
+        results = self._filter_poisoned_results(results)
         # 按综合评分排序（高 → 低）
         for item in results:
             item["_ranked_score"] = self._compute_ranked_score(item)
@@ -391,7 +435,7 @@ class MemoryStore:
     # ── 全量清理（启动时调用） ──
 
     def cleanup_all(self) -> Dict[str, Any]:
-        """执行全量清理：TTL 遗忘 + 高重要性整合 + SQLite 过期会话清理
+        """执行全量清理：TTL 遗忘 + 高重要性整合 + 中毒数据清理 + SQLite 过期会话清理
 
         适合在应用启动时调用一次。
 
@@ -408,7 +452,11 @@ class MemoryStore:
         results["consolidate"] = self.consolidate()
         logger.info(f"[MemoryStore] cleanup consolidate: {results['consolidate']}")
 
-        # 3. SQLite 过期会话
+        # 3. 清理已入库的中毒记忆
+        results["purge_poisoned"] = self.purge_poisoned()
+        logger.info(f"[MemoryStore] purge poisoned: {results['purge_poisoned']}")
+
+        # 4. SQLite 过期会话
         try:
             from backend.core.memory.durable import get_durable_session
             durable = get_durable_session()
@@ -420,6 +468,43 @@ class MemoryStore:
 
         logger.info(f"[MemoryStore] cleanup_all complete: {results}")
         return results
+
+    # ── 中毒记忆清理 ──
+
+    def purge_poisoned(self) -> Dict[str, int]:
+        """扫描所有 collection，删除中毒记忆
+
+        Returns:
+            {collection_name: deleted_count}
+        """
+        stats: Dict[str, int] = {}
+        for collection_name, collection in [
+            ("chat_history", self._chat_collection),
+            ("knowledge_cache", self._knowledge_collection),
+            ("agent_memory", self._agent_collection),
+        ]:
+            try:
+                all_items = collection.get()
+                if not all_items["ids"]:
+                    stats[collection_name] = 0
+                    continue
+
+                to_delete = []
+                for i in range(len(all_items["ids"])):
+                    doc = all_items["documents"][i] if all_items["documents"] else ""
+                    if doc and self._is_poisoned_document(doc):
+                        to_delete.append(all_items["ids"][i])
+
+                if to_delete:
+                    collection.delete(ids=to_delete)
+                    stats[collection_name] = len(to_delete)
+                else:
+                    stats[collection_name] = 0
+            except Exception as e:
+                logger.warning(f"[MemoryStore] purge_poisoned {collection_name} failed: {e}")
+                stats[collection_name] = -1
+
+        return stats
 
     # ── 记忆统计 ──
 

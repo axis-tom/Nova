@@ -3,8 +3,8 @@ DataLiaison — 数据联络员
 
 纯数据层服务，不配 LLM。职责：
 1. Phase 0 数据就绪检查（在 Orchestrator ReAct 启动前）
-2. 接 Orchestrator/Agent 的数据发现请求 → 查 DB → 按需触发的 ETL（有成本控制）
-3. 返回数据可用性报告
+2. 接 Orchestrator/Agent 的数据发现请求 → 查 DB → 返回数据
+3. 永远只报告"DB 发现了什么"——不做"够不够分析"的判断
 
 与 ProductCollectorAgent 的关键区别：
 - 没有 LLM、没有 ReAct 循环
@@ -26,36 +26,149 @@ from backend.aqueduct.data_provider import DataProvider
 logger = logging.getLogger(__name__)
 
 # ASIN 正则
-_ASIN_PATTERN = re.compile(r'\bB[A-Z0-9]{9}\w?\b')
+# ★ P8 修复：不用 \b 边界，改用 lookbehind/lookahead 防误匹配
+# \b 在 Python3 中把 CJK 字符视为 \w，中文字符 + ASIN 之间没有 word boundary
+_ASIN_PATTERN = re.compile(r'(?<![A-Za-z0-9])B[A-Z0-9]{9}[A-Z0-9]?(?![A-Za-z0-9])')
 
 
 @dataclass
-class DataReadinessReport:
-    """数据就绪报告——Phase 0 的输出"""
-    available_asins: List[str] = field(default_factory=list)       # DB 已有的 ASIN
-    missing_asins: List[str] = field(default_factory=list)         # DB 没有的 ASIN
-    category_product_count: int = 0                                # DB 中该品类的产品数
-    domain_available: bool = False                                 # 该 domain 是否有数据
-    total_products_available: int = 0                              # 会话可用总产品数
-    needs_cold_start: bool = False                                 # 是否需要冷启动
-    cold_start_asins: List[str] = field(default_factory=list)      # 需要冷启动的 ASIN
-    category_hint_raw: str = ""                                    # 原始的 category_hint
+class DataIntelligenceReport:
+    """
+    数据情报报告——Phase 0 的输出。
+
+    不再替代 LLM 做"数据够不够"的判断。
+    只报告事实，让 LLM 自己决策。
+    """
+    # ── ASIN 级别的命中情况 ──
+    requested_asins: List[str] = field(default_factory=list)       # 用户提到的 ASIN（从 entities + raw_query 提取）
+    found_asins: List[str] = field(default_factory=list)            # DB 中存在的 ASIN
+    missing_asins: List[str] = field(default_factory=list)          # DB 中没有的 ASIN
+    asin_product_count: int = 0                                     # DB 中找到的 ASIN 商品数
+    asin_fields_coverage: Dict[str, List[str]] = field(default_factory=dict)  # 每 ASIN 有哪些字段有值
+
+    # ── 品类级别的探索结果 ──
+    category_hint: str = ""                                          # 用户原始品类提示
+    exploration: Optional[Dict] = None                               # explore() 的完整输出（含各个方面命中数、策略明细）
+    matched_category_names: List[str] = field(default_factory=list)  # 探索到的品类名
+    matched_product_types: List[str] = field(default_factory=list)   # 探索到的产品类型名
+
+    # ── 数据库全景（无 hint 时用） ──
+    catalog: Optional[Dict] = None                                   # get_catalog() 的完整输出
+
+    # ── 可用操作 ──
+    can_collect_asins: List[str] = field(default_factory=list)       # 可以冷启动的 ASIN
+
+    # ── 产品预取数据（让 LLM 直接看到真实数值，不再猜疑） ──
+    product_preview: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
-    def is_ready(self) -> bool:
-        """是否有足够数据启动分析"""
-        return self.total_products_available > 0 or not self.needs_cold_start
+    def total_products_available(self) -> int:
+        """DB 中总共能获取到的产品数（不论数据质量）"""
+        if self.exploration:
+            return self.exploration.get("total_distinct_asins", 0)
+        return self.asin_product_count
+
+    @property
+    def domain_has_data(self) -> bool:
+        """该 domain 是否有任何数据"""
+        if self.catalog:
+            return self.catalog.get("total_products", 0) > 0
+        return self.total_products_available > 0
+
+    def to_llm_context(self) -> str:
+        """
+        生成供 LLM 阅读的自然语言上下文。
+        这个文本是"情报报告"——只描述事实，不做判断。
+        """
+        parts = []
+
+        # ── ASIN 级别 ──
+        if self.requested_asins:
+            found = self.found_asins[:10]
+            missing = self.missing_asins[:10]
+            parts.append(f"用户提及了 {len(self.requested_asins)} 个 ASIN：")
+            if found:
+                parts.append(f"  ✅ DB 中找到了 {len(found)} 个：{', '.join(found)}")
+                if self.asin_fields_coverage:
+                    parts.append(f"  这些 ASIN 的数据（180+ 字段）已就绪，直接调 call_nova_agent 分析，不要用 search_web 搜 estos ASIN。")
+            if missing:
+                parts.append(f"  ❌ {len(missing)} 个 ASIN 不在 DB 中：{', '.join(missing)}（需冷启动采集）")
+
+        # ── 品类探索 ──
+        if self.exploration:
+            exp = self.exploration
+            total = exp.get("total_distinct_asins", 0)
+            parts.append(f"\n品类探索（搜索词：{self.category_hint}）：")
+            parts.append(f"  共找到 {total} 个相关商品")
+
+            # 各策略命中情况
+            strategies = exp.get("strategies_attempted", [])
+            active = [s for s in strategies if s.get("matched", 0) > 0]
+            if active:
+                parts.append(f"  搜索策略命中明细：")
+                for s in active:
+                    parts.append(f"    - {s['column']}({s['strategy']}): {s['matched']} 条（新增 {s.get('new_asins', 0)} 条）")
+
+            # 发现的品类分布
+            cats = exp.get("categories_found", {})
+            if cats:
+                top_cats = list(cats.keys())[:5]
+                parts.append(f"  🏷️ 匹配到的品类名：{', '.join(f'{c}({cats[c]})' for c in top_cats)}")
+
+            ptypes = exp.get("product_types_found", {})
+            if ptypes:
+                top_pts = list(ptypes.keys())[:5]
+                parts.append(f"  📦 匹配到的产品类型：{', '.join(f'{p}({ptypes[p]})' for p in top_pts)}")
+
+            brands = exp.get("brands_found", {})
+            if brands:
+                top_br = list(brands.keys())[:10]
+                parts.append(f"  🏢 涉及品牌（前{len(top_br)}）：{', '.join(f'{b}({brands[b]})' for b in top_br)}")
+
+            # 高价值产品
+            products = exp.get("products", [])
+            if products:
+                top = sorted(products, key=lambda p: p.get("importance_score", 0) or 0, reverse=True)[:5]
+                parts.append(f"  ⭐ 高 Importance 产品样本：")
+                for p in top:
+                    parts.append(f"    {p.get('asin', '')}: {p.get('title', '?')[:50]} | "
+                                 f"${p.get('current_price', '?')} | "
+                                 f"rating={p.get('rating', '?')} | "
+                                 f"BSR={p.get('current_bsr', '?')} | "
+                                 f"月销={p.get('monthly_sold', '?')}")
+
+        # ── 数据库全景 ──
+        if self.catalog:
+            cat = self.catalog
+            parts.append(f"\n数据库全景（{cat.get('total_products', 0)} 个商品）：")
+            if cat.get("categories"):
+                parts.append(f"  📁 品类：{', '.join(c['name'] for c in cat['categories'][:8])}")
+            if cat.get("product_types"):
+                parts.append(f"  📦 产品类型：{', '.join(p['name'] for p in cat['product_types'][:8])}")
+            if cat.get("brands"):
+                parts.append(f"  🏢 品牌：{', '.join(b['name'] for b in cat['brands'][:10])}")
+
+            # 字段填充率——帮助 LLM 判断"这些数据质量够不够"
+            field_stats = cat.get("field_stats", {})
+            if field_stats:
+                filled_fields = [f"{k}={v.get('pct', 0)}%" for k, v in sorted(field_stats.items(), key=lambda x: -x[1].get('pct', 0))[:10]]
+                parts.append(f"  字段填充率（前10）：{' | '.join(filled_fields)}")
+
+        # ── 可操作项 ──
+        if self.can_collect_asins:
+            parts.append(f"\n🔧 可以采集的 ASIN：{', '.join(self.can_collect_asins)}（调用 DataProvider 冷启动）")
+
+        return "\n".join(parts)
 
 
 class DataLiaison:
     """
     数据联络员——纯数据层服务。
 
-    用法（Phase 0 就绪检查）：
+    用法（Phase 0 情报收集）：
         liaison = DataLiaison()
-        report = await liaison.prepare(intent_spec)
-        if report.needs_cold_start:
-            await liaison.collect_missing(report.cold_start_asins)
+        report = await liaison.collect_intel(intent_spec)
+        # report.to_llm_context() → 给 LLM 自己判断
 
     用法（Orchestrator 工具）：
         report = await liaison.discover("蓝牙耳机", domain="US")
@@ -67,73 +180,114 @@ class DataLiaison:
         self._cold_start_lock: asyncio.Lock = asyncio.Lock()
 
     # ════════════════════════════════════════════════════════════════
-    # Phase 0：从 IntentAnalysisSpec 做数据就绪检查
+    # Phase 0：情报收集（不再做二元"数据就绪"判断）
     # ════════════════════════════════════════════════════════════════
 
-    async def prepare(self, spec: IntentAnalysisSpec, domain: str = "US") -> DataReadinessReport:
+    async def collect_intel(self, spec: IntentAnalysisSpec, domain: str = "US") -> DataIntelligenceReport:
         """
-        根据 IntentAnalysisSpec 检查数据就绪状态。
+        根据 IntentAnalysisSpec 收集数据情报。
+
+        返回的 DataIntelligenceReport 包含所有发现的事实，
+        但不做"够不够分析"的判断——交给 LLM 自己决定。
 
         流程：
         1. 从 entities + raw_query 提取 ASIN
         2. 查 DB 检查每个 ASIN 是否存在
-        3. 从 category_hint 推断品类范围，查 DB 品类覆盖
-        4. 返回就绪报告
-
-        ASIN 级别的缺失 → cold_start（有界限的，不走 ETL 全品类）
-        品类级别的缺失 → 只报告不触发（品类级 ETL 由调度器独立负责）
+        3. 从 category_hint 跨列探索品类
+        4. 如果没有 hint 也没有 ASIN，返回数据库全景
+        5. ★ 对每个命中 ASIN 预取关键字段预览数据
         """
-        # 1. 提取所有 ASIN
+        # 1. ASIN 提取
         all_asins = set(spec.entities or [])
-        # 从 raw_query 补充 ASIN
         query_asins = _ASIN_PATTERN.findall(spec.raw_query)
         all_asins.update(a.upper() for a in query_asins)
-        # 过滤掉非 ASIN 的实体（品牌名、品类名）
         real_asins = [a for a in all_asins if _ASIN_PATTERN.match(a)]
 
-        # 2. 查 DB
-        available = []
-        missing = []
+        # 2. ASIN 级别查询
+        found_asins = []
+        missing_asins = []
+        asin_coverage: Dict[str, List[str]] = {}
+        product_preview: Dict[str, Dict[str, Any]] = {}
         if real_asins:
             async with AsyncSessionLocal() as db:
                 repo = AmazonProductRepository(db)
                 existing = await repo.get_by_asins(real_asins, domain)
             for asin in real_asins:
                 if asin in existing:
-                    available.append(asin)
-                else:
-                    missing.append(asin)
+                    found_asins.append(asin)
+                    p = existing[asin]
+                    # 字段覆盖检查
+                    filled = []
+                    for f in ("title", "brand", "current_price", "rating", "review_count",
+                              "current_bsr", "monthly_sold", "feature_bullets",
+                              "main_image", "buybox_price", "offer_count", "fba_fee",
+                              "stock_level", "aplus_content", "price_history",
+                              "bsr_history", "rating_history", "is_fba"):
+                        if getattr(p, f, None) is not None:
+                            filled.append(f)
+                    asin_coverage[asin] = filled
 
-        # 3. 品类覆盖检查
-        category_count = 0
-        domain_available = False
-        try:
+                    # ★ 产品预取：关键字段的实际数值
+                    preview = {}
+                    for f in ("title", "brand", "current_price", "buybox_price",
+                              "avg_price_30d", "avg_price_90d", "list_price",
+                              "rating", "review_count", "current_bsr",
+                              "avg_bsr_30d", "avg_bsr_90d", "monthly_sold",
+                              "weekly_sold", "annual_sold", "feature_bullets_count",
+                              "seller_count", "offer_count_fba", "offer_count_fbm",
+                              "is_fba", "is_prime", "has_amazon_selling",
+                              "has_coupon", "main_image", "images_count",
+                              "fulfillment_type", "availability", "stock_level",
+                              "fba_fee", "referral_fee_percent",
+                              "color", "size", "style", "material",
+                              "brand_store_name", "parent_asin",
+                              "out_of_stock_pct_30d"):
+                        val = getattr(p, f, None)
+                        if val is not None:
+                            preview[f] = val
+                    product_preview[asin] = preview
+                else:
+                    missing_asins.append(asin)
+
+        # 3. 品类跨列探索
+        exploration = None
+        matched_category = []
+        matched_type = []
+        category_hint = spec.category_hint.strip() if spec.category_hint else ""
+
+        if category_hint:
             async with AsyncSessionLocal() as db:
                 repo = AmazonProductRepository(db)
-                products, total = await repo.search_products(
-                    domain=domain, limit=1, sort_by="importance_score"
-                )
-                domain_available = total > 0
-                if total > 0:
-                    # 粗略估计品类覆盖：取 top 50
-                    products50, _ = await repo.search_products(
-                        domain=domain, limit=50, sort_by="importance_score"
-                    )
-                    category_count = len(products50)
-        except Exception as e:
-            logger.warning(f"[DataLiaison] 品类覆盖检查失败: {e}")
+                exploration = await repo.explore(category_hint, domain=domain)
 
-        total_available = len(available) + category_count
+            if exploration:
+                # 提取品类名和产品类型
+                matched_category = list(exploration.get("categories_found", {}).keys())
+                matched_type = list(exploration.get("product_types_found", {}).keys())
 
-        return DataReadinessReport(
-            available_asins=available,
-            missing_asins=missing,
-            category_product_count=category_count,
-            domain_available=domain_available,
-            total_products_available=total_available,
-            needs_cold_start=len(missing) > 0,
-            cold_start_asins=missing,
-            category_hint_raw=spec.category_hint,
+        # 4. 没有 hint 也没有 ASIN → 返回数据库全景
+        catalog = None
+        if not real_asins and not category_hint:
+            async with AsyncSessionLocal() as db:
+                repo = AmazonProductRepository(db)
+                catalog = await repo.get_catalog(domain=domain)
+
+        # 5. 可冷启动的 ASIN
+        can_collect = missing_asins if missing_asins else []
+
+        return DataIntelligenceReport(
+            requested_asins=real_asins,
+            found_asins=found_asins,
+            missing_asins=missing_asins,
+            asin_product_count=len(found_asins),
+            asin_fields_coverage=asin_coverage,
+            category_hint=category_hint,
+            exploration=exploration,
+            matched_category_names=matched_category,
+            matched_product_types=matched_type,
+            catalog=catalog,
+            can_collect_asins=can_collect,
+            product_preview=product_preview,
         )
 
     async def collect_missing(self, asins: List[str], domain: str = "US") -> Dict[str, bool]:
@@ -186,21 +340,31 @@ class DataLiaison:
                         "current_bsr": product.current_bsr,
                     }
 
-            # 查品类概览
-            products, total = await repo.search_products(
-                domain=domain, limit=min(limit, 50), sort_by="importance_score"
-            )
+            # 跨列探索
+            exploration = await repo.explore(hint, domain=domain, limit=limit)
 
-        lines = [f"[DataLiaison] 数据库当前状态（{domain}）:", f"  品类产品数: {total}"]
-        if asin_data:
+        lines = [f"[DataLiaison] 数据探索报告（{domain}）:"]
+        if discovered_asins:
             lines.append(f"  指定 ASIN 命中: {len(asin_data)}/{len(discovered_asins)}")
             for asin, info in asin_data.items():
                 lines.append(f"    {asin}: {info.get('title', '?')[:50]}")
-        if total > 0:
-            lines.append(f"  Top 产品样本: {len(products)} 条")
-            if products:
-                brands = set(p.brand for p in products if p.brand)
-                price_range = f"${min(p.current_price for p in products if p.current_price):.0f} ~ ${max(p.current_price for p in products if p.current_price):.0f}"
-                lines.append(f"  品牌数: {len(brands)} | 价格区间: {price_range}")
+
+        total = exploration.get("total_distinct_asins", 0)
+        lines.append(f"  品类探索找到: {total} 个商品")
+
+        strategies = exploration.get("strategies_attempted", [])
+        active = [s for s in strategies if s.get("matched", 0) > 0]
+        if active:
+            lines.append(f"  搜索路径命中:")
+            for s in active:
+                lines.append(f"    - {s['column']}({s['strategy']}): {s['matched']}条")
+
+        categories = exploration.get("categories_found", {})
+        if categories:
+            lines.append(f"  品类: {', '.join(list(categories.keys())[:5])}")
+
+        brands = exploration.get("brands_found", {})
+        if brands:
+            lines.append(f"  品牌: {', '.join(list(brands.keys())[:8])}")
 
         return "\n".join(lines)

@@ -30,6 +30,250 @@ class AmazonProductRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    # ── 品类模糊查询 ──
+
+    async def search_by_category_name(
+        self,
+        category_hint: str,
+        domain: str = "US",
+        limit: int = 50,
+    ) -> Tuple[List[AmazonProduct], int]:
+        """
+        按品类名模糊查询（ILIKE），支持中英文品类名、同义词匹配。
+        """
+        conditions = [AmazonProduct.domain == domain]
+
+        if category_hint:
+            exact_cond = AmazonProduct.category_name == category_hint
+            ilike_cond = AmazonProduct.category_name.ilike(f"%{category_hint}%")
+            tokens = [t.strip() for t in category_hint.replace(",", " ").split() if len(t.strip()) > 1]
+            token_conds = [AmazonProduct.category_name.ilike(f"%{t}%") for t in tokens]
+
+            from sqlalchemy import or_
+            conditions.append(or_(exact_cond, ilike_cond, *token_conds))
+
+        count_stmt = select(sql_func.count()).select_from(AmazonProduct).where(and_(*conditions))
+        count_result = await self.db.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        stmt = (
+            select(AmazonProduct)
+            .where(and_(*conditions))
+            .order_by(AmazonProduct.importance_score.desc().nullslast())
+            .limit(limit)
+        )
+        result = await self.db.execute(stmt)
+        products = list(result.scalars().all())
+
+        logger.info(f"[Repo] search_by_category_name(hint={category_hint}) → {len(products)}/{total}")
+        return products, total
+
+    # ── 跨列探索 ──
+
+    async def explore(
+        self, hint: str, domain: str = "US", limit: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        跨列探索——不在单一列上死磕，而是尝试所有可能相关的列，
+        返回每种尝试的结果和命中细节。
+
+        探索的列（按优先级）：
+        1. category_name (ILIKE)
+        2. product_type_name (ILIKE)
+        3. bsr_category (ILIKE)
+        4. title (ILIKE)
+        5. brand (ILIKE)
+        6. category_name token 级拆分
+        7. title token 级拆分（英文）
+        """
+        from collections import Counter
+        from sqlalchemy import or_
+
+        strategies = []
+        tokens = [t.strip() for t in hint.replace(",", " ").split() if len(t.strip()) > 1]
+
+        # 策略 1: category_name ILIKE
+        strategies.append({
+            "column": "category_name", "strategy": "ilike",
+            "cond": AmazonProduct.category_name.ilike(f"%{hint}%"),
+        })
+        # 策略 2: product_type_name ILIKE
+        strategies.append({
+            "column": "product_type_name", "strategy": "ilike",
+            "cond": AmazonProduct.product_type_name.ilike(f"%{hint}%"),
+        })
+        # 策略 3: bsr_category ILIKE
+        strategies.append({
+            "column": "bsr_category", "strategy": "ilike",
+            "cond": AmazonProduct.bsr_category.ilike(f"%{hint}%"),
+        })
+        # 策略 4: title ILIKE（英文 hint 或 token）
+        if hint.isascii():
+            strategies.append({
+                "column": "title", "strategy": "ilike",
+                "cond": AmazonProduct.title.ilike(f"%{hint}%"),
+            })
+        # 策略 5: brand
+        strategies.append({
+            "column": "brand", "strategy": "ilike",
+            "cond": AmazonProduct.brand.ilike(f"%{hint}%"),
+        })
+        # 策略 6: 对 1 个以上 token 做 token 级 OR 匹配
+        if len(tokens) > 1:
+            for col in ("category_name", "product_type_name", "bsr_category", "title", "brand"):
+                token_conds = []
+                for t in tokens:
+                    col_attr = getattr(AmazonProduct, col, None)
+                    if col_attr is not None:
+                        token_conds.append(col_attr.ilike(f"%{t}%"))
+                if token_conds:
+                    strategies.append({
+                        "column": col, "strategy": "token_or",
+                        "cond": or_(*token_conds) if len(token_conds) > 1 else token_conds[0],
+                    })
+
+        # 去重：一个 ASIN 可能命中间一行的多个策略，我们要的是全景
+        domain_cond = AmazonProduct.domain == domain
+        all_hit_asins = {}  # asin -> first_attempt 信息
+
+        strategy_results = []
+        for i, s in enumerate(strategies):
+            try:
+                stmt = (
+                    select(AmazonProduct)
+                    .where(and_(domain_cond, s["cond"]))
+                    .order_by(AmazonProduct.importance_score.desc().nullslast())
+                    .limit(limit)
+                )
+                result = await self.db.execute(stmt)
+                products = list(result.scalars().all())
+
+                hit_asins_count_before = len(all_hit_asins)
+                for p in products:
+                    if p.asin not in all_hit_asins:
+                        all_hit_asins[p.asin] = {
+                            "first_hit_column": s["column"],
+                            "first_hit_strategy": s["strategy"],
+                            "asin": p.asin,
+                            "title": p.title,
+                            "brand": p.brand,
+                            "category_name": p.category_name,
+                            "product_type_name": p.product_type_name,
+                            "bsr_category": p.bsr_category,
+                            "current_price": p.current_price,
+                            "rating": p.rating,
+                            "current_bsr": p.current_bsr,
+                            "monthly_sold": p.monthly_sold,
+                            "review_count": p.review_count,
+                            "importance_score": p.importance_score,
+                            "importance_tier": p.importance_tier,
+                        }
+
+                strategy_results.append({
+                    "column": s["column"],
+                    "strategy": s["strategy"],
+                    "matched": len(products),
+                    "new_asins": len(all_hit_asins) - hit_asins_count_before,
+                })
+            except Exception as e:
+                strategy_results.append({
+                    "column": s["column"], "strategy": s["strategy"],
+                    "matched": 0, "new_asins": 0, "error": str(e),
+                })
+
+        # 汇总分类
+        category_names = Counter(p["category_name"] for p in all_hit_asins.values() if p.get("category_name"))
+        product_types = Counter(p["product_type_name"] for p in all_hit_asins.values() if p.get("product_type_name"))
+        bsr_cats = Counter(p["bsr_category"] for p in all_hit_asins.values() if p.get("bsr_category"))
+        brands = Counter(p["brand"] for p in all_hit_asins.values() if p.get("brand"))
+
+        return {
+            "total_distinct_asins": len(all_hit_asins),
+            "strategies_attempted": strategy_results,
+            "categories_found": dict(category_names.most_common(10)),
+            "product_types_found": dict(product_types.most_common(10)),
+            "bsr_categories_found": dict(bsr_cats.most_common(10)),
+            "brands_found": dict(brands.most_common(15)),
+            "products": list(all_hit_asins.values()),
+        }
+
+    # ── 数据库全景 ──
+
+    async def get_catalog(self, domain: str = "US") -> Dict[str, Any]:
+        """
+        返回该 domain 的数据全景——不依赖任何 hint，纯统计。
+
+        返回：
+        - total_products: int
+        - categories: [{name, count}] (category_name)
+        - product_types: [{name, count}] (product_type_name)
+        - brands: [{name, count}]
+        - field_stats: {field_name: {filled, total, pct}}
+        """
+        from sqlalchemy import func as sql_func
+
+        # 总数
+        count_stmt = select(sql_func.count()).select_from(AmazonProduct).where(
+            AmazonProduct.domain == domain
+        )
+        total_result = await self.db.execute(count_stmt)
+        total = total_result.scalar() or 0
+
+        if total == 0:
+            return {"total_products": 0, "categories": [], "product_types": [], "brands": [], "field_stats": {}}
+
+        # 聚合
+        async def _agg(column, limit=20):
+            stmt = (
+                select(column, sql_func.count().label("cnt"))
+                .where(and_(AmazonProduct.domain == domain, column.isnot(None)))
+                .group_by(column)
+                .order_by(sql_func.count().desc())
+                .limit(limit)
+            )
+            result = await self.db.execute(stmt)
+            return [{"name": row[0], "count": row[1]} for row in result if row[0]]
+
+        categories = await _agg(AmazonProduct.category_name)
+        product_types = await _agg(AmazonProduct.product_type_name)
+        brands = await _agg(AmazonProduct.brand)
+
+        # 字段填充率
+        fields_to_check = [
+            "current_price", "rating", "review_count", "current_bsr",
+            "monthly_sold", "fba_fee", "feature_bullets", "main_image",
+            "buybox_price", "offer_count", "stock_level", "aplus_content",
+            "price_history", "bsr_history", "rating_history",
+            "monthly_sold", "weekly_sold", "annual_sold",
+            "is_fba", "is_prime", "has_amazon_selling",
+            "out_of_stock_pct_30d", "coupon_text",
+        ]
+        field_stats = {}
+        for field in fields_to_check:
+            col = getattr(AmazonProduct, field, None)
+            if col is None:
+                continue
+            filled_stmt = (
+                select(sql_func.count())
+                .select_from(AmazonProduct)
+                .where(and_(AmazonProduct.domain == domain, col.isnot(None)))
+            )
+            filled_result = await self.db.execute(filled_stmt)
+            filled = filled_result.scalar() or 0
+            field_stats[field] = {
+                "filled": filled,
+                "total": total,
+                "pct": round(filled / total * 100, 1) if total > 0 else 0,
+            }
+
+        return {
+            "total_products": total,
+            "categories": categories,
+            "product_types": product_types,
+            "brands": brands,
+            "field_stats": field_stats,
+        }
+
     # ── 基础 CRUD ──
 
     async def get_by_asin(self, asin: str, domain: str = "US") -> Optional[AmazonProduct]:
