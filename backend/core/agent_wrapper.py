@@ -260,6 +260,10 @@ async def call_agent(
     # 提取主要结果（成功路径）
     result = data.get("result") or data.get("market_report") or data.get("collected_products") or data
 
+    # ── Agent 加载信息提取（供 DecisionTrace + 驾驶舱使用） ──
+    # 从 state.data 提取 Agent 实际加载了哪些数据，不改 Agent 的 run() 方法
+    agent_load_info = _extract_agent_load_info(name, data)
+
     # 自动保存到记忆系统
     try:
         result_summary = ""
@@ -307,7 +311,151 @@ async def call_agent(
         "data": data,
         "events": events,
         "result_state": result_state,  # 供 orchestrator 写回 SessionStore
+        "agent_load_info": agent_load_info,  # 加载信息（供 DecisionTrace + 驾驶舱）
     }
+
+
+def _extract_agent_load_info(agent_name: str, state_data: dict) -> dict:
+    """
+    从 Agent 执行后的 state.data 中提取数据加载信息。
+    不依赖 Agent run() 内部的具体实现，只从结果中推测。
+
+    Args:
+        agent_name: Agent 名称
+        state_data: Agent 执行后的 state.data
+
+    Returns:
+        加载信息 dict，包含：
+        - asins_queried: 查询的 ASIN 列表
+        - category_queried: 查询的品类名
+        - products_loaded: 加载的商品数量
+        - fields_available: 可用字段数（从首个商品推断）
+        - output_keys_produced: Agent 输出的 state key 列表
+        - evidence_fields: Agent 用了哪些字段作为分析依据
+    """
+    # ── ASIN 查询 ──
+    asins: list = state_data.get("asins", []) or []
+    if isinstance(asins, str):
+        asins = [a.strip() for a in asins.replace(",", " ").split() if a.strip()]
+    asins = list(asins) if isinstance(asins, (list, tuple)) else []
+
+    # ── 品类查询 ──
+    category_queried = (
+        state_data.get("category")
+        or state_data.get("category_name")
+        or ""
+    )
+    if isinstance(category_queried, str):
+        category_queried = category_queried.strip()
+
+    # ── 加载的商品数 ──
+    products_loaded = 0
+    fields_available = 0
+    sample_product = None
+
+    # 检查各种可能的商品列表存放位置
+    for key in ("collected_products", "products", "product_map", "results"):
+        val = state_data.get(key)
+        if isinstance(val, list) and len(val) > 0:
+            products_loaded = len(val)
+            sample_product = val[0] if val else None
+            break
+        elif isinstance(val, dict) and len(val) > 0:
+            # product_map: {asin: product}
+            products_loaded = len(val)
+            sample_product = next(iter(val.values())) if val else None
+            break
+
+    # 如果没找到 products，从 asins 数推断
+    if products_loaded == 0 and asins:
+        products_loaded = len(asins)
+
+    # 字段数（从首个商品推断）
+    if sample_product and isinstance(sample_product, dict):
+        fields_available = len(sample_product)
+
+    # ── Agent 输出的 state key（排除 params 注入的） ──
+    output_keys = [k for k in state_data.keys()
+                   if not k.startswith("_")
+                   and k not in ("asins", "category", "category_name", "domain",
+                                 "max_products_to_analyze", "seed_keywords",
+                                 "expand_count", "analysis_type", "sub_task",
+                                 "min_opportunity_score", "output_top_n",
+                                 "include_long_tail", "error", "error_type", "error_details")]
+
+    # ── 证据字段（Agent 分析中用到的字段） ──
+    # 从 Agent 产出结果中反推（eg. 结果的 key 名）
+    evidence_fields = _infer_evidence_fields(agent_name, state_data)
+
+    return {
+        "asins_queried": asins[:20],
+        "category_queried": category_queried,
+        "products_loaded": products_loaded,
+        "fields_available": fields_available,
+        "output_keys_produced": output_keys[:15],
+        "evidence_fields": evidence_fields[:15],
+        "sample_product_title": (sample_product.get("title") or "?")[:60]
+            if isinstance(sample_product, dict) else "",
+    }
+
+
+def _infer_evidence_fields(agent_name: str, state_data: dict) -> List[str]:
+    """
+    从 Agent 的分析结果中推断用到了哪些数据字段作为分析依据。
+    这是启发式推断——不完美但比完全黑盒好。
+    """
+    # 每个 Agent 可能使用的标准字段
+    agent_evidence_patterns = {
+        "market_analyst": [
+            "current_price", "rating", "review_count", "current_bsr",
+            "monthly_sold", "brand", "is_fba", "is_prime",
+            "price_history", "bsr_history", "category_name", "feature_bullets",
+            "aplus_content", "seller_count",
+        ],
+        "review_analyzer": [
+            "rating", "review_count", "rating_breakdown", "review_velocity_30d",
+            "top_reviews", "customers_say", "rating_history",
+            "review_count_history", "has_reviews",
+        ],
+        "traffic_analyzer": [
+            "current_bsr", "avg_bsr_30d", "avg_bsr_90d", "monthly_sold",
+            "current_price", "is_fba", "is_prime", "seller_count",
+            "price_history", "bsr_history", "avg_price_30d",
+        ],
+        "competitor_analyst": [
+            "title", "brand", "current_price", "rating", "review_count",
+            "current_bsr", "monthly_sold", "feature_bullets", "main_image",
+            "images_count", "aplus_content", "description", "is_fba", "is_prime",
+        ],
+        "opportunity_judge": [
+            "current_price", "rating", "review_count", "current_bsr",
+            "monthly_sold", "seller_count", "is_fba", "is_prime",
+            "fba_fee", "stock_level", "brand", "category_name",
+            "price_history", "bsr_history", "has_coupon",
+        ],
+        "keyword_expander": [
+            "title", "brand", "keywords_list", "feature_bullets",
+            "description", "search_alias",
+        ],
+    }
+
+    patterns = agent_evidence_patterns.get(agent_name, [])
+    if not patterns:
+        return []
+
+    # 从 state_data 中检查哪些字段有值，与 patterns 取交集
+    available_fields = set()
+    for key in patterns:
+        if state_data.get(key) is not None:
+            available_fields.add(key)
+        # 也检查 collected_products 中的字段
+        products = state_data.get("collected_products")
+        if isinstance(products, list) and products:
+            sample = products[0]
+            if isinstance(sample, dict) and sample.get(key) is not None:
+                available_fields.add(key)
+
+    return sorted(available_fields) or patterns[:5]
 
 
 def list_agents() -> List[Dict[str, Any]]:

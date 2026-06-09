@@ -174,7 +174,6 @@ class PromptEngine:
         agents_info: Optional[list] = None,
         memory_context: str = "",
         state_summary: str = "",
-        has_product_preview: bool = False,
     ) -> str:
         """
         根据 IntentAnalysisSpec 动态生成 orchestrator 的 system prompt。
@@ -187,8 +186,6 @@ class PromptEngine:
         - product_research → 调研模板（单品深度挖掘）
         - competitor_watch → 监控模板（竞品对比）
         - general_query → 探索模板（先看看有什么可用）
-
-        has_product_preview: True → 产品预取数据已注入 state_summary，LLM 可直接使用
         """
 
         # ── 1. 意图描述（自然语言） ──
@@ -213,8 +210,8 @@ class PromptEngine:
 - **Listing**: title, brand, feature_bullets, description, images_count, videos_count, aplus_content, specifications
 - **配送/变体/品牌/属性/促销/库存**: 详细信息建议调 Agent 获取，Agent 会自动从本地表加载"""
 
-        # ── 4. 角色设定（按 intent_type + has_product_preview 动态分模板） ──
-        role_section = self._build_role_section(spec, has_product_preview=has_product_preview)
+        # ── 4. 角色设定（按 intent_type 分模板） ──
+        role_section = self._build_role_section(spec)
 
         # ── 5. Agent 能力清单 ──
         agent_lines = []
@@ -248,18 +245,57 @@ class PromptEngine:
 
         return system_prompt
 
-    def _build_role_section(self, spec: IntentAnalysisSpec,
-                            has_product_preview: bool = False) -> str:
-        """按 intent_type + depth + has_product_preview 动态生成角色设定模板
+    def _build_role_section(self, spec: IntentAnalysisSpec) -> str:
+        """按意图类型动态生成角色设定模板
 
-        has_product_preview=True 时：product_preview 的数据已在 state_summary 中，
-        角色指令会调整为"直接使用数据"，而不是"调 Agent 获取"。
+        统一模板（不再分数据执行模式/分析模式）：
+        LLM 永远通过工具获取数据，不从上下文或记忆"编造"。
+        intent_type 只影响任务背景描述，不影响"必须调工具"的规则。
         """
 
-        depth = spec.depth.value if spec.depth else "moderate"
-        intent_type = spec.intent_type
+        # ── 从 intent_type 推断任务背景 ──
+        intent_hints = {
+            IntentType.FOCUS_ENTITY: "用户想查询某个具体 ASIN 的数据。**第一步永远调 get_entity_details** 获取真实数据。",
+            IntentType.MARKET_ANALYSIS: "用户想了解市场全貌。分析方向包括品牌格局、价格分布、竞争态势、选品机会等。",
+            IntentType.DEEPEN: "用户希望对已有的分析结果进一步深入。回顾已有数据，聚焦用户要求的新方向，不要重复已覆盖的分析。",
+            IntentType.MULTI_DIM: "用户希望从多个角度一次性覆盖分析。规划覆盖哪些维度，按序进行。",
+            IntentType.PRODUCT_RESEARCH: "用户想深度调研特定产品。获取产品数据后评估其市场表现、竞争力和机会。",
+            IntentType.COMPETITOR_WATCH: "用户想对比分析竞品。关注差异化维度：定价、评分、BSR、卖家来源、品牌定位。",
+            IntentType.GENERAL_QUERY: "用户需求不明确。先 search_entities 了解可用数据，再决定分析方向。",
+        }
+        hint = intent_hints.get(spec.intent_type, "用户有分析需求。先理解任务，再决定如何执行。")
 
-        # ── 数据来源原则（所有意图共享，正面表述） ──
+        role_lines = [
+            "## 你的角色",
+            "你是 Amazon 电商分析师。用户给你一个任务。",
+            "",
+            f"任务背景：{hint}",
+            "",
+            "可用资源（数据工具 — 从本地 DB 获取真实数据）：",
+            "- **get_entity_details**: 查单个 ASIN/Offer/变体的指定字段。查图片传 metrics=['main_image']",
+            "- **compare_entities**: 对比多个 ASIN 的指标（竞品分析首选）",
+            "- **search_entities**: 按价格/评分/BSR/品类/品牌等条件筛选商品",
+            "- **get_trends**: 查价格/BSR/评分的历史趋势（时序文本）",
+            "- **analyze_custom**: 按品牌/品类分组做聚合统计",
+            "",
+            "⚠️ 必须调工具获取数据。**不调工具直接回答 = 编造数据**。",
+            "⚠️ 上方「当前数据状态」只是告诉你 DB 有哪些数据可用，不是数据本身。",
+            "⚠️ system prompt 中的字段列表只告诉你 DB 有什么字段，不是字段的值。",
+            "",
+            "工作原则：",
+            "- 第一步永远调工具获取数据，再看结果决定下一步",
+            "- 复杂任务拆成子任务，每次调 call_nova_agent 给明确的 sub_task",
+            "- 如数据不够，先调滚动获取更多数据，不要硬答",
+            "- 不确定的事直接说，标注置信度",
+            "- 输出结构化中文报告",
+            "",
+            "关键：",
+            "- 数据库中有完整 Amazon 产品数据（180+ 字段），调工具获取",
+            "- search_web 只用于行业新闻、市场趋势等宏观信息",
+            "- 用户只查单个产品图片/价格等简单字段时，一次 get_entity_details 即可",
+        ]
+
+        # ── 共享原则 ──
         data_principle = (
             "### 数据来源原则\n"
             "所有 Amazon 商品数据（价格、BSR、评论、销量等 180+ 字段）从本地数据库获取。\n"
@@ -267,160 +303,29 @@ class PromptEngine:
             "**先看上方「当前数据状态」了解 DB 有什么**，再决定下一步。"
         )
 
-        # ── sub_task 使用说明（所有意图共享） ──
         sub_task_guide = (
             "### sub_task 传递机制\n"
             "调 Agent 时在 params 中传入 **sub_task** 字段，告诉该 Agent 本次具体分析什么。\n"
-            "例: call_nova_agent('review_analyzer', '{\"sub_task\": \"重点分析评论中关于价格的信号\"}')\n"
+            "例: `call_nova_agent('review_analyzer', '{\\\"sub_task\\\": \\\"重点分析评论中关于价格的信号\\\"}')`\n"
             "→ Agent 会收到你的子任务描述，用它自己的 LLM 决定如何分析。"
         )
 
-        # ── 按意图类型分模板 ──
+        self_check_section = """\
+### 输出前自检（必须执行，不是可选）
+最终回答**必须**以以下格式的自检段落结尾：
 
-        if intent_type == IntentType.FOCUS_ENTITY:
-            # 聚焦实体：数据就绪
-            if has_product_preview:
-                # ★ 数据已预取在 state_summary 中，LLM 可直接使用
-                role_lines = [
-                    "## 你的角色",
-                    "你是数据执行员（Data Retrieval Specialist）。用户想要的商品数据已在本地数据库中，并且预取数据已在上方列出。",
-                    "",
-                    "**工作流程：**",
-                    "1. **直接使用上方预取数据回答** — 数据是真实的，来自本地 DB",
-                    "2. **如需更详细信息** — 调 `call_nova_agent('market_analyst', ...)` 获取完整 180+ 字段分析",
-                    "3. **如数据不足** — 再考虑调其他 Agent 或 search_web 补充",
-                    "",
-                    "**关键：**",
-                    "- 上方预取数据是真实有效的，**直接用来回答用户**",
-                    "- 用户只查单个产品时，直接用预取数据回答，不需要额外调用",
-                    "- 回答简洁、结构化，含关键指标",
-                ]
-            else:
-                role_lines = [
-                    "## 你的角色",
-                    "你是数据执行员（Data Retrieval Specialist）。用户想要的特定商品/数据已在本地数据库中。",
-                    "",
-                    "**工作流程：**",
-                    "1. **调 Agent 获取数据** — 直接调 `call_nova_agent('market_analyst', ...)` 或对应的专业 Agent，传入 asins 和 sub_task",
-                    "2. **呈现结果** — 将 Agent 返回的数据格式化为结构化中文信息",
-                    "3. **如数据不足** — 再考虑调其他 Agent 或 search_web 补充",
-                    "",
-                    "**关键：**",
-                    "- DB 已有该实体的完整数据，**直接调 Agent，不要 search_web**",
-                    "- 如果用户只查单个 ASIN，一个 market_analyst 调用足够",
-                    "- 回答简洁、结构化，含关键指标",
-                ]
-        elif intent_type == IntentType.MARKET_ANALYSIS:
-            # 市场分析：规划路径
-            is_deep = depth in ("deep", "comprehensive")
-            role_lines = [
-                "## 你的角色",
-                "你是市场分析师（Market Analyst）。负责规划分析路径，用多个 Agent 覆盖市场全貌。",
-                "",
-                "**工作流程：**",
-                "1. **了解数据** — 看上方「当前数据状态」了解 DB 有什么可用的品类/ASIN 数据",
-                "2. **规划分析路径** — 决定需要哪些 Agent、按什么顺序调用",
-                "3. **派发子任务** — 每个 Agent 调用时传明确的 sub_task",
-                "4. **检查中间结果** — 不够深入就继续调度",
-                "5. **汇总输出** — 结构化中文报告",
-                "",
-                "**推荐分析维度（由你灵活选择）：**",
-                "- 市场规模与增长趋势（调用 search_web 查行业报告）",
-                "- 品牌格局与份额分布（调 market_analyst/competitor_analyst）",
-                "- 价格带分布与定价策略（调 market_analyst）",
-                "- 评论壁垒与用户需求（调 review_analyzer）",
-                "- 流量与竞争格局（调 traffic_analyzer）",
-                f"- 选品机会综合评估{'（含深度调研）' if is_deep else ''}（调 opportunity_judge）",
-            ]
-        elif intent_type == IntentType.DEEPEN:
-            # 深化分析：在已有结果上继续
-            role_lines = [
-                "## 你的角色",
-                "你是分析跟进者（Deepening Analyst）。用户希望对已有分析结果做进一步深入。",
-                "",
-                "**工作流程：**",
-                "1. **回顾已有数据** — 看上方「当前数据状态」了解 session 中已收集了什么",
-                "2. **识别深化方向** — 理解用户想要在哪方面深入",
-                "3. **针对性调度** — 调对应 Agent 只做用户要求的那部分深入分析",
-                "4. **汇总输出** — 新的分析结果 + 与之前的衔接",
-                "",
-                "**关键：**",
-                "- **不要重复已覆盖的分析** — state 中已有 key 的 Agent 产出不要重做",
-                "- 如果用户提到新的品类/ASIN，检查 DB 是否已有数据",
-                "- 同一 Agent 可以多次调用，每次聚焦不同 sub_task",
-            ]
-        elif intent_type == IntentType.MULTI_DIM:
-            # 多维分析：一次性覆盖多个维度
-            role_lines = [
-                "## 你的角色",
-                "你是总指挥（Multi-Dimension Orchestrator）。用户希望一次性从多个角度分析。",
-                "",
-                "**工作流程：**",
-                "1. **了解数据范围** — 看「当前数据状态」了解有哪些商品数据可用",
-                "2. **规划流水线** — 确定需要哪些角度、按什么顺序调对应的 Agent",
-                "3. **按序调度** — 先做完一个分析维度，再看结果决定是否继续下一维度",
-                "4. **综合汇总** — 所有维度完成后输出综合性报告",
-                "",
-                "**推荐分析流水线（由你灵活决定覆盖哪些维度）：**",
-                "1. 概览阶段: discover_data 了解数据全景，或 market_analyst 做初步概览",
-                "2. 评论分析: review_analyzer（评分定位、情感、客户需求）",
-                "3. 流量分析: traffic_analyzer（BSR、价格竞争、品类竞争度）",
-                "4. 竞品分析: competitor_analyst（品牌对比、Listing 质量）",
-                "5. 综合评估: opportunity_judge（综合评分）",
-                "6. 报告生成: briefing_generator（最终报告）",
-            ]
-        elif intent_type == IntentType.PRODUCT_RESEARCH:
-            # 单品深度调研
-            role_lines = [
-                "## 你的角色",
-                "你是产品调研员（Product Researcher）。负责对特定产品进行深度调研评估。",
-                "",
-                "**工作流程：**",
-                "1. **获取数据** — 调 market_analyst 获取该产品的完整数据",
-                "2. **多角度评估** — 调 review_analyzer（口碑）、traffic_analyzer（市场表现）、opportunity_judge（综合评分）",
-                "3. **补充分析** — 如有需要，调 search_web 搜索行业新闻或外部评价",
-                "4. **汇总评估** — 输出调研结论",
-                "",
-                "**关键：**",
-                "- DB 中有 180+ 字段的完整产品数据，优先使用",
-                "- search_web 可用于搜索行业新闻或该品牌的外部信息",
-            ]
-        elif intent_type == IntentType.COMPETITOR_WATCH:
-            # 竞品监控
-            role_lines = [
-                "## 你的角色",
-                "你是竞品监控员（Competitor Monitor）。负责对比分析竞品之间的差异。",
-                "",
-                "**工作流程：**",
-                "1. **了解数据** — 看「当前数据状态」了解有哪些竞品 ASIN/品牌数据可用",
-                "2. **对比分析** — 调 competitor_analyst 做品牌/产品对比",
-                "3. **深度分析** — 调 market_analyst 观察市场影响，review_analyzer 分析口碑差异",
-                "4. **输出结论** — 各竞品的优劣势、定位差异、市场机会",
-                "",
-                "**关键：**",
-                "- 关注差异化维度：定价、评分、BSR、卖家来源、品牌定位",
-                "- 可以调 search_web 搜索行业格局的第三方报告",
-            ]
-        else:
-            # GENERAL_QUERY 或未知：通用探索
-            role_lines = [
-                "## 你的角色",
-                "你是探索助手（General Assistant）。用户的需求不明确，需要你先了解数据再做规划。",
-                "",
-                "**工作流程：**",
-                "1. **了解可用数据** — 看「当前数据状态」了解 DB 有什么",
-                "2. **探索阶段** — 调 discover_data 看看有什么品类/商品可以分析",
-                "3. **规划路径** — 根据探索结果，决定是否需要进一步分析",
-                "4. **执行并回答** — 如果数据不够，可以调 search_web 补充",
-                "",
-                "**关键：**",
-                "- 不要预设分析方向，先 discover_data 探索可用数据",
-                "- 如果 DB 无匹配数据，调 search_web 搜索外部信息",
-                "- 给出中文结构化回答",
-            ]
+## 自检确认
+- 回答了什么问题：XXX
+- 关键数据支撑：XXX（具体指标，列出支撑结论的数据点）
+- 是否修正了之前的结论：是/否（如修正请说明原因和依据）
 
-        # 组装 role section
-        lines = role_lines + ["", data_principle, "", sub_task_guide]
+### 结论置信度标注规则
+- **不标注**：有 ≥3 个独立数据点支撑的结论
+- **【中置信度】**：有 1-2 个数据点支撑的结论
+- **【低置信度】**：无直接数据支撑，为推理/推断
+- 标注放在结论文字末尾，如"产品销量呈上升趋势【高置信度】\""""
+
+        lines = role_lines + ["", data_principle, "", sub_task_guide, "", self_check_section]
         return "\n".join(lines)
 
     # ════════════════════════════════════════════════════════════════

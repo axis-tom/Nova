@@ -96,6 +96,7 @@ class DecisionTracer:
         self.agent_calls: List[AgentCallRecord] = []
         self.evidence_used: List[str] = []
         self.final_answer: str = ""
+        self.direct_render: Dict[str, Any] = {}  # focus_entity 跳过 LLM 直接渲染路径
 
         self._start_time = time.time()
         self._tool_timers: Dict[str, float] = {}
@@ -326,6 +327,34 @@ class DecisionTracer:
             },
         }
 
+    # ── 跳过 LLM 直接渲染路径 ──
+
+    def capture_direct_render(
+        self,
+        reason: str,
+        entity_count: int,
+        asins: List[str],
+        rendered_fields: Optional[List[str]] = None,
+    ) -> None:
+        """记录 focus_entity 不走 LLM 直接渲染的路径"""
+        self.direct_render = {
+            "reason": reason,
+            "entity_count": entity_count,
+            "asins": asins,
+            "rendered_fields": rendered_fields or [],
+        }
+        self.handoffs.append(HandoffRecord(
+            from_to="Phase0→_skip_llm_and_render",
+            what=f"意图 focus_entity + 数据已就绪 → 跳过 LLM，直接渲染 {entity_count} 个实体",
+            detail={
+                "entity_count": entity_count,
+                "asins": asins,
+                "rendered_fields_count": len(rendered_fields or []),
+                "rendered_fields": (rendered_fields or [])[:20],
+                "render_path": "_render_product_data() → 结构化中文文本 → yield response_chunk",
+            },
+        ))
+
     # ── 汇总 ──
 
     def finalize(self, final_answer: str) -> None:
@@ -392,6 +421,8 @@ class DecisionTracer:
                 if ac.sub_task:
                     print(f"       task: {ac.sub_task[:80]}")
                 print(f"       从DB加载了 {ac.products_loaded} 个商品 | ASIN: {', '.join(ac.asins_loaded[:5])}")
+                if ac.evidence_used:
+                    print(f"       证据字段: {', '.join(ac.evidence_used[:8])}")
                 if ac.custom_prompt_preview:
                     print(f"       PromptEngine指令: {ac.custom_prompt_preview[:120]}")
 
@@ -400,6 +431,16 @@ class DecisionTracer:
             print(f"\n  📊 State 最终状态 ({self._state_data_snapshot.get('keys_数量', 0)}个key):")
             for k, v in self._state_data_snapshot.get("size_of_each", {}).items():
                 print(f"     {k}: {v}")
+
+        # 跳过 LLM 直接渲染
+        if self.direct_render:
+            dr = self.direct_render
+            print(f"\n  ⏩ 跳过 LLM 直接渲染:")
+            print(f"     原因: {dr.get('reason', '?')}")
+            print(f"     渲染 {dr.get('entity_count', 0)} 个实体: {', '.join(dr.get('asins', [])[:5])}")
+            print(f"     渲染字段数: {dr.get('rendered_fields_count', 0)}")
+            if dr.get('rendered_fields'):
+                print(f"     字段: {', '.join(dr['rendered_fields'][:10])}")
 
         print(f"\n  ⏱  {elapsed_s}s  |  最终回答: {len(self.final_answer)} 字符")
         print(f"{sep}\n")
@@ -467,6 +508,8 @@ class DecisionTracer:
             },
 
             "state_最终状态": self._state_data_snapshot,
+
+            "q7_跳过了LLM直接渲染": self.direct_render or {"status": "未触发（走了正常LLM路径）"},
 
             "元数据": {
                 "handoff_count": len(self.handoffs),

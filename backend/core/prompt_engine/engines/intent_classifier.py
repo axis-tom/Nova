@@ -76,7 +76,9 @@ _LLM_CLASSIFY_PROMPT = """你是一个意图理解助手。分析用户关于亚
 }}
 
 规则：
-- 如果 entities 中包含 ASIN（B0xxx 格式），说明用户是在问具体产品。此时 **category_hint 必须留空**，不要再编造任何文本。
+- 如果 entities 中包含 ASIN（B0xxx 格式），说明用户是在问具体产品。
+  * 如果用户只是**查询/查看/显示**某个产品的基本数据信息（关键词：数据、信息、详情、内容、基本情况、看看、查一下），不涉及分析/调研/评估 → intent_type 设为 "focus_entity"
+  * 如果用户问的是深度调研/市场表现/竞争力/评估机会 → intent_type 设为 "product_research"
 - 如果 entities 中只有品类名/品牌名（无 ASIN），category_hint 如实填写。
 - paraphrased_intent: 要中立，如"用户想了解蓝牙耳机类目各品牌的表现"或"用户查询 ASIN B0xxx 的产品数据"
 - entities: 提取品牌名、品类名、ASIN

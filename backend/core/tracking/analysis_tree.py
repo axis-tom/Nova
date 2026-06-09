@@ -162,6 +162,70 @@ class AnalysisTreeManager:
 
     # ── 回溯 ──
 
+    def retract_invocation(
+        self, conv_id: str, invocation_id: str, reason: str = "", retracted_keys: Optional[List[str]] = None
+    ) -> Optional[str]:
+        """标记 invocation 为已撤销 + 级联撤销下游依赖
+
+        Args:
+            conv_id: 会话 ID
+            invocation_id: 目标 invocation ID
+            reason: 撤销原因
+            retracted_keys: 该 invocation 产出的 state data keys（用于 state_summary 过滤）
+        """
+        tree = self.get_tree(conv_id)
+        if not tree:
+            return None
+        inv = tree.find_invocation(invocation_id)
+        if not inv:
+            return None
+        inv.status = "retracted"
+        inv.error_message = f"撤销原因: {reason}" if reason else "被用户/系统撤销"
+        if retracted_keys:
+            inv.retracted_keys = retracted_keys
+        target_started = inv.started_at
+        cascaded = []
+        for branch in tree.branches.values():
+            for later_inv in branch.invocations:
+                if later_inv.invocation_id == invocation_id:
+                    continue
+                should_retract = False
+                if later_inv.parent_invocation_id == invocation_id:
+                    should_retract = True
+                elif target_started and later_inv.started_at and later_inv.started_at >= target_started:
+                    should_retract = True
+                if should_retract:
+                    later_inv.status = "retracted"
+                    later_inv.error_message = f"级联撤销: 上游 {invocation_id} 已撤销"
+                    cascaded.append(later_inv.invocation_id)
+        self._emit(conv_id, {
+            "type": "tree_node_status",
+            "data": {"invocation_id": invocation_id, "status": "retracted", "reason": reason or "用户/系统撤销"},
+        })
+        for cid in cascaded:
+            self._emit(conv_id, {
+                "type": "tree_node_status",
+                "data": {"invocation_id": cid, "status": "retracted", "reason": f"级联撤销: 上游 {invocation_id} 已撤销"},
+            })
+        logger.info(f"[AnalysisTree] retracted {invocation_id} + {len(cascaded)} cascaded in {conv_id}")
+        return invocation_id
+
+    def get_retracted_invocations(self, conv_id: str) -> List[AgentInvocation]:
+        """返回所有状态为 retracted 的 invocation"""
+        tree = self.get_tree(conv_id)
+        if not tree:
+            return []
+        retracted = []
+        for branch in tree.branches.values():
+            for inv in branch.invocations:
+                if inv.status == "retracted":
+                    retracted.append(inv)
+        return retracted
+
+    def get_retracted_invocation_ids(self, conv_id: str) -> set:
+        """返回所有被撤销的 invocation_id 集合"""
+        return {inv.invocation_id for inv in self.get_retracted_invocations(conv_id)}
+
     def backtrack(
         self, conv_id: str, invocation_id: str
     ) -> Optional[dict]:

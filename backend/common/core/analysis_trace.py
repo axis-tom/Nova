@@ -84,16 +84,17 @@ class AgentInvocation:
     params: dict
     dimensions: list
     result_summary: str
-    status: str                     # "running" | "completed" | "error"
+    status: str                     # "running" | "completed" | "error" | "retracted"
     conversation_round: int
     parent_invocation_id: Optional[str] = None
     checkpoint_id: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     error_message: Optional[str] = None
+    retracted_keys: List[str] = field(default_factory=list)  # 撤销时记录该 invocation 产出的 state keys
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "invocation_id": self.invocation_id,
             "agent_name": self.agent_name,
             "branch_label": self.branch_label,
@@ -108,6 +109,9 @@ class AgentInvocation:
             "completed_at": self.completed_at,
             "error_message": self.error_message,
         }
+        if self.retracted_keys:
+            d["retracted_keys"] = self.retracted_keys
+        return d
 
 
 @dataclass
