@@ -77,8 +77,14 @@ _LLM_CLASSIFY_PROMPT = """你是一个意图理解助手。分析用户关于亚
 
 规则：
 - 如果 entities 中包含 ASIN（B0xxx 格式），说明用户是在问具体产品。
-  * 如果用户只是**查询/查看/显示**某个产品的基本数据信息（关键词：数据、信息、详情、内容、基本情况、看看、查一下），不涉及分析/调研/评估 → intent_type 设为 "focus_entity"
-  * 如果用户问的是深度调研/市场表现/竞争力/评估机会 → intent_type 设为 "product_research"
+  * 先判断用户是否指定了**具体的分析方向**。如果涉及以下内容 —— 即使包含"查/看/查询" —— 也不走 focus_entity：
+    - 趋势/历史/变化/走势/涨跌（→ product_research 或 deepen）
+    - 每月/每周/年度/时间段/最近N天（→ 需调 get_trends，不属于 focus_entity）
+    - 对比/比较/哪个好（→ competitor_watch）
+    - 分析/调研/评估/市场/竞争力/机会/评分（→ product_research）
+  * 如果用户只是**纯查询/查看/显示**某个产品的基本数据信息（关键词仅限于：数据、信息、详情、内容、基本情况、看看），
+    不包含上述任何分析方向 → intent_type 设为 "focus_entity"
+  * 用户问的是深度调研/市场表现/竞争力/评估机会 → intent_type 设为 "product_research"
 - 如果 entities 中只有品类名/品牌名（无 ASIN），category_hint 如实填写。
 - paraphrased_intent: 要中立，如"用户想了解蓝牙耳机类目各品牌的表现"或"用户查询 ASIN B0xxx 的产品数据"
 - entities: 提取品牌名、品类名、ASIN

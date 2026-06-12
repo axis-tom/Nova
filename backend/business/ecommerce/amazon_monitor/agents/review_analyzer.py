@@ -425,7 +425,7 @@ class AmazonReviewAnalyzerAgent(Agent):
     async def _load_from_local_db(
         self, asins: List[str] = None, category: str = None, domain: str = "US",
     ) -> List[Dict]:
-        """从 amazon_products 表加载完整商品数据（全字段 + 33 推导域 + 子表）"""
+        """从 amazon_products 表加载完整商品数据。DB 没有 → 自动通过 API 冷启动采集。"""
         products = await load_products_from_db(
             asins=asins, category=category, domain=domain, with_derived=True,
         )
@@ -436,8 +436,24 @@ class AmazonReviewAnalyzerAgent(Agent):
                 f"[ReviewAnalyzer] 从本地表加载 {n} 个商品（{source}），"
                 f"每商品 {len(products[0])} 个字段/推导域"
             )
-        else:
-            logger.info(f"[ReviewAnalyzer] 本地表未找到商品（{source}）")
+            return products
+
+        # ★ DB 无数据 → 走 DataProvider 冷启动
+        logger.info(f"[ReviewAnalyzer] 本地表未找到商品（{source}），触发冷启动...")
+        if asins:
+            from backend.aqueduct.data_provider import DataProvider
+            provider = DataProvider()
+            for a in asins[:10]:
+                try:
+                    await provider.get_product_blocking(a, domain)
+                except Exception:
+                    pass
+            products = await load_products_from_db(
+                asins=asins, domain=domain, with_derived=True,
+            )
+            if products:
+                logger.info(f"[ReviewAnalyzer] 冷启动后加载 {len(products)} 个商品")
+
         return products
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:

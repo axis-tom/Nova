@@ -114,6 +114,9 @@
         <!-- 简报可视化图表（兼容旧数据格式） -->
         <BriefingCard v-if="briefingData" :data="briefingData" />
 
+        <!-- 决策卡 -->
+        <DecisionCard v-if="decisionCardData" :data="decisionCardData" />
+
         <!-- 状态提示 -->
         <div v-if="currentStatus && !streamingContent" class="status-indicator">
           <el-icon class="is-loading"><Loading /></el-icon>
@@ -200,6 +203,7 @@ import {
 import { useAgentChatStore } from '@/state/agentChat'
 import CockpitPanel from '@/interface/components/cockpit/CockpitPanel.vue'
 import BriefingCard from '@/interface/components/charts/BriefingCard.vue'
+import DecisionCard from '@/interface/components/charts/DecisionCard.vue'
 
 const store = useAgentChatStore()
 
@@ -265,6 +269,7 @@ const streamingContent = ref('')
 const currentStatus = ref('')
 const conversationId = ref('')
 const briefingData = ref<Record<string, any> | null>(null)
+const decisionCardData = ref<Record<string, any> | null>(null)
 const messages = ref<ChatMessage[]>([])
 
 // ── 多维驾驶舱状态 ──
@@ -371,6 +376,16 @@ function handleSSEEvent(event: SSEEvent) {
     case 'tool_result':
       currentStatus.value = data as string
       break
+
+    case 'structured_data': {
+          const sd = data as unknown as { pipeline: string; structured: Record<string, unknown>; llm_commentary: string }
+          // 提取决策支持数据供 DecisionCard 使用
+          if (sd.structured?.decision_support) {
+            decisionCardData.value = sd.structured.decision_support as Record<string, unknown>
+            decisionCardData.value._deterministic_summary = extractDeterministicSummary(sd.structured)
+          }
+          break
+        }
 
     case 'start_response':
       currentStatus.value = ''
@@ -510,6 +525,37 @@ function handleCockpitFollowUp(agentName: string, _dimId: string) {
 function handleCockpitSupplement(agentName: string, _dimId: string) {
   // 可扩展：触发文件上传
   ElMessage.info('补充数据功能开发中')
+}
+
+// ── 决策卡辅助函数 ──
+
+function extractDeterministicSummary(structured: Record<string, unknown>): Record<string, unknown> {
+  const det = (structured.deterministic || {}) as Record<string, unknown>
+  const vol = (det.market_volume || {}) as Record<string, unknown>
+  const bconc = (det.brand_concentration || {}) as Record<string, unknown>
+  const review = (det.review_barrier || {}) as Record<string, unknown>
+  const health = (det.rating_health || {}) as Record<string, unknown>
+  const trends = (det.trends || {}) as Record<string, unknown>
+  const priceBands = (det.price_bands || {}) as Record<string, unknown>
+  const seller = (det.seller_composition || {}) as Record<string, unknown>
+  return {
+    total_monthly_units: vol.total_monthly_units,
+    estimated_monthly_revenue: vol.estimated_monthly_revenue,
+    product_count: vol.product_count,
+    avg_price: vol.avg_price,
+    top3_share: bconc.top_3_market_share_pct,
+    total_brands: bconc.total_brands,
+    concentration_label: bconc.concentration,
+    review_barrier: review.review_barrier,
+    avg_review_count: review.avg_review_count,
+    median_review_count: review.median_review_count,
+    rating_health_score: health.rating_health_score,
+    avg_rating: health.avg_rating,
+    market_direction: (trends as any).bsr?.market_direction,
+    fba_pct: seller.fba_pct,
+    entry_barrier: bconc.entry_barrier,
+    price_bands: priceBands,
+  }
 }
 
 // ── 生命周期 ──

@@ -462,12 +462,61 @@ def _extract_opportunity_judge(data: dict) -> Optional[dict]:
 
 @_register("market_analyst")
 def _extract_market_analyst(data: dict) -> Optional[dict]:
-    """市场分析 → 品牌份额、价格带、评论壁垒、评分健康度、BSR 趋势、淡旺季"""
+    """市场分析 → 品牌份额、价格带、评论壁垒、评分健康度、BSR 趋势、淡旺季 + 决策支持"""
     market = data.get("market_analysis_result")
     if not market or not isinstance(market, dict):
         return None
 
     dimensions = []
+
+    # ★ 新增：决策支持（市场进入评分 + 推荐）
+    decision = market.get("decision_support", {})
+    if decision:
+        # 决策支持不是图表，以 score_card 类型存在
+        # 这里仍用现有图表范式来渲染，但前端可识别 recommendation 特殊展示
+        score = decision.get("market_entry_score", 50)
+        label = decision.get("label", "未知")
+        summary = decision.get("summary", "")
+        positives = decision.get("positives", [])
+        negatives = decision.get("negatives", [])
+        routes = decision.get("entry_routes", [])
+
+        # 构建一个"决策雷达"维度
+        radar_items = [
+            {"name": p[:30], "value": 1} for p in positives[:3]
+        ] + [
+            {"name": n[:30], "value": -1} for n in negatives[:3]
+        ]
+
+        dims_meta = {
+            "score": score,
+            "label": label,
+            "recommendation": decision.get("recommendation", ""),
+            "summary": summary,
+            "positives": positives[:5],
+            "negatives": negatives[:5],
+            "entry_routes": routes,
+        }
+
+        status = "sufficient" if score >= 55 else "moderate" if score >= 35 else "insufficient"
+        dimensions.append(
+            _dim(
+                name=f"市场进入评分: {score}分 - {label}",
+                status=status,
+                percent=score,
+                # 用一个特殊的"decision"类型，前端可识别为决策卡，不加图表
+                charts={
+                    "decision": dims_meta,  # 前端识别 decision 类型特殊渲染
+                    "bar": _bar_chart(
+                        [p[:25] for p in positives[:5] + negatives[:3]],
+                        [{"name": "正向/负向因子", "data": [5] * len(positives[:5]) + [-3] * len(negatives[:3])}],
+                        summary,
+                    ),
+                },
+                default_chart="decision",
+                message=f"评分 {score}/100 — {label}",
+            )
+        )
 
     # 维度1: 品牌份额
     brand_analysis = market.get("brand_analysis", {})

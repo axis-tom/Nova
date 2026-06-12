@@ -22,7 +22,7 @@
     </div>
 
     <!-- Chart type switcher (only available types) -->
-    <div v-if="availableCharts.length > 1" class="chart-switcher">
+    <div v-if="availableCharts.length > 1 && !isDecisionCard" class="chart-switcher">
       <button
         v-for="ct in availableCharts"
         :key="ct"
@@ -32,6 +32,33 @@
       >
         {{ chartLabel(ct) }}
       </button>
+    </div>
+
+    <!-- Decision Card (不是图表，是决策卡片) -->
+    <div v-if="isDecisionCard" class="decision-area">
+      <div class="decision-score" :class="decisionScoreClass">
+        <span class="score-number">{{ decisionMeta.score }}</span>
+        <span class="score-label">{{ decisionMeta.label }}</span>
+      </div>
+      <p class="decision-summary">{{ decisionMeta.summary }}</p>
+
+      <div v-if="decisionMeta.positives && decisionMeta.positives.length" class="decision-factors">
+        <div class="factor-group-title">✅ 有利因素</div>
+        <div v-for="p in decisionMeta.positives" :key="p" class="factor-item positive">{{ p }}</div>
+      </div>
+      <div v-if="decisionMeta.negatives && decisionMeta.negatives.length" class="decision-factors">
+        <div class="factor-group-title">⚠️ 风险因素</div>
+        <div v-for="n in decisionMeta.negatives" :key="n" class="factor-item negative">{{ n }}</div>
+      </div>
+
+      <div v-if="decisionMeta.entry_routes && decisionMeta.entry_routes.length" class="entry-routes">
+        <div class="factor-group-title">🎯 推荐切入路径</div>
+        <div v-for="(r, i) in decisionMeta.entry_routes" :key="i" class="route-item">
+          <strong>{{ r.route }}</strong>
+          <span class="route-meta">{{ r.type }} · 难度 {{ r.effort }} · 潜力 {{ r.potential }}</span>
+          <p class="route-reason">{{ r.rationale }}</p>
+        </div>
+      </div>
     </div>
 
     <!-- ECharts -->
@@ -99,12 +126,37 @@ const availableCharts = computed(() => {
   return types
 })
 
+// ── 决策卡支持（业务规则引擎输出） ──
+const isDecisionCard = computed(() => {
+  return currentChart.value === 'decision' && !!(props.dimension.charts as any)?.decision
+})
+
+const decisionMeta = computed(() => {
+  return ((props.dimension.charts as any)?.decision || {}) as {
+    score: number
+    label: string
+    recommendation: string
+    summary: string
+    positives: string[]
+    negatives: string[]
+    entry_routes: { route: string; type: string; effort: string; potential: string; rationale: string }[]
+  }
+})
+
+const decisionScoreClass = computed(() => {
+  const rec = decisionMeta.value.recommendation
+  if (rec === 'strong_buy' || rec === 'buy') return 'score-positive'
+  if (rec === 'hold') return 'score-neutral'
+  return 'score-negative'
+})
+
 const chartLabels: Record<string, string> = {
   bar: '柱状',
   pie: '饼图',
   line: '折线',
   scatter: '散点',
   hist: '直方',
+  decision: '决策卡',
 }
 
 function chartLabel(type: string): string {
@@ -226,6 +278,99 @@ function chartLabel(type: string): string {
   background: #f8fafc;
   border-radius: 6px;
 }
+
+/* ── 决策卡样式（业务规则引擎输出） ── */
+.decision-area {
+  padding: 8px 0;
+}
+.decision-score {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.decision-score.score-positive {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+.decision-score.score-neutral {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+.decision-score.score-negative {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+.score-number {
+  font-size: 32px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1;
+}
+.score-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+}
+.decision-summary {
+  font-size: 13px;
+  color: #475569;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.decision-factors {
+  margin-bottom: 10px;
+}
+.factor-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+.factor-item {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+  line-height: 1.4;
+}
+.factor-item.positive {
+  color: #065f46;
+  background: #ecfdf5;
+}
+.factor-item.negative {
+  color: #991b1b;
+  background: #fef2f2;
+}
+.entry-routes {
+  margin-top: 8px;
+}
+.route-item {
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.route-item strong {
+  font-size: 13px;
+  color: #1e293b;
+  display: block;
+  margin-bottom: 2px;
+}
+.route-meta {
+  font-size: 11px;
+  color: #64748b;
+}
+.route-reason {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+/* ── 结束决策卡样式 ── */
 
 .dim-actions {
   display: flex;

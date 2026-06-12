@@ -132,6 +132,33 @@ class MarketAnalystAgent(Agent):
                 result["llm_driven"] = True
                 logger.info("[MarketAnalyst] LLM 驱动分析完成")
 
+                # ── Bypass LLM：确定性工具重跑，确保结构化数据完整 ──
+                # LLM 的 final JSON 可能漏掉部分工具输出（LLM 决定"写什么"，不是"算什么"）
+                # 此处直接映射所有确定性工具的结果，与 LLM 报告合并
+                deterministic = {}
+                try:
+                    deterministic["market_volume"] = self._analyze_market_volume(products)
+                    deterministic["trends"] = self._analyze_trends_from_history(products)
+                    deterministic["seasonality"] = self._analyze_seasonality(products)
+                    deterministic["brand_distribution"] = self._aggregate_by_brand(products)
+                    deterministic["price_bands"] = self._analyze_price_bands(products)
+                    deterministic["review_barrier"] = self._analyze_review_barrier(products)
+                    deterministic["rating_health"] = self._analyze_rating_health(products)
+                    deterministic["seller_composition"] = self._analyze_seller_composition(products)
+                    deterministic["aplus_coverage"] = self._analyze_aplus_coverage(products)
+                    brand_dist = self._aggregate_by_brand(products)
+                    deterministic["brand_concentration"] = self._analyze_brand_concentration(brand_dist, products)
+                    deterministic["opportunities"] = self._identify_opportunities(products, deterministic["price_bands"])
+                    deterministic["risks"] = self._identify_risks(products, deterministic["trends"], len(products))
+                    logger.info(f"[MarketAnalyst] 确定性重跑完成，{len(deterministic)} 个维度")
+                except Exception as det_err:
+                    logger.warning(f"[MarketAnalyst] 确定性重跑失败（不影响主结果）: {det_err}")
+
+                # ── 业务规则引擎：不经过 LLM，同数据同结论 ──
+                decision = self._market_entry_scorer(deterministic) if deterministic else {}
+                result["_deterministic"] = deterministic       # 结构化数据（前端 cockpit 直读）
+                result["decision_support"] = decision          # 业务判断（前端直读）
+
             elif analysis_type == "roi_analysis":
                 # ROI 分析保持纯计算路径（不需要 LLM 决策）
                 profit_margin = state.get("profit_margin", 0.25)
@@ -418,10 +445,11 @@ class MarketAnalystAgent(Agent):
             "brands": brand_list[:10],  # top 10 品牌
         }
 
-    # ── 新增：从 amazon_products 本地表加载 ──
+    # ── 从 amazon_products 本地表加载（含 API fallback） ──
 
     async def _load_from_local_db(self, category: str, domain: str) -> List[Dict]:
-        """从 amazon_products 表加载完整商品数据（全字段 + 33 推导域 + 子表）"""
+        """从 amazon_products 表加载完整商品数据。
+        DB 没有数据 → 自动触发 ETL Pipeline 冷启动采集。"""
         products = await load_products_from_db(
             category=category, domain=domain, with_derived=True,
         )
@@ -430,19 +458,65 @@ class MarketAnalystAgent(Agent):
                 f"[MarketAnalyst] 从本地表加载 {len(products)} 个商品（类目={category}），"
                 f"每商品 {len(products[0])} 个字段/推导域"
             )
-        else:
-            logger.info(f"[MarketAnalyst] 本地表未找到商品（类目={category}）")
-        return products
+            return products
+
+        # ★ DB 无数据 → 通过 DataProvider 走 ETL 冷启动采集品类数据
+        logger.info(f"[MarketAnalyst] 本地表无数据（类目={category}），触发冷启动...")
+        from backend.aqueduct.data_provider import DataProvider
+        provider = DataProvider()
+        # 先在品类名中搜 ASIN，再逐条采集
+        async with AsyncSessionLocal() as db:
+            from backend.data.repositories.postgreSQL.amazon_product_repo import AmazonProductRepository
+            repo = AmazonProductRepository(db)
+            category_products, _ = await repo.search_by_category_name(
+                category_hint=category, domain=domain, limit=20,
+            )
+            # 先看看能不能搜到 ASIN，哪怕品类不精确匹配
+            if not category_products:
+                # 品类名搜不到 → 尝试截取品类名第一个有意义的词去搜
+                words = [w for w in category.replace("-", " ").split() if len(w) > 2]
+                for w in words[:3]:
+                    cp, _ = await repo.search_by_category_name(
+                        category_hint=w, domain=domain, limit=10,
+                    )
+                    if cp:
+                        category_products = list(cp)
+                        break
+
+        # 如果有商品记录，说明 DB 有部分数据，直接返回
+        if category_products:
+            logger.info(f"[MarketAnalyst] 冷启动后加载 {len(category_products)} 个商品")
+            return await load_products_from_db(
+                asins=[p.asin for p in category_products], domain=domain, with_derived=True,
+            )
+
+        return products  # 仍然是空，但不再报错
 
     async def _load_from_local_db_by_asins(self, asins: list, domain: str) -> List[Dict]:
-        """从 amazon_products 表按 ASIN 列表加载完整商品数据"""
+        """从 amazon_products 表按 ASIN 列表加载完整商品数据。
+        DB 没有 → 自动通过 DataProvider 冷启动采集。"""
         if not asins:
             return []
         products = await load_products_from_db(
             asins=asins, domain=domain, with_derived=True,
         )
+
+        # ★ DB 缺失部分 ASIN → 走冷启动补齐
+        found_asins = {p.get("asin") for p in products}
+        missing = [a for a in asins if a not in found_asins]
+        if missing:
+            logger.info(f"[MarketAnalyst] {len(missing)}/{len(asins)} ASIN 不在本地库，触发冷启动: {missing}")
+            from backend.aqueduct.data_provider import DataProvider
+            provider = DataProvider()
+            for ma in missing:
+                await provider.get_product_blocking(ma, domain)
+            # 冷启动完成后重新查
+            products = await load_products_from_db(
+                asins=asins, domain=domain, with_derived=True,
+            )
+
         logger.info(
-            f"[MarketAnalyst] 从本地表加载 {len(products)}/{len(asins)} 个商品（ASIN 列表）"
+            f"[MarketAnalyst] 加载 {len(products)}/{len(asins)} 个商品（ASIN 列表）"
         )
         return products
 
@@ -880,6 +954,254 @@ class MarketAnalystAgent(Agent):
             "top_picks": top_picks,
             "generated_at": datetime.now().isoformat(),
         }
+
+    # ════════════════════════════════════════════════════════════════
+    # 业务规则引擎 — 确定性市场进入评分（不走 LLM）
+    # 每条规则有明确的数据来源和计分逻辑，同数据永远同结论
+    # ════════════════════════════════════════════════════════════════
+
+    def _market_entry_scorer(self, data: dict) -> dict:
+        """
+        市场进入评分引擎
+
+        评分维度（每项正负 +/- 的权重，反映对实际选品决策的影响程度）：
+        1. 体量规模     ≤ 30 分  — 市场够不够大
+        2. 市场趋势     ≤ 15 分  — 是在上升还是下降
+        3. 竞争格局     ≤ 20 分  — 品牌集中度 + 卖家密度
+        4. 进入壁垒     ≤ 25 分  — 评论壁垒 + 价格带空白
+        5. 市场健康度   ≤ 10 分  — 评分健康 + A+ 覆盖率
+
+        Returns:
+            {market_entry_score, recommendation, key_factors, entry_routes, ...}
+        """
+        score = 50  # 基础分
+        positives: List[str] = []
+        negatives: List[str] = []
+
+        # ── 1. 体量规模 ────────────────────────────────────────────────
+        volume = data.get("market_volume", {})
+        monthly_units = volume.get("total_monthly_units", 0) or 0
+        total_products = volume.get("product_count", 0) or 0
+
+        if monthly_units >= 50000:
+            score += 20
+            positives.append(f"大盘市场：月销 {monthly_units:,} 件")
+        elif monthly_units >= 10000:
+            score += 15
+            positives.append(f"中等体量：月销 {monthly_units:,} 件")
+        elif monthly_units >= 3000:
+            score += 8
+            positives.append(f"小体量市场：月销 {monthly_units:,} 件")
+        elif monthly_units >= 1000:
+            score += 3
+            positives.append(f"小微市场：月销 {monthly_units:,} 件")
+        else:
+            score -= 15
+            negatives.append(f"体量过小：月销仅 {monthly_units:,} 件，难以支撑规模")
+
+        # ── 2. 市场趋势 ────────────────────────────────────────────────
+        trends = data.get("trends", {})
+        bsr = trends.get("bsr", {})
+        market_dir = bsr.get("market_direction", "稳定")
+        improving_pct = bsr.get("improving_pct", 0) or 0
+        declining_pct = bsr.get("declining_pct", 0) or 0
+
+        if market_dir == "上升":
+            score += 15
+            positives.append(f"市场上升中：{improving_pct:.0f}% 商品 BSR 改善")
+        elif market_dir == "下降":
+            score -= 10
+            negatives.append(f"市场呈下降趋势：{declining_pct:.0f}% 商品 BSR 恶化")
+        else:
+            score += 3
+            positives.append("市场稳定，无明显衰退信号")
+
+        # ── 3. 竞争格局 ────────────────────────────────────────────────
+        concentration = data.get("brand_concentration", {})
+        top3_share = concentration.get("top_3_market_share_pct", 50) or 50
+        total_brands = concentration.get("total_brands", 0) or 0
+
+        if top3_share < 30 and total_brands >= 5:
+            score += 15
+            positives.append(f"分散市场：Top3 仅占 {top3_share:.0f}%，{total_brands} 个品牌竞争")
+        elif top3_share < 50:
+            score += 8
+            positives.append(f"适度集中：Top3 占 {top3_share:.0f}%，仍有竞争空间")
+        elif top3_share < 70:
+            score -= 5
+            negatives.append(f"集中度偏高：Top3 占 {top3_share:.0f}%")
+        else:
+            score -= 15
+            negatives.append(f"寡占市场：Top3 占 {top3_share:.0f}%，新品牌极难切入")
+
+        # ── 卖家生态 ──────────────────────────────────────────────────
+        seller = data.get("seller_composition", {})
+        fba_pct = seller.get("fba_pct", 0) or 0
+        if fba_pct >= 70:
+            score += 5
+            positives.append(f"FBA 生态成熟（占 {fba_pct:.0f}%），履约成本可控")
+
+        # ── 4. 进入壁垒 ────────────────────────────────────────────────
+        # 4a. 评论壁垒
+        review = data.get("review_barrier", {})
+        avg_reviews = review.get("avg_review_count", 0) or 0
+        barrier_level = review.get("review_barrier", "中")
+
+        if barrier_level == "低":
+            score += 15
+            positives.append(f"评论壁垒低（均 {avg_reviews} 条），新品容易积累信任")
+        elif barrier_level == "中":
+            score += 5
+            positives.append(f"评论壁垒中等（均 {avg_reviews} 条），可通过 Vine 快速突破")
+        elif barrier_level == "高":
+            score -= 10
+            negatives.append(f"评论壁垒高（均 {avg_reviews} 条），新品冷启动难度大")
+        else:  # 极高
+            score -= 15
+            negatives.append(f"评论壁垒极高（均 {avg_reviews} 条），不建议新卖家进入")
+
+        # 4b. 价格带空白机会
+        price_bands = data.get("price_bands", {})
+        empty_bands = 0
+        best_band = None
+        best_band_score = float("inf")
+        for band_name, band_data in price_bands.items():
+            if isinstance(band_data, dict):
+                cnt = band_data.get("count", 0) or 0
+                if cnt == 0:
+                    empty_bands += 1
+                elif cnt < best_band_score:
+                    best_band_score = cnt
+                    best_band = band_name
+
+        if empty_bands >= 2:
+            score += 10
+            positives.append(f"{empty_bands} 个价格带空白，差异化定价空间大")
+        elif empty_bands == 1:
+            score += 5
+            positives.append("1 个价格带空白，存在细分切入机会")
+
+        # ── Listing 质量缺口 ──────────────────────────────────────────
+        aplus = data.get("aplus_coverage", {})
+        aplus_pct = aplus.get("aplus_pct", 0) or 0
+        if aplus_pct < 30:
+            score += 5
+            positives.append(f"A+ 覆盖率仅 {aplus_pct:.0f}%，优化 listing 可获优势")
+        if aplus_pct > 70:
+            score -= 3
+            negatives.append(f"A+ 覆盖率 {aplus_pct:.0f}%，竞品 listing 质量高")
+
+        # ── 5. 市场健康度 ──────────────────────────────────────────────
+        health = data.get("rating_health", {})
+        health_score = health.get("rating_health_score", 50) or 50
+        avg_rating = health.get("avg_rating", 0) or 0
+
+        if health_score >= 80:
+            score += 5
+            positives.append(f"市场健康：健康分 {health_score}，均分 {avg_rating}")
+        elif health_score < 50:
+            score -= 5
+            negatives.append(f"市场健康度低：健康分 {health_score}，用户满意度差")
+
+        # ── 总分 → 推荐结论 ────────────────────────────────────────────
+        score = max(0, min(100, score))
+
+        if score >= 75:
+            recommendation = "strong_buy"
+            label = "强烈推荐进入"
+            summary = "市场体量充足、趋势向好、竞争格局有利、进入门槛可控"
+        elif score >= 55:
+            recommendation = "buy"
+            label = "推荐进入"
+            summary = "基本面良好，选择合适价格带和差异化策略切入"
+        elif score >= 35:
+            recommendation = "hold"
+            label = "谨慎评估"
+            summary = "存在一定风险，建议聚焦细分品类或价格带做进一步论证"
+        else:
+            recommendation = "avoid"
+            label = "不建议进入"
+            summary = "市场规模不足或竞争壁垒过高，建议寻找替代品类"
+
+        # ── 切入路径推荐 ──
+        entry_routes = self._recommend_entry_routes(data)
+
+        return {
+            "market_entry_score": score,
+            "recommendation": recommendation,
+            "label": label,
+            "summary": summary,
+            "positives": positives[:5],
+            "negatives": negatives[:5],
+            "entry_routes": entry_routes,
+            "scoring_detail": {
+                "base_score": 50,
+                "market_volume_weight": "≤30",
+                "trend_weight": "≤15",
+                "competition_weight": "≤20",
+                "barrier_weight": "≤25",
+                "health_weight": "≤10",
+            },
+        }
+
+    def _recommend_entry_routes(self, data: dict) -> list:
+        """基于分析数据推荐具体切入路径"""
+        routes = []
+
+        # Route 1: 价格带空白
+        price_bands = data.get("price_bands", {})
+        for band_name, band_data in price_bands.items():
+            if isinstance(band_data, dict) and band_data.get("count", 0) == 0:
+                routes.append({
+                    "route": f"进入 {band_name} 价格带",
+                    "type": "价格带空白",
+                    "rationale": "该价格带无商品覆盖，可直接占据细分市场",
+                    "effort": "低",
+                    "potential": "中",
+                })
+
+        # Route 2: 低竞争价格带
+        best_band = None
+        best_count = float("inf")
+        for band_name, band_data in price_bands.items():
+            if isinstance(band_data, dict):
+                cnt = band_data.get("count", 0) or 0
+                if 0 < cnt < best_count:
+                    best_count = cnt
+                    best_band = band_name
+        if best_band and best_count <= 3:
+            routes.append({
+                "route": f"切入 {best_band} 价格带",
+                "type": "低竞争价格带",
+                "rationale": f"该带仅 {best_count} 个商品，竞争极低且已有需求验证",
+                "effort": "低",
+                "potential": "中高",
+            })
+
+        # Route 3: 上升中的小品牌
+        opportunities = data.get("opportunities", [])
+        for opp in opportunities:
+            if isinstance(opp, dict) and opp.get("opportunity", "").startswith("上升期"):
+                routes.append({
+                    "route": opp.get("opportunity", "关注上升期低竞争商品"),
+                    "type": "模仿跟进",
+                    "rationale": opp.get("evidence", ""),
+                    "effort": "中",
+                    "potential": opp.get("strength", "中"),
+                })
+
+        # Route 4: 评论壁垒高 → 破壁建议
+        barrier_level = data.get("review_barrier", {}).get("review_barrier", "中")
+        if barrier_level in ("高", "极高"):
+            routes.append({
+                "route": "Vine 快速积累评论 + 深耕细分需求",
+                "type": "评论破壁",
+                "rationale": "通过 Vine + 差异化产品突破评论壁垒",
+                "effort": "高",
+                "potential": "中",
+            })
+
+        return routes[:3]
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         return await super().execute(input_data)

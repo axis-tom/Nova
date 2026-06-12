@@ -161,6 +161,26 @@ class DataLiaison:
         # 5. 可冷启动的 ASIN
         can_collect = missing_asins if missing_asins else []
 
+        # ★ 即使 DB 完全没命中，也尝试调 API 确保 Phase 0 不空手返回
+        if not found_asins and not exploration and real_asins:
+            # 调一次冷启动，至少回来一个 ASIN 的数据
+            for asin in real_asins[:3]:
+                try:
+                    product = await self._provider.get_product_blocking(asin, domain)
+                    if product:
+                        found_asins.append(asin)
+                        missing_asins = [m for m in missing_asins if m != asin]
+                        can_collect = [m for m in can_collect if m != asin]
+                except Exception:
+                    pass
+            # 冷启动后再查一次品类探索
+            if found_asins and not exploration and category_hint:
+                async with AsyncSessionLocal() as db:
+                    repo = AmazonProductRepository(db)
+                    exploration = await repo.explore(category_hint, domain=domain)
+                if exploration:
+                    matched_category = list(exploration.get("categories_found", {}).keys())
+
         return DataIntelligenceReport(
             requested_asins=real_asins,
             found_asins=found_asins,

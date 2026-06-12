@@ -80,6 +80,16 @@ async def get_entity_details(
         engine = get_query_engine()
         data = await engine.fetch_details(entity_type, entity_id, metrics, domain)
 
+        # ★ DB 没有 → 走 DataProvider 冷启动（调 API → 存 DB → 返回）
+        if data is None and entity_type == "product":
+            logger.info(f"[get_entity_details] DB 未命中，触发冷启动: {entity_id}")
+            from backend.aqueduct.data_provider import DataProvider
+            provider = DataProvider()
+            raw = await provider.get_product_blocking(entity_id, domain)
+            if raw:
+                # 冷启动后 DB 已有数据，再查一次
+                data = await engine.fetch_details(entity_type, entity_id, metrics, domain)
+
         if data is None:
             return f"未找到 {entity_type}: {entity_id}"
 

@@ -1,10 +1,12 @@
 """
 Orchestrator — 核心调度引擎
-基于 LangGraph 的 ReAct 循环：
-1. LLM 理解用户意图
-2. LLM 决定调哪些工具（搜索 / Agent / 查记忆）
-3. 循环：调工具 → 看结果 → 再调工具 → 直到完成
-4. LLM 汇总结果 → 返回
+
+三层架构：
+  Level 1: Intent Router（代码路由） → 判断走哪条 Pipeline
+  Level 2: Deterministic Pipeline（固定流水线） → 确定性数据获取+分析，不走 LLM
+  Level 3: LLM Analysis（只写注释） → 基于结构化数据写解读
+
+不再使用 ReAct 循环。LLM 不参与工具决策，只基于已有数据写分析注释。
 """
 
 import operator
@@ -42,6 +44,7 @@ from backend.core.tools.web_search import web_search, scrape_url
 from backend.core.memory.vector_store import MemoryStore
 from backend.core.agent_wrapper import call_agent, list_agents
 from backend.core.tools.db_query import query_database as db_query
+from backend.core.data_tools import get_data_tools
 from backend.core.data_tools.engine import get_query_engine
 from backend.core.data_tools import (  # 5 个新数据工具（用于 execute_tools 路由）
     get_entity_details,
@@ -147,7 +150,7 @@ async def get_product_data(asins: str) -> str:
     """
     从本地数据库查询 Amazon 商品完整数据。
 
-    只读操作，绝不触发外部 API 调用或数据采集。只有已在本地库中的 ASIN 才会返回数据。
+    优先查本地库，如本地不存在则自动通过 API 采集后返回。
     可查询 180+ 字段：价格、BSR、销量、评论、Listing、卖家、配送、FBA、库存、促销等。
 
     Args:
@@ -160,6 +163,7 @@ async def get_product_data(asins: str) -> str:
 
 async def _query_product_data(asins: str) -> str:
     """从本地 PostgreSQL 查询 Amazon 商品数据。
+    如本地不存在，自动通过 API（Keepa/Rainforest/Canopy）采集后返回。
     此函数不经过 LangChain @tool 装饰，供系统层在 Phase 0 直接调用。"""
     asin_list = [a.strip() for a in re.split(r'[,，\s]+', asins) if a.strip()]
     if not asin_list:
@@ -180,8 +184,26 @@ async def _query_product_data(asins: str) -> str:
             )
             result = await session.execute(stmt)
             products = result.scalars().all()
-            if not products:
-                return f"ASIN {', '.join(asin_list)} 在本地数据库中未找到"
+
+            # ── 收集缺失 ASIN，走 DataProvider 冷启动 ──
+            found_asins = {p.asin for p in products}
+            missing_asins = [a for a in asin_list if a not in found_asins]
+            if missing_asins:
+                from backend.aqueduct.data_provider import DataProvider
+                provider = DataProvider()
+                for ma in missing_asins:
+                    raw = await provider.get_product_blocking(ma)
+                    if raw:
+                        pass  # 已写入 DB，下一行代码会重新查
+
+                # 冷启动完成后重新查（含新采集的）
+                if missing_asins:
+                    stmt2 = select(AmazonProduct).where(
+                        AmazonProduct.asin.in_(missing_asins), AmazonProduct.domain == "US",
+                    )
+                    result2 = await session.execute(stmt2)
+                    extra = result2.scalars().all()
+                    products = list(products) + list(extra)
             lines = []
             found = set()
             for p in products:
@@ -405,6 +427,151 @@ async def call_nova_agent(agent_name: str, params_json: str) -> str:
     return f"Agent [{agent_name}] 执行结果:\n{output}{state_hint}"
 
 
+@tool
+async def query_analysis() -> str:
+    """
+    获取当前会话最近一次完整分析的完整证据链和原始数据快照。
+
+    任何时候用户追问上一个分析的细节（价格带、评论、竞品、评分、市场），
+    或者你拿到的数据看起来需要核实时，**优先调这个工具**，不要反问用户要数据。
+
+    返回 JSON 格式的原始证据，包含：
+    - data_snapshot: ⭐ 原始 ASIN 数据快照（冻住的真相源），每个 ASIN 的 current_price、monthly_sold、rating、review_count、current_bsr、brand 等
+    - price_bands: 各价格带的商品数、平均 BSR、平均评分、平均月销（直接回答价格类问题）
+    - brand_concentration: 品牌数、Top3 份额、集中度、进入壁垒、具体品牌列表
+    - market_volume: 月销总量、月营收、均价、BSR 范围
+    - review_barrier: 评论壁垒等级、评论数分布、中位数/平均数/最值
+    - rating_health: 评分分布、健康分、各档占比
+    - seller_composition: FBA/FBM/Prime 占比
+    - opportunities: 市场机会列表
+    - risks: 风险列表
+    - trends: BSR/价格趋势数据
+
+    拿到 JSON 后直接引用具体数值回答。如果 JSON 里找不到用户问的数据，
+    再用其他工具去查。**不要反问用户**——你手里已经有分析过的完整数据快照和证据链了。
+    """
+    return await _query_analysis()
+
+
+async def _query_analysis() -> str:
+    """从 Session State 中读取最近一次 Pipeline 的结构化分析结果（含原始证据）"""
+    import json as _json
+    conv_id = conv_id_var.get()
+    if not conv_id:
+        return "当前没有活跃的会话"
+    state = session_store.get_or_create(conv_id)
+    pipeline = state.data.get("_last_pipeline")
+    if not pipeline:
+        return "尚未进行过产品分析。请先提供 ASIN 做选品分析。"
+
+    structured = pipeline.get("structured", {})
+    decision = structured.get("decision_support", {})
+    asins = structured.get("asins_analyzed", [])
+    deterministic = structured.get("deterministic", {})
+
+    # ── 原始证据数据（JSON 格式，LLM 可直接引用具体数值） ──
+    if deterministic:
+        evidence = {}
+        mv = deterministic.get("market_volume", {})
+        if mv:
+            evidence["market_volume"] = {
+                "total_monthly_units": mv.get("total_monthly_units"),
+                "estimated_monthly_revenue": mv.get("estimated_monthly_revenue"),
+                "product_count": mv.get("product_count"),
+                "avg_price": mv.get("avg_price"),
+                "bsr_range": mv.get("bsr_range"),
+            }
+
+        pb = deterministic.get("price_bands", {})
+        if pb:
+            evidence["price_bands"] = pb
+
+        bc = deterministic.get("brand_concentration", {})
+        if bc:
+            evidence["brand_concentration"] = {
+                "total_brands": bc.get("total_brands"),
+                "total_products": bc.get("total_products"),
+                "top_3_market_share_pct": bc.get("top_3_market_share_pct"),
+                "concentration": bc.get("concentration"),
+                "entry_barrier": bc.get("entry_barrier"),
+                "brands": bc.get("brands"),
+            }
+
+        rb = deterministic.get("review_barrier", {})
+        if rb:
+            evidence["review_barrier"] = {
+                "review_barrier": rb.get("review_barrier"),
+                "avg_review_count": rb.get("avg_review_count"),
+                "median_review_count": rb.get("median_review_count"),
+                "min_reviews": rb.get("min_reviews"),
+                "max_reviews": rb.get("max_reviews"),
+                "distribution": rb.get("distribution"),
+            }
+
+        rh = deterministic.get("rating_health", {})
+        if rh:
+            evidence["rating_health"] = {
+                "avg_rating": rh.get("avg_rating"),
+                "median_rating": rh.get("median_rating"),
+                "rating_health_score": rh.get("rating_health_score"),
+                "rating_health_label": rh.get("rating_health_label"),
+                "distribution_detail": rh.get("distribution_detail"),
+            }
+
+        se = deterministic.get("seller_composition", {})
+        if se:
+            evidence["seller_composition"] = {
+                "fba_pct": se.get("fba_pct"),
+                "fbm_pct": se.get("fbm_pct"),
+                "prime_pct": se.get("prime_pct"),
+            }
+
+        opps = deterministic.get("opportunities", [])
+        if opps:
+            evidence["opportunities"] = [{"opportunity": o.get("opportunity"), "evidence": o.get("evidence"), "strength": o.get("strength"), "asins": o.get("asins")} for o in opps[:5]]
+
+        risks = deterministic.get("risks", [])
+        if risks:
+            evidence["risks"] = [{"risk_type": r.get("risk_type"), "detail": r.get("detail"), "severity": r.get("severity")} for r in risks[:5]]
+
+        tr = deterministic.get("trends", {})
+        if tr:
+            evidence["trends"] = tr
+
+        # ★ 数据快照：原始 ASIN 数据（冻住的真相源）
+        snapshot = structured.get("data_snapshot", {})
+        if snapshot and snapshot.get("products_raw"):
+            evidence["data_snapshot"] = {
+                "asins": snapshot.get("asins", []),
+                "products_count": snapshot.get("products_count", 0),
+                "products_raw": snapshot.get("products_raw", []),
+            }
+
+        evidence_json = _json.dumps(evidence, ensure_ascii=False, indent=2)
+    else:
+        evidence_json = "{}"
+
+    # ── 决策结论（浓缩一行） ──
+    decision_line = ""
+    if decision:
+        score = decision.get("market_entry_score", "?")
+        label = decision.get("label", "?")
+        positives = "; ".join(decision.get("positives", [])[:3])
+        negatives = "; ".join(decision.get("negatives", [])[:3])
+        decision_line = f"结论: {label} (评分: {score}/100)\n有利: {positives}\n风险: {negatives}"
+
+    asin_line = f"分析 ASIN: {', '.join(asins[:8]) if asins else '无'}" if asins else ""
+
+    return f"""## 分析概览
+{asin_line}
+{decision_line}
+
+## 原始证据（JSON — 直接引用里面的具体数值回答用户）
+```json
+{evidence_json}
+```"""
+
+
 # ── 构建工具列表 ──
 
 def get_tools(include_search_web: bool = True):
@@ -420,8 +587,9 @@ def get_tools(include_search_web: bool = True):
     # ★ 旧数据工具迁移：query_db → search_entities/analyze_custom
     #   get_product_data → get_entity_details/compare_entities
     #   discover_data → search_entities
+    # ── data_tools 5 个全局工具 ──
     data_tools = get_data_tools()
-    tools = [search_memory, call_nova_agent] + data_tools
+    tools = [search_memory, call_nova_agent, query_analysis] + data_tools
     if include_search_web:
         tools.insert(0, search_web)
     return tools
@@ -652,6 +820,19 @@ def _build_state_summary(conv_id: str) -> str:
 
     if not lines:
         return ""
+
+    # ── Pipeline 已完成的分析结果 ──
+    last_pipeline = state.data.get("_last_pipeline")
+    if last_pipeline:
+        structured = last_pipeline.get("structured", {})
+        decision = structured.get("decision_support", {})
+        asins = structured.get("asins_analyzed", [])
+        score = decision.get("market_entry_score", "?")
+        label = decision.get("label", "?")
+        lines.append(f"- **已完成分析**: Pipeline [{last_pipeline.get('pipeline_name', '?')}]")
+        lines.append(f"- **分析 ASIN**: {', '.join(asins[:5]) if asins else '?'}")
+        lines.append(f"- **市场进入评分**: {score}/100 — {label}")
+        lines.append(f"- **可用工具**: 调 query_analysis() 获取完整结构化分析数据，回答用户追问")
 
     return "\n## 当前数据状态\n" + "\n".join(lines)
 
@@ -980,6 +1161,9 @@ async def execute_tools(state: AgentState) -> Dict[str, Any]:
                 result = await asyncio.wait_for(
                     analyze_custom.ainvoke(tool_args), timeout=30)
 
+            elif tool_name == "query_analysis":
+                result = await _query_analysis()
+
             elif tool_name == "call_nova_agent":
                 # ── DecisionTrace：Agent 调用开始 ──
                 agent_name = tool_args.get("agent_name", "unknown")
@@ -1094,6 +1278,33 @@ async def _try_summarize(conv_id: str) -> None:
         logger.debug(f"[Summarizer] Skipped for {conv_id}: {e}")
 
 
+def _build_reanalysis_pipeline_context(
+    state, user_input: str, conv_id: str,
+    decision, last_commentary: str
+):
+    """构建重分析的 PipelineContext（复用 _generate_llm_commentary 用）"""
+    from backend.core.pipeline.base import PipelineContext
+
+    last_ctx_data = state.data.get("_last_pipeline_context", {})
+    intent_spec_data = state.data.get("_intent_spec_data", {})
+
+    reanalysis_prompt = (
+        f"【上次分析结论】\n{last_commentary[:2000]}\n\n"
+        f"【用户指出问题】\n{user_input}\n"
+    )
+
+    return PipelineContext(
+        intent_type=last_ctx_data.get("intent_type", intent_spec_data.get("intent_type", "")),
+        entities=last_ctx_data.get("entities", intent_spec_data.get("entities", [])),
+        category_hint=last_ctx_data.get("category_hint", intent_spec_data.get("category_hint", "")),
+        found_asins=last_ctx_data.get("found_asins", []),
+        missing_asins=last_ctx_data.get("missing_asins", []),
+        raw_query=user_input,
+        conversation_id=conv_id,
+        reanalysis_prompt=reanalysis_prompt,
+    )
+
+
 # ── 主入口（普通模式） ──
 
 async def run_orchestrator(user_input: str, conversation_id: Optional[str] = None) -> str:
@@ -1186,6 +1397,247 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
     # ── Phase 0 数据情报收集 ──
     state = session_store.get_or_create(conv_id)
 
+    # ── 后续对话：Pipeline 已完成 → 判断是"继续追问"还是"重分析" ──
+    if state.data.get("_pipeline_completed"):
+        # ── 使用 ReanalysisClassifier 做意图分流（4 类） ──
+        from backend.core.pipeline.reanalysis import classify_reanalysis, extract_filter_constraints
+        from backend.core.pipeline.reanalysis import (
+            REANALYSIS_FULL, REANALYSIS_PARTIAL, REANALYSIS_EXPLAIN, REANALYSIS_NEW,
+        )
+
+        last_pipeline = state.data.get("_last_pipeline", {})
+        last_structured = last_pipeline.get("structured", {})
+        last_commentary = last_pipeline.get("llm_commentary", "")
+        last_deterministic = last_structured.get("deterministic", {})
+
+        # 构建上次分析完成指标列表（给分类器判断局部重算用）
+        last_metrics = [k for k, v in last_deterministic.items() if v] if last_deterministic else None
+
+        decision = classify_reanalysis(user_input, last_commentary, last_metrics)
+        filter_constraints = extract_filter_constraints(user_input)
+
+        yield {"type": "status", "data": f"🔄 分析意图识别: {decision.scope}"}
+
+        # ── 场景 C: 重新解释（数据没错，结论重新生成注释） ──
+        if decision.scope == REANALYSIS_EXPLAIN:
+            # 重新走 Level 3（LLM commentary）即可，不用重跑数据
+            yield {"type": "status", "data": "📝 重新生成分析注释..."}
+
+            from backend.core.pipeline.base import BasePipeline
+
+            ctx = _build_reanalysis_pipeline_context(
+                state, user_input, conv_id, decision, last_commentary
+            )
+
+            # 复用上次的结构化数据，只重新生成注释
+            temp_pipeline = BasePipeline()
+            new_commentary = await temp_pipeline._generate_llm_commentary(ctx, last_structured)
+
+            # ★ 构建 DecisionCard（复用上次的 structured，只换 commentary）
+            from backend.core.pipeline.guard import DecisionCard as _ReCard
+            re_card = _ReCard.from_pipeline_result(last_structured, new_commentary)
+
+            # 推送结构化数据（与上次相同）+ 新注释
+            yield {
+                "type": "structured_data",
+                "data": {
+                    "pipeline": last_pipeline.get("pipeline_name", "re_explain"),
+                    "structured": last_structured,
+                    "llm_commentary": new_commentary,
+                    "decision_card": re_card.to_dict(),
+                },
+            }
+
+            yield {"type": "start_response", "data": ""}
+            if new_commentary:
+                for chunk in new_commentary.split("\n"):
+                    if chunk.strip():
+                        yield {"type": "response_chunk", "data": chunk + "\n"}
+                        await asyncio.sleep(0.01)
+
+            yield {"type": "done", "data": ""}
+            await durable.append_message(conv_id, "user", user_input)
+            await durable.append_message(conv_id, "assistant", new_commentary)
+            memory.save_chat(user_input, new_commentary, metadata={
+                "importance": 6, "tags": "pipeline_re_explain", "conversation_id": conv_id,
+            })
+
+            state.data["_last_pipeline"] = {
+                "pipeline_name": last_pipeline.get("pipeline_name", "re_explain"),
+                "structured": last_structured,
+                "llm_commentary": new_commentary,
+            }
+            asyncio.create_task(_try_summarize(conv_id))
+            return
+
+        # ── 场景 A+B: 全量重跑 / 局部重算 ──
+        if decision.scope in (REANALYSIS_FULL, REANALYSIS_PARTIAL):
+            yield {"type": "status", "data": "🔄 重新运行 Pipeline 分析..."}
+
+            # 构建重分析上下文：上次的 LLM 结论 + 用户指出的问题
+            reanalysis_prompt = (
+                f"【上次分析结论】\n{last_commentary[:2000]}\n\n"
+                f"【用户指出问题】\n{user_input}\n"
+            )
+
+            # 从上次 Pipeline 的 context 恢复参数
+            last_ctx_data = state.data.get("_last_pipeline_context", {})
+            found_asins = last_ctx_data.get("found_asins", [])
+            missing_asins = last_ctx_data.get("missing_asins", [])
+            category_hint = last_ctx_data.get("category_hint", "")
+            intent_type = last_ctx_data.get("intent_type", "")
+            entities = last_ctx_data.get("entities", [])
+
+            # 如果上次没有存 context，从 state 的 _intel_report 恢复
+            if not found_asins:
+                intel_report = state.data.get("_intel_report", {})
+                found_asins = intel_report.get("found_asins", [])
+                missing_asins = intel_report.get("missing_asins", [])
+                intent_spec_data = state.data.get("_intent_spec_data", {})
+                intent_type = intent_spec_data.get("intent_type", "")
+                entities = intent_spec_data.get("entities", [])
+
+            from backend.core.pipeline.router import router as pipeline_router
+            from backend.core.pipeline.base import PipelineContext
+
+            await durable.append_message(conv_id, "user", user_input)
+
+            pipeline_cls = pipeline_router.resolve(intent_type)
+
+            if pipeline_cls and found_asins:
+                yield {"type": "status", "data": f"📊 重新分析 {len(found_asins)} 个 ASIN..."}
+
+                # ★ B 类局部重算：在 reanalysis_prompt 中注入"只关注哪些指标"
+                if decision.scope == REANALYSIS_PARTIAL and decision.metrics_to_recompute:
+                    reanalysis_prompt += (
+                        f"\n【聚焦范围】\n"
+                        f"用户只关心以下维度: {', '.join(decision.metrics_to_recompute)}\n"
+                        f"其他维度保持上次分析结论即可。\n"
+                    )
+
+                # ★ 过滤约束注入（如"只看低价产品"）
+                if filter_constraints:
+                    reanalysis_prompt += (
+                        f"\n【过滤约束】\n"
+                        f"用户指定了数据过滤条件: {filter_constraints}\n"
+                        f"请基于此约束条件做针对性分析。\n"
+                    )
+
+                ctx = PipelineContext(
+                    intent_type=intent_type,
+                    entities=entities,
+                    category_hint=category_hint,
+                    found_asins=found_asins,
+                    missing_asins=missing_asins,
+                    raw_query=user_input,
+                    conversation_id=conv_id,
+                    reanalysis_prompt=reanalysis_prompt,
+                )
+
+                pipeline = pipeline_cls()
+                result = await pipeline.run(ctx, tracer=tracer_var.get())
+
+                # ★ PipelineGuard: 校验重分析 Pipeline 输出
+                from backend.core.pipeline.guard import PipelineGuard as _Guard, DecisionCard as _Card
+                guard_check = _Guard(intent_type).check(pipeline_result=result, found_asins=found_asins)
+                if not guard_check.is_valid:
+                    error_msg = _Guard.format_guard_error(guard_check)
+                    yield {"type": "status", "data": error_msg}
+                    yield {"type": "start_response", "data": ""}
+                    for chunk in error_msg.split("\n"):
+                        if chunk.strip():
+                            yield {"type": "response_chunk", "data": chunk + "\n"}
+                            await asyncio.sleep(0.01)
+                    yield {"type": "done", "data": ""}
+                    await durable.append_message(conv_id, "assistant", error_msg)
+                    return
+
+                decision_card = _Card.from_pipeline_result(result.structured, result.llm_commentary)
+
+                yield {
+                    "type": "structured_data",
+                    "data": {
+                        "pipeline": result.pipeline_name,
+                        "structured": result.structured,
+                        "llm_commentary": result.llm_commentary,
+                        "decision_card": decision_card.to_dict(),
+                    },
+                }
+
+                yield {"type": "start_response", "data": ""}
+                if result.llm_commentary:
+                    for chunk in result.llm_commentary.split("\n"):
+                        if chunk.strip():
+                            yield {"type": "response_chunk", "data": chunk + "\n"}
+                            await asyncio.sleep(0.01)
+
+                yield {"type": "done", "data": ""}
+                await durable.append_message(conv_id, "assistant", result.llm_commentary)
+                memory.save_chat(user_input, result.llm_commentary, metadata={
+                    "importance": 6, "tags": "pipeline_reanalysis", "conversation_id": conv_id,
+                })
+
+                state.data["_last_pipeline"] = {
+                    "pipeline_name": result.pipeline_name,
+                    "structured": result.structured,
+                    "llm_commentary": result.llm_commentary,
+                }
+
+                asyncio.create_task(_try_summarize(conv_id))
+                return
+            else:
+                yield {"type": "status", "data": "注意：无法重新跑 Pipeline，改为正常对话分析。"}
+
+        # ── 场景 D 或降级: 新问题 → 走 ReAct 循环 ──
+        # （REANALYSIS_NEW 或无法走 Pipeline 的降级）
+
+        # 持久化用户消息
+        await durable.append_message(conv_id, "user", user_input)
+
+        # 加载历史 + 构建纠正前缀
+        history, correction_prefix = await _build_history_messages(conv_id, user_input)
+
+        # 构建并运行 LangGraph ReAct 循环
+        graph = build_graph()
+        initial_state: AgentState = {
+            "messages": history + [{"role": "user", "content": user_input}],
+            "user_input": user_input,
+            "final_response": None,
+            "tool_results": [],
+            "intel_collected": True,
+            "intent_spec_data": None,
+            "intel_report": None,
+            "correction_prefix": correction_prefix,
+        }
+
+        final_state = await graph.ainvoke(initial_state)
+
+        # 持久化所有 tool 和 assistant 消息
+        final_response = "处理完成，但未能生成回答。"
+        for msg in final_state["messages"]:
+            if msg["role"] == "tool":
+                await durable.append_message(
+                    conv_id, "tool", str(msg.get("content", ""))[:3000], tool_name=msg.get("name")
+                )
+            elif msg["role"] == "assistant" and msg.get("content") and not msg.get("tool_calls"):
+                final_response = msg["content"]
+
+        await durable.append_message(conv_id, "assistant", final_response)
+        memory.save_chat(user_input, final_response, metadata={
+            "importance": 6, "tags": "follow_up", "conversation_id": conv_id,
+        })
+
+        # 流式输出
+        yield {"type": "start_response", "data": ""}
+        if final_response:
+            for chunk in final_response.split("\n"):
+                if chunk.strip():
+                    yield {"type": "response_chunk", "data": chunk + "\n"}
+                    await asyncio.sleep(0.01)
+        yield {"type": "done", "data": ""}
+        asyncio.create_task(_try_summarize(conv_id))
+        return
+
     # ── Step 1: Phase 0 — 数据情报收集（不再做二元"就绪"判断） ──
     # 用 PromptEngine 理解意图 → DataLiaison 跨列探索 → 报告给 LLM 自己决策
     intel: Optional[DataIntelligenceReport] = None
@@ -1229,18 +1681,68 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
         # yield 情报摘要
         total = intel.total_products_available
         if total > 0:
-            yield {"type": "status", "data": f"📊 DB 探索到 {total} 个相关商品（品类: {intel.matched_category_names[:3] or '?'}），情报已就绪，LLM 将自行决策"}
+            yield {"type": "status", "data": f"📊 DB 探索到 {total} 个相关商品（品类: {intel.matched_category_names[:3] or '?'}）"}
         else:
-            yield {"type": "status", "data": f"ℹ️ DB 未找到匹配用户输入的商品，原始情报已注入 system prompt，LLM 将自行决策"}
+            yield {"type": "status", "data": f"ℹ️ DB 未找到匹配用户输入的商品"}
     except Exception as e:
         logger = __import__("logging").getLogger(__name__)
         logger.warning(f"[Phase 0] 情报收集失败: {e}", exc_info=True)
-        pass  # Phase 0 失败不影响主流程
+        pass
+
+    # ── Level 1: Intent Router — 确定走哪条 Pipeline ──
+    # 不走 LLM 决策，纯代码路由
+    intent_spec_data = state.data.get("_intent_spec_data", {})
+    intent_type = intent_spec_data.get("intent_type", "")
+    found_asins = intel.found_asins if intel else []
+    category_hint = intent_spec_data.get("category_hint", "")
+
+    # ★ 日志：打印意图分类结果 & ASIN 命中数
+    __import__("logging").getLogger(__name__).info(
+        f"[Router] intent_type={intent_type}, found_asins={len(found_asins)}个, "
+        f"entities={intent_spec_data.get('entities', [])[:5]}, "
+        f"paraphrased={intent_spec_data.get('paraphrased_intent', '')[:60]}"
+    )
+
+    # ★ 兜底：用户提供了 ASIN 但意图被识别为 general_query → 强制走 product_research Pipeline
+    # 用户给 33 个 ASIN 显然不是"通用对话"——他们需要分析
+    if found_asins and intent_type == "general_query":
+        __import__("logging").getLogger(__name__).info(
+            f"[Router] 强制升级: general_query({len(found_asins)}个ASIN) → product_research"
+        )
+        intent_type = "product_research"
+        intent_spec_data["intent_type"] = intent_type
+
+    # ════════════════════════════════════════════════════════
+    # PipelineGuard — 强制执行路径校验
+    # ════════════════════════════════════════════════════════
+    # 铁律：对于 analysis 类 intent，Pipeline 是唯一执行路径。
+    #   不允许 Pipeline 被绕过 → 裸数据输出
+    #   不允许 Pipeline 失败 → 优雅降级到 ReAct
+    #   Router 未匹配 → 硬错误，不 fallback
+    from backend.core.pipeline.guard import PipelineGuard, DecisionCard
+    guard = PipelineGuard(intent_type)
+
+    if guard.must_run_pipeline and not found_asins:
+        # analysis intent 但无数据 → 硬错误，不降级
+        error_msg = (
+            f"🚨 系统无法执行分析：意图识别为「{intent_type}」需要走分析管线，"
+            f"但本地数据库未找到相关 ASIN 数据。"
+        )
+        yield {"type": "status", "data": error_msg}
+        yield {"type": "start_response", "data": ""}
+        for chunk in error_msg.split("\n"):
+            if chunk.strip():
+                yield {"type": "response_chunk", "data": chunk + "\n"}
+                await asyncio.sleep(0.01)
+        yield {"type": "done", "data": ""}
+        await durable.append_message(conv_id, "assistant", error_msg)
+        return
 
     # ── DecisionTrace：初始化追踪器 ──
+    from backend.core.decision_trace import DecisionTracer
     tracer = DecisionTracer(conv_id, user_input)
     tracer_var.set(tracer)
-    tracer.capture_intent(state.data.get("_intent_spec_data", {}))
+    tracer.capture_intent(intent_spec_data)
     if intel:
         tracer.capture_data_liaison({
             "found_asins": intel.found_asins,
@@ -1252,193 +1754,167 @@ async def run_orchestrator_stream(user_input: str, conversation_id: Optional[str
             "category_hint": intel.category_hint,
         }, to_llm_context_text=intel.to_llm_context())
 
-    # ★ focus_entity 路径：系统直接取数据返回，不走 LLM
-    # LLM 反复拒绝调工具，只肯编造数据。唯一的解决方案：系统全权接管。
-    _direct_data_response = None
-    try:
-        intent_spec_data = state.data.get("_intent_spec_data", {})
-        if intent_spec_data.get("intent_type") == "focus_entity":
-            found_asins = intel.found_asins if intel else []
-            if found_asins:
-                yield {"type": "status", "data": f"📦 正在获取 {found_asins[0]} 的数据..."}
-                engine = get_query_engine()
-                data = await engine.fetch_details(
-                    "product", found_asins[0], domain="US",
-                )
-                if data:
-                    # 直接从数据库渲染，不走 LLM
-                    lines = [f"# {found_asins[0]} 的数据"]
-                    for key, value in data.items():
-                        if key in ("id",):
-                            continue
-                        if value is None:
-                            continue
-                        if key == "main_image":
-                            lines.append(f"**主图片**: {value}")
-                            lines.append(f"![主图片]({value})")
-                        elif isinstance(value, (dict, list)):
-                            continue
-                        else:
-                            lines.append(f"**{key}**: {value}")
-                    _direct_data_response = "\n\n".join(lines)
-    except Exception as e:
-        logger_data = __import__("logging").getLogger(__name__)
-        logger_data.warning(f"[DirectData] 直取失败: {e}", exc_info=True)
-        yield {"type": "status", "data": f"⚠️ 数据直取失败: {e}"}
+    from backend.core.pipeline.router import router as pipeline_router
+    from backend.core.pipeline.base import PipelineContext
 
-    if _direct_data_response:
+    pipeline_cls = pipeline_router.resolve(intent_type)
+
+    if pipeline_cls and found_asins:
+        # ── Level 2: 确定性 Pipeline 执行 ──
+        yield {"type": "status", "data": f"📊 开始分析 {len(found_asins)} 个 ASIN..."}
+        __import__("logging").getLogger(__name__).info(
+            f"[Orchestrator] Pipeline 入口: intent_type={intent_type}, "
+            f"found_asins={len(found_asins)}个, "
+            f"missing_asins={len(intel.missing_asins if intel else [])}个"
+        )
+
+        ctx = PipelineContext(
+            intent_type=intent_type,
+            entities=intent_spec_data.get("entities", []),
+            category_hint=category_hint,
+            found_asins=found_asins,
+            missing_asins=intel.missing_asins if intel else [],
+            raw_query=intent_spec_data.get("raw_query", ""),
+            conversation_id=conv_id,
+        )
+
+        pipeline = pipeline_cls()
+        result = await pipeline.run(ctx, tracer=tracer)
+
+        # ════════════════════════════════════════════════════════
+        # PipelineGuard — 校验 Pipeline 输出是否有效
+        # ════════════════════════════════════════════════════════
+        # 如果 Pipeline 执行后输出无效（缺少 decision_support、deterministic 等关键字段），
+        # 直接返回错误，不允许降级到裸数据输出。
+        guard_check = guard.check(pipeline_result=result, found_asins=found_asins)
+        if not guard_check.is_valid:
+            error_msg = PipelineGuard.format_guard_error(guard_check)
+            yield {"type": "status", "data": error_msg}
+            yield {"type": "start_response", "data": ""}
+            for chunk in error_msg.split("\n"):
+                if chunk.strip():
+                    yield {"type": "response_chunk", "data": chunk + "\n"}
+                    await asyncio.sleep(0.01)
+            yield {"type": "done", "data": ""}
+            await durable.append_message(conv_id, "assistant", error_msg)
+            logger.error(f"[PipelineGuard] {guard_check.validation_errors}")
+            return
+
+        # ── 构建 DecisionCard（统一输出格式） ──
+        decision_card = DecisionCard.from_pipeline_result(result.structured, result.llm_commentary)
+
+        # ── 持久化用户消息 ──
+        await durable.append_message(conv_id, "user", user_input)
+
+        # ── DecisionTrace：最终汇总 + 写文件 ──
+        try:
+            tracer.finalize(final_answer=result.llm_commentary)
+        except Exception:
+            pass
+
+        # ── 推送 DecisionCard 到前端（SSE）—— 只推前端需要的数据，不推 raw data ──
+        # ★ 去除 data_snapshot.products_raw（全量原始 ASIN 数据），保留 deterministic + decision_support
+        lean_structured = dict(result.structured)
+        if "data_snapshot" in lean_structured:
+            lean_structured["data_snapshot"] = {
+                "asins": result.structured["data_snapshot"].get("asins", []),
+                "products_count": result.structured["data_snapshot"].get("products_count", 0),
+                # ★ products_raw 不推给前端，避免几十个 ASIN 的完整数据通过 SSE 传输
+            }
+
+        yield {
+            "type": "structured_data",
+            "data": {
+                "pipeline": result.pipeline_name,
+                "structured": lean_structured,
+                "llm_commentary": result.llm_commentary,
+                "decision_card": decision_card.to_dict(),
+            },
+        }
+
+        # ── 流式输出 LLM 注释 ──
         yield {"type": "start_response", "data": ""}
-        for chunk in _direct_data_response.split("\n"):
+        if result.llm_commentary:
+            for chunk in result.llm_commentary.split("\n"):
+                if chunk.strip():
+                    yield {"type": "response_chunk", "data": chunk + "\n"}
+                    await asyncio.sleep(0.01)
+
+        yield {"type": "done", "data": ""}
+        await durable.append_message(conv_id, "assistant", result.llm_commentary)
+        memory.save_chat(user_input, result.llm_commentary, metadata={"importance": 6, "tags": "pipeline_analysis", "conversation_id": conv_id})
+        asyncio.create_task(_try_summarize(conv_id))
+
+        # ── Pipeline 完成，标记 state，供后续对话使用 ──
+        state.data["_pipeline_completed"] = True
+        state.data["_last_pipeline"] = {
+            "pipeline_name": result.pipeline_name,
+            "structured": result.structured,
+            "llm_commentary": result.llm_commentary,
+        }
+        state.data["_last_pipeline_context"] = {
+            "intent_type": intent_type,
+            "entities": intent_spec_data.get("entities", []),
+            "found_asins": found_asins,
+            "missing_asins": intel.missing_asins if intel else [],
+            "category_hint": category_hint,
+        }
+
+        # ★ 结束本轮流式输出，不继续到后面的 fallback 块
+        return
+
+    # ── 没有匹配的 Pipeline ──
+    # ★ PipelineGuard: analysis 类 intent 不允许 fallback 到裸数据输出
+    if guard.must_run_pipeline:
+        error_msg = (
+            f"🚨 系统执行路径异常：意图识别为「{intent_type}」需要走分析管线，"
+            f"但 Pipeline Router 未匹配到具体管线。\n"
+            f"这通常是因为 intent_type 不在 router 注册表中。\n"
+            f"当前 intent_type: {intent_type}\n"
+            f"已注册: {sorted(PipelineGuard.ANALYSIS_INTENTS)}"
+        )
+        yield {"type": "status", "data": error_msg}
+        yield {"type": "start_response", "data": ""}
+        for chunk in error_msg.split("\n"):
             if chunk.strip():
                 yield {"type": "response_chunk", "data": chunk + "\n"}
                 await asyncio.sleep(0.01)
         yield {"type": "done", "data": ""}
-        tracer.finalize(final_answer=_direct_data_response)
-        await durable.append_message(conv_id, "assistant", _direct_data_response)
+        await durable.append_message(conv_id, "assistant", error_msg)
+        logger.error(f"[PipelineGuard] Router miss for analysis intent: {intent_type}")
         return
 
-    # 注册分析树 SSE 事件队列
-    tree_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
-    analysis_tree_manager.register_queue(conv_id, tree_queue)
-
-    try:
-        # Step 2: 持久化用户消息
-        await durable.append_message(conv_id, "user", user_input)
-
-        # Step 3: 加载历史消息构建多轮上下文
-        history, correction_prefix = await _build_history_messages(conv_id, user_input)
-
-        graph = build_graph()
-
-        initial_state: AgentState = {
-            "messages": history + [{"role": "user", "content": user_input}],
-            "user_input": user_input,
-            "final_response": None,
-            "tool_results": [],
-            "intel_collected": True,
-            # ★ Phase 0 产出直通 AgentState——不走 session_store 侧通道
-            "intent_spec_data": state.data.get("_intent_spec_data"),
-            "intel_report": state.data.get("_intel_report"),
-            "correction_prefix": correction_prefix,
-        }
-
-        yield {"type": "status", "data": "🤖 开始分析..."}
-
-        final_response = ""
-        _agent_timers: dict = {}
-        async for event in graph.astream(initial_state):
-            # 穿插分析树事件（不阻塞）
-            while not tree_queue.empty():
-                try:
-                    tree_event = tree_queue.get_nowait()
-                    yield tree_event
-                except asyncio.QueueEmpty:
-                    break
-            node_name = list(event.keys())[0]
-            state_data = event[node_name]
-
-            if node_name == "action":
-                for msg in state_data.get("messages", []):
-                    if isinstance(msg, dict) and msg.get("role") == "tool":
-                        tool_name = msg.get("name", "unknown")
-                        # 计算耗时
-                        elapsed = None
-                        if tool_name in _agent_timers:
-                            elapsed = round(time.time() - _agent_timers.pop(tool_name), 2)
-                        yield {"type": "agent_end", "data": {"name": tool_name, "elapsed_s": elapsed}}
-                        yield {"type": "tool_result", "data": f"🔧 {tool_name} 执行完成"}
-                        # 从 SessionStore 提取驾驶舱数据
-                        # tool_name 是 "call_nova_agent"，需通过 tool_call_id 映射回真实 Agent 名
-                        real_agent = _agent_name_by_call_id.pop(msg.get("tool_call_id", ""), "")
-                        cockpit_target = real_agent if real_agent else tool_name
-                        if cockpit_target in AGENT_CATEGORY_LABELS:   # 只对业务 Agent
-                            try:
-                                state = session_store.get_or_create(conv_id)
-                                cockpit = extract_cockpit_data(cockpit_target, state.data)
-                                if cockpit:
-                                    yield {"type": "cockpit_update", "data": cockpit}
-                            except Exception:
-                                pass
-                        # Step 2: 持久化工具结果
-                        await durable.append_message(
-                            conv_id, "tool", msg["content"][:3000], tool_name=tool_name
-                        )
-            elif node_name == "agent":
-                for msg in state_data.get("messages", []):
-                    if not isinstance(msg, dict):
+    # ── 非 analysis 类 → 退化到简单数据查询（直接显示数据，不走 LLM） ──
+    if found_asins:
+        yield {"type": "status", "data": f"🔍 显示 {len(found_asins)} 个 ASIN 的数据..."}
+        engine = get_query_engine()
+        lines = []
+        for asin in found_asins[:5]:
+            data = await engine.fetch_details("product", asin, domain="US")
+            if data:
+                lines.append(f"## {asin}")
+                for key, value in data.items():
+                    if key in ("id",) or value is None or isinstance(value, (dict, list)):
                         continue
-                    if msg.get("tool_calls"):
-                        for tc in msg["tool_calls"]:
-                            _agent_timers[tc["name"]] = time.time()
-                            # ── 记录 tool_call_id → 真实 Agent 名（驾驶舱使用） ──
-                            if tc["name"] == "call_nova_agent":
-                                real_agent_name = tc.get("args", {}).get("agent_name", "")
-                                if real_agent_name:
-                                    _agent_name_by_call_id[tc.get("id", "")] = real_agent_name
-                            yield {"type": "agent_start", "data": {"name": tc["name"], "args": tc["args"]}}
-                            yield {
-                                "type": "tool_call",
-                                "data": {
-                                    "name": tc["name"],
-                                    "args": tc["args"],
-                                    "id": tc.get("id", str(uuid.uuid4())),
-                                },
-                            }
-                    elif msg.get("role") == "assistant" and msg.get("content"):
-                        final_response = msg["content"]
+                    lines.append(f"- **{key}**: {value}")
+                lines.append("")
 
-        if not final_response:
-            final_response = "处理完成，但未能生成回答。"
-
-        # 排空剩余的树事件
-        while not tree_queue.empty():
-            try:
-                tree_event = tree_queue.get_nowait()
-                yield tree_event
-            except asyncio.QueueEmpty:
-                break
-
-        # 推送完整树结构（供前端初始化渲染）
-        tree_dict = analysis_tree_manager.to_dict(conv_id)
-        if tree_dict and tree_dict.get("branches"):
-            yield {"type": "tree_full", "data": tree_dict}
-
-        # 流式输出最终回答（按句/段分块）
+        text = "\n".join(lines) if lines else "未找到数据"
         yield {"type": "start_response", "data": ""}
-        import re
-        chunks = re.split(r'(?<=[。！？\n])', final_response)
-        for chunk in chunks:
+        for chunk in text.split("\n"):
             if chunk.strip():
-                yield {"type": "response_chunk", "data": chunk}
-                await asyncio.sleep(0.02)
-
-        # ── DecisionTrace：最终汇总 → 终端打印 + 写文件 ──
-        try:
-            tracer = tracer_var.get()
-            if tracer:
-                tracer.capture_state_keys(dict(state.data))
-                tracer.finalize(final_answer=final_response)
-        except Exception:
-            pass
-
+                yield {"type": "response_chunk", "data": chunk + "\n"}
+                await asyncio.sleep(0.01)
         yield {"type": "done", "data": ""}
-
-        # Step 2: 持久化 assistant 回答
-        await durable.append_message(conv_id, "assistant", final_response)
-
-        # 持久化最终 State 到 SQLite
-        _clean_state_for_save(state)
-        session_store.save(conv_id)
-
-        # 保存到记忆
-        memory.save_chat(
-            user_input,
-            final_response,
-            metadata={"importance": 6, "tags": "user_query", "conversation_id": conv_id},
-        )
-
-        # Step 4: 异步触发知识摘要（不阻塞返回）
+        await durable.append_message(conv_id, "assistant", text)
+        memory.save_chat(user_input, text, metadata={"importance": 4, "tags": "direct_query", "conversation_id": conv_id})
         asyncio.create_task(_try_summarize(conv_id))
-    finally:
-        conv_id_var.reset(token)
-        analysis_tree_manager.unregister_queue(conv_id)
+        return
+
+    # ── 没有任何数据 → 最后的兜底 ──
+    text = "未找到相关 ASIN 数据，请提供具体的 ASIN 或品类名。"
+    yield {"type": "start_response", "data": ""}
+    yield {"type": "response_chunk", "data": text}
+    yield {"type": "done", "data": ""}
+    await durable.append_message(conv_id, "assistant", text)
+    return

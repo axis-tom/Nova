@@ -272,6 +272,7 @@ class PromptEngine:
             f"任务背景：{hint}",
             "",
             "可用资源（数据工具 — 从本地 DB 获取真实数据）：",
+            "- **query_analysis**: ⭐ 如果当前会话已完成一次 Pipeline 分析（上方「当前数据状态」有显示「已完成分析」），用户追问的细节**优先调这个工具**——它返回完整的价格分布、评论壁垒、品牌集中度等结构化证据 JSON，直接引用数值回答",
             "- **get_entity_details**: 查单个 ASIN/Offer/变体的指定字段。查图片传 metrics=['main_image']",
             "- **compare_entities**: 对比多个 ASIN 的指标（竞品分析首选）",
             "- **search_entities**: 按价格/评分/BSR/品类/品牌等条件筛选商品",
