@@ -115,21 +115,17 @@ class BasePipeline(ABC):
         """
         基于结构化数据让 LLM 写结论注释（Level 3）
 
-        LLM 不写报告——用户能看到上面的表格/数据。
-        LLM 只做三件事：
-          1. 指出非显而易见的关联（用户可能漏掉的）
-          2. 将数据转化为对用户具体 ASIN 的建议
-          3. 挑出决策支持评分里最关键的正负因子
-
-        prompt 不含"总结数据"的指令——那是平扁的根源。
-
-        如果 ctx.reanalysis_prompt 有值，表示这是"重新分析"——
-        LLM 需要对比上一次分析指出这次修正了什么、修正的依据是什么。
+        根据 ctx.intent_type 切换不同的 prompt 模板：
+          - product_research → 决策卡（做/不做/观望）
+          - market_analysis  → 市场调研报告
+          - competitor_watch → 竞品分析报告
+          - focus_entity     → 单品概览
+          其他 → 通用决策卡（兜底）
         """
         from backend.core.llm.config import get_llm_for_agent
         llm = get_llm_for_agent("orchestrator")
 
-        # 提取关键数据摘要，让 LLM 引用具体数字
+        # 提取关键数据摘要（所有模板共享）
         det = structured.get("deterministic", {})
         decision = structured.get("decision_support", {})
         asins = structured.get("asins_analyzed", [])
@@ -141,10 +137,27 @@ class BasePipeline(ABC):
         price_bands = det.get("price_bands", {})
         review = det.get("review_barrier", {})
         health = det.get("rating_health", {})
+        opportunities = det.get("opportunities", [])
+        risks = det.get("risks", [])
+        brand_dist = det.get("brand_distribution", {})
+        seasonality = det.get("seasonality", {})
+        seller_comp = det.get("seller_composition", {})
 
-        # 构建 LLM 可见的紧凑摘要（不是全部 JSON dump）
+        # 覆盖率
+        coverage = structured.get("coverage_audit", {})
+        coverage_line = (
+            f"【数据覆盖率审计】输入 {coverage.get('input_asins', '?')} 个 → "
+            f"DB 加载 {coverage.get('loaded_from_db', '?')} 个 → "
+            f"分析 {coverage.get('loaded_from_db', '?')} 个"
+            f"（{coverage.get('coverage_pct', '?')}%），"
+            f"失败 {coverage.get('failed_to_load_count', 0)} 个"
+            f"{' ⚠️ 数据不完整' if coverage.get('failed_to_load_count', 0) > 0 else ' ✅ 全覆盖'}"
+        )
+
+        # 公共数据摘要
         data_summary = (
             f"用户 ASIN: {asins}\n"
+            f"{coverage_line}\n"
             f"商品数: {volume.get('product_count', '?')} | "
             f"月销总量: {volume.get('total_monthly_units', '?'):,} 件 | "
             f"月营收: ${volume.get('estimated_monthly_revenue', 0):,.0f}\n"
@@ -162,9 +175,11 @@ class BasePipeline(ABC):
             f"有利因素: {decision.get('positives', [])}\n"
             f"风险因素: {decision.get('negatives', [])}\n"
             f"切入路径: {decision.get('entry_routes', [])}\n"
+            f"机会点: {[o.get('opportunity', '') for o in (opportunities or [])[:3]]}\n"
+            f"风险: {[r.get('risk_type', '') for r in (risks or [])[:3]]}\n"
         )
 
-        # ── 重分析修正前缀 ──
+        # ── 重分析修正前缀（所有模板共享） ──
         reanalysis_section = ""
         if ctx.reanalysis_prompt:
             reanalysis_section = (
@@ -178,41 +193,130 @@ class BasePipeline(ABC):
                 "4. 不要简单重复旧结论——基于当前真实数据重新判断\n"
             )
 
-        prompt = (
-            "你是一位资深亚马逊运营分析师。你面前是系统基于真实数据算出的市场分析。\n\n"
-            f"--- 数据 ---\n{data_summary}\n"
-            f"{reanalysis_section}"
-            "--- 任务 ---\n"
-            "把以上数据压缩成一张**决策卡**。不要回答任何额外内容，直接按以下模板输出：\n\n"
-            "🧾 结论：做 / 不做 / 观望\n\n"
-            "置信度：高 / 中 / 低\n\n"
-            "📊 决策依据\n"
-            "1. 市场信号：是否增长（+/-/稳） | 需求稳定性（高/中/低）\n"
-            "2. 竞争结构：是否头部垄断（是/否） | 新品进入难度（高/中/低）\n"
-            "3. 执行匹配：是否适合你们当前供应链/资金/运营能力（是/否）\n\n"
-            "⚠️ 风险清单\n"
-            "- 商业风险：例如价格战/利润压缩/生命周期短\n"
-            "- 执行风险：例如供应链/广告成本/合规\n"
-            "- 时间风险：回款周期 vs 资金压力\n\n"
-            "🧪 关键证据（可折叠）\n"
-            "- 市场：月销量区间 / 趋势方向\n"
-            "- 竞争：Top 集中度 / 评论量分布\n"
-            "- 用户反馈：高频差评关键词（3个以内）\n"
-            "- 价格结构：主流价格带\n\n"
-            "🧭 建议行动路径\n"
-            "- 如果做：Step 1 最小验证方式 | Step 2 验证指标\n"
-            "- 如果不做：替代方向建议（1个）\n\n"
-            "🧷 一句话判断\n"
-            "（这个品是否适合你们现在这个阶段的资源结构）\n\n"
-            "规则：\n"
-            "- 结论直接用 decision_support 的 label，不用犹豫\n"
-            "- 置信度 = 如果 market_entry_score >= 70 → 高，>= 40 → 中，< 40 → 低\n"
-            "- 每一条必须引用数据（月销、份额、评分、价格带等），让运营可以回查验证\n"
-            "- 不要写「市场体量中等」——说「6.6 万台/月」\n"
-            "- 风险必须具体，不要套话\n"
-            "- 建议必须可执行，说清楚具体路径\n"
-            "- 直接输出，不含 Markdown 代码块包裹"
-        )
+        # ── intent_type → prompt 模板路由 ──
+        intent = ctx.intent_type
+
+        # ═══════════════════════════════════════════════════════
+        # 模板 1: 竞品分析（competitor_watch）
+        # ═══════════════════════════════════════════════════════
+        if intent == "competitor_watch":
+            prompt = (
+                "你是一位亚马逊竞品分析专家。基于以下真实数据，输出**竞品分析报告**。\n\n"
+                f"--- 数据 ---\n{data_summary}\n"
+                f"{reanalysis_section}"
+                "--- 任务 ---\n"
+                "按以下结构输出竞品分析报告，每一条必须引用具体数据：\n\n"
+                "🧾 竞品格局概览\n"
+                "- 品牌数量与集中度\n"
+                "- 头部品牌及市场份额\n"
+                "- 价格带分布\n\n"
+                "📊 竞品价格对比\n"
+                "- 各价格区间的主流品牌和 ASIN\n"
+                "- 价格中位数/均值的品牌差异\n\n"
+                "⭐ Review 分析\n"
+                "- 各品牌评论数分布\n"
+                "- 评分健康度差异\n"
+                "- 高频差评关键词（3个以内）\n\n"
+                "📋 Listing 质量对比\n"
+                "- A+ 覆盖率\n"
+                "- 视频/图片质量\n"
+                "- 卖点差异化\n\n"
+                "🔑 差异化机会\n"
+                "- 竞品未覆盖的价格带/功能\n"
+                "- 评论缺口\n"
+                "- Listing 优化空间\n\n"
+                "规则：\n"
+                "- 每一条必须引用具体数字（月销、评分、评论数、价格、份额等）\n"
+                "- 不要写「市场体量中等」——说「6.6 万台/月」\n"
+                "- 风险必须具体，不要套话\n"
+                "- 直接输出，不含 Markdown 代码块包裹"
+            )
+
+        # ═══════════════════════════════════════════════════════
+        # 模板 2: 市场调研报告（market_analysis）
+        # ═══════════════════════════════════════════════════════
+        elif intent == "market_analysis":
+            prompt = (
+                "你是一位亚马逊市场调研专家。基于以下真实数据，输出**市场调研报告**。\n\n"
+                f"--- 数据 ---\n{data_summary}\n"
+                f"{reanalysis_section}"
+                "--- 任务 ---\n"
+                "按以下结构输出市场调研报告，每一条必须引用具体数据：\n\n"
+                "📊 市场规模与结构\n"
+                "- 月销总量 / 月营收\n"
+                "- 价格分布\n"
+                "- BSR 范围\n\n"
+                "📈 市场趋势\n"
+                "- BSR 趋势方向（上升/下降/稳定）\n"
+                "- 价格变化方向\n"
+                "- 淡旺季特征\n\n"
+                "🏷️ 品牌格局\n"
+                "- Top 品牌及市场份额\n"
+                "- 集中度判断\n"
+                "- 进入壁垒\n\n"
+                "📝 用户需求与痛点\n"
+                "- 基于 Review 数据分析用户高频关注点\n"
+                "- 高频差评关键词（3个以内）\n"
+                "- 评分健康度\n\n"
+                "💰 价格结构\n"
+                "- 主流价格带\n"
+                "- 各价格区间竞争密度\n"
+                "- 潜在价格空白\n\n"
+                "🔍 热门关键词与趋势\n"
+                "- 搜索热度信号（如有）\n"
+                "- 与品类相关的季节性\n"
+                "- 新兴趋势\n\n"
+                "💡 潜在差异化机会\n"
+                "- 价格带空白\n"
+                "- 评论缺口\n"
+                "- Listing 质量差距\n"
+                "- 产品功能缺口\n\n"
+                "规则：\n"
+                "- 每一条必须引用具体数字（月销、评分、评论数、价格、份额等）\n"
+                "- 不要写「市场体量中等」——说「6.6 万台/月」\n"
+                "- 建议必须可执行，说清楚具体路径\n"
+                "- 直接输出，不含 Markdown 代码块包裹"
+            )
+
+        # ═══════════════════════════════════════════════════════
+        # 模板 3: 决策卡 — 默认 / product_research
+        # ═══════════════════════════════════════════════════════
+        else:
+            prompt = (
+                "你是一位资深亚马逊运营分析师。你面前是系统基于真实数据算出的市场分析。\n\n"
+                f"--- 数据 ---\n{data_summary}\n"
+                f"{reanalysis_section}"
+                "--- 任务 ---\n"
+                "把以上数据压缩成一张**决策卡**。不要回答任何额外内容，直接按以下模板输出：\n\n"
+                "🧾 结论：做 / 不做 / 观望\n\n"
+                "置信度：高 / 中 / 低\n\n"
+                "📊 决策依据\n"
+                "1. 市场信号：是否增长（+/-/稳） | 需求稳定性（高/中/低）\n"
+                "2. 竞争结构：是否头部垄断（是/否） | 新品进入难度（高/中/低）\n"
+                "3. 执行匹配：是否适合你们当前供应链/资金/运营能力（是/否）\n\n"
+                "⚠️ 风险清单\n"
+                "- 商业风险：例如价格战/利润压缩/生命周期短\n"
+                "- 执行风险：例如供应链/广告成本/合规\n"
+                "- 时间风险：回款周期 vs 资金压力\n\n"
+                "🧪 关键证据（可折叠）\n"
+                "- 市场：月销量区间 / 趋势方向\n"
+                "- 竞争：Top 集中度 / 评论量分布\n"
+                "- 用户反馈：高频差评关键词（3个以内）\n"
+                "- 价格结构：主流价格带\n\n"
+                "🧭 建议行动路径\n"
+                "- 如果做：Step 1 最小验证方式 | Step 2 验证指标\n"
+                "- 如果不做：替代方向建议（1个）\n\n"
+                "🧷 一句话判断\n"
+                "（这个品是否适合你们现在这个阶段的资源结构）\n\n"
+                "规则：\n"
+                "- 结论直接用 decision_support 的 label，不用犹豫\n"
+                "- 置信度 = 如果 market_entry_score >= 70 → 高，>= 40 → 中，< 40 → 低\n"
+                "- 每一条必须引用数据（月销、份额、评分、价格带等），让运营可以回查验证\n"
+                "- 不要写「市场体量中等」——说「6.6 万台/月」\n"
+                "- 风险必须具体，不要套话\n"
+                "- 建议必须可执行，说清楚具体路径\n"
+                "- 直接输出，不含 Markdown 代码块包裹"
+            )
 
         try:
             response = await llm.ainvoke(prompt)

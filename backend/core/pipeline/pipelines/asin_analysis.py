@@ -48,6 +48,23 @@ class ASINAnalysisPipeline(BasePipeline):
         await self._trace_handoff(tracer, "Pipeline→fetch_asin_details", f"获取 {len(asins)} 个 ASIN 详情")
         logger.info(f"[Pipeline] Step 1: 获取 {len(asins)} 个 ASIN 详情（全部参与，无截断）")
         products = await self._fetch_asin_details(ctx, asins)
+
+        # ── 覆盖率审计：input → collected → loaded → analyzed ──
+        failed_to_load = [a for a in asins if a not in {p.get("asin") for p in products}]
+        coverage = {
+            "input_asins": len(ctx.found_asins),
+            "collected_asins": len(asins),
+            "loaded_from_db": len(products),
+            "failed_to_load_count": len(failed_to_load),
+            "failed_to_load_asins": failed_to_load,
+            "missing_asins": ctx.missing_asins or [],
+            "coverage_pct": round(len(products) / max(len(ctx.found_asins), 1) * 100, 1),
+        }
+        logger.info(
+            f"[Coverage] input={coverage['input_asins']}, collected={coverage['collected_asins']}, "
+            f"loaded={coverage['loaded_from_db']}, failed={coverage['failed_to_load_count']}, "
+            f"coverage={coverage['coverage_pct']}%"
+        )
         await self._trace_handoff(tracer, "fetch_asin_details→products", f"加载了 {len(products)} 个 ASIN 数据")
 
         # ── Step 2: 获取趋势数据 ──
@@ -101,6 +118,8 @@ class ASINAnalysisPipeline(BasePipeline):
             "asins_analyzed": asins,
             "deterministic": deterministic,
             "decision_support": score,
+            # ★ 覆盖率审计（输入的 ASIN 有多少真正进了分析）
+            "coverage_audit": coverage,
             # ★ 数据快照：原始 ASIN 数据（冻住的真相源，供重分析和追问答疑）
             "data_snapshot": {
                 "asins": asins,
